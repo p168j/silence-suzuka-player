@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Option B: Integrated Corner Embed</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #121212;
+            color: #fff;
+            height: 100vh;
+            overflow: hidden;
+        }
+        
+        .app-container {
+            display: flex;
+            height: 100vh;
+        }
+        
+        /* Sidebar with playlist */
+        .sidebar {
+            width: 320px;
+            background: #000;
+            border-right: 1px solid #282828;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .sidebar-header {
+            padding: 24px 24px 0;
+            background: #000;
+        }
+        
+        .sidebar-title {
+            font-size: 24px;
+            font-weight: 900;
+            margin-bottom: 16px;
+            color: #fff;
+        }
+        
+        .playlist-container {
+            flex: 1;
+            padding: 16px 24px;
+            overflow-y: auto;
+            position: relative;
+        }
+        
+        .playlist-item {
+            display: flex;
+            align-items: center;
+            padding: 8px 12px;
+            border-radius: 4px;
+            margin-bottom: 4px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        
+        .playlist-item:hover {
+            background: #282828;
+        }
+        
+        .playlist-item.active {
+            background: #282828;
+            color: #1DB954;
+        }
+        
+        .playlist-item-icon {
+            width: 28px;
+            height: 28px;
+            background: #535353;
+            border-radius: 4px;
+            margin-right: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .playlist-item-text {
+            flex: 1;
+            font-size: 14px;
+            color: #B3B3B3;
+        }
+        
+        .playlist-item.active .playlist-item-text {
+            color: #1DB954;
+        }
+        
+        /* OPTION B: Integrated corner video in sidebar */
+        .integrated-video {
+            position: absolute;
+            bottom: 16px;
+            right: 16px;
+            width: 160px;
+            height: 120px;
+            background: linear-gradient(135deg, #1a1a1a 0%, #0f0f0f 100%);
+            border-radius: 8px;
+            border: 1px solid #333;
+            box-shadow: 
+                0 4px 12px rgba(0, 0, 0, 0.3),
+                inset 0 1px 0 rgba(255, 255, 255, 0.05);
+            overflow: hidden;
+            transition: all 0.3s ease;
+            z-index: 10;
+        }
+        
+        .integrated-video:hover {
+            border-color: #1DB954;
+            box-shadow: 
+                0 6px 20px rgba(0, 0, 0, 0.4),
+                0 0 0 1px #1DB954,
+                inset 0 1px 0 rgba(255, 255, 255, 0.1);
+        }
+        
+        .integrated-video-content {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            background: linear-gradient(135deg, #1a1a1a 0%, #0a0a0a 100%);
+        }
+        
+        .integrated-video-icon {
+            font-size: 20px;
+            margin-bottom: 6px;
+            opacity: 0.7;
+        }
+        
+        .integrated-video-text {
+            font-size: 9px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #999;
+            text-align: center;
+        }
+        
+        /* Subtle integration indicators */
+        .integrated-video::before {
+            content: '';
+            position: absolute;
+            top: -1px;
+            left: -1px;
+            right: -1px;
+            bottom: -1px;
+            background: linear-gradient(135deg, transparent 0%, rgba(29, 185, 84, 0.1) 100%);
+            border-radius: 8px;
+            z-index: -1;
+        }
+        
+        /* Main content area */
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: #121212;
+        }
+        
+        /* Current video area - now for large content */
+        .main-video-area {
+            flex: 1;
+            background: linear-gradient(135deg, #1a1a1a 0%, #0d0d0d 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+        
+        .main-video-placeholder {
+            text-align: center;
+            color: #535353;
+        }
+        
+        .main-video-placeholder-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+            opacity: 0.3;
+        }
+        
+        .main-video-placeholder-text {
+            font-size: 18px;
+            font-weight: 500;
+        }
+        
+        /* Controls area */
+        .controls-area {
+            padding: 24px;
+            background: #181818;
+            border-top: 1px solid #282828;
+        }
+        
+        .now-playing {
+            text-align: center;
+            margin-bottom: 16px;
+        }
+        
+        .track-title {
+            font-size: 24px;
+            font-weight: bold;
+            color: #fff;
+            margin-bottom: 8px;
+        }
+        
+        .progress-container {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .time-label {
+            font-size: 12px;
+            color: #B3B3B3;
+            min-width: 40px;
+        }
+        
+        .progress-bar {
+            flex: 1;
+            height: 4px;
+            background: #535353;
+            border-radius: 2px;
+            position: relative;
+            cursor: pointer;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: #1DB954;
+            border-radius: 2px;
+            width: 35%;
+        }
+        
+        /* Annotation */
+        .annotation {
+            position: absolute;
+            bottom: 150px;
+            right: 200px;
+            background: #1DB954;
+            color: #000;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+            z-index: 100;
+            max-width: 200px;
+            text-align: center;
+        }
+        
+        .annotation::before {
+            content: '';
+            position: absolute;
+            bottom: -6px;
+            right: 20px;
+            width: 0;
+            height: 0;
+            border-left: 6px solid transparent;
+            border-right: 6px solid transparent;
+            border-top: 6px solid #1DB954;
+        }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <div class="sidebar-title">Silence Suzuka Player</div>
+            </div>
+            <div class="playlist-container">
+                <div class="playlist-item active">
+                    <div class="playlist-item-icon">🎬</div>
+                    <div class="playlist-item-text">Horse Racing Highlights 2023</div>
+                </div>
+                <div class="playlist-item">
+                    <div class="playlist-item-icon">🎵</div>
+                    <div class="playlist-item-text">Training Music Mix</div>
+                </div>
+                <div class="playlist-item">
+                    <div class="playlist-item-icon">🎬</div>
+                    <div class="playlist-item-text">Derby Championship Final</div>
+                </div>
+                <div class="playlist-item">
+                    <div class="playlist-item-icon">🎵</div>
+                    <div class="playlist-item-text">Victory Celebration Songs</div>
+                </div>
+                <div class="playlist-item">
+                    <div class="playlist-item-icon">🎬</div>
+                    <div class="playlist-item-text">Behind the Scenes</div>
+                </div>
+                
+                <!-- OPTION B: Integrated Video in Corner -->
+                <div class="integrated-video">
+                    <div class="integrated-video-content">
+                        <div class="integrated-video-icon">▶️</div>
+                        <div class="integrated-video-text">Video<br>Preview</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Main Content -->
+        <div class="main-content">
+            <!-- Main area for large content or visualizations -->
+            <div class="main-video-area">
+                <div class="main-video-placeholder">
+                    <div class="main-video-placeholder-icon">🎵</div>
+                    <div class="main-video-placeholder-text">Audio Visualizer Space</div>
+                </div>
+            </div>
+            
+            <!-- Controls -->
+            <div class="controls-area">
+                <div class="now-playing">
+                    <div class="track-title">Horse Racing Highlights 2023</div>
+                </div>
+                <div class="progress-container">
+                    <div class="time-label">2:45</div>
+                    <div class="progress-bar">
+                        <div class="progress-fill"></div>
+                    </div>
+                    <div class="time-label">8:12</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Annotation -->
+        <div class="annotation">
+            Video embedded in corner<br>
+            Blends with playlist design<br>
+            Subtle borders & gradients
+        </div>
+    </div>
+</body>
+</html>

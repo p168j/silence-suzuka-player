@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Option C: Modern Card-style Video</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #121212;
+            color: #fff;
+            height: 100vh;
+            overflow: hidden;
+        }
+        
+        .app-container {
+            display: flex;
+            height: 100vh;
+        }
+        
+        /* Sidebar with playlist */
+        .sidebar {
+            width: 320px;
+            background: #000;
+            border-right: 1px solid #282828;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .sidebar-header {
+            padding: 24px 24px 0;
+            background: #000;
+        }
+        
+        .sidebar-title {
+            font-size: 24px;
+            font-weight: 900;
+            margin-bottom: 16px;
+            color: #fff;
+        }
+        
+        .playlist-container {
+            flex: 1;
+            padding: 16px 24px;
+            overflow-y: auto;
+        }
+        
+        .playlist-item {
+            display: flex;
+            align-items: center;
+            padding: 8px 12px;
+            border-radius: 4px;
+            margin-bottom: 4px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        
+        .playlist-item:hover {
+            background: #282828;
+        }
+        
+        .playlist-item.active {
+            background: #282828;
+            color: #1DB954;
+        }
+        
+        .playlist-item-icon {
+            width: 28px;
+            height: 28px;
+            background: #535353;
+            border-radius: 4px;
+            margin-right: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .playlist-item-text {
+            flex: 1;
+            font-size: 14px;
+            color: #B3B3B3;
+        }
+        
+        .playlist-item.active .playlist-item-text {
+            color: #1DB954;
+        }
+        
+        /* Main content area */
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: #121212;
+            padding: 24px;
+            gap: 24px;
+        }
+        
+        /* OPTION C: Modern Card-style Video */
+        .video-card-container {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+        
+        .video-card {
+            width: 80%;
+            max-width: 640px;
+            aspect-ratio: 16/9;
+            background: linear-gradient(135deg, #1e1e1e 0%, #0a0a0a 100%);
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 
+                0 20px 40px rgba(0, 0, 0, 0.4),
+                0 8px 16px rgba(0, 0, 0, 0.2),
+                0 0 0 1px rgba(255, 255, 255, 0.05),
+                inset 0 1px 0 rgba(255, 255, 255, 0.08);
+            position: relative;
+            overflow: hidden;
+            transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
+        }
+        
+        .video-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 
+                0 32px 60px rgba(0, 0, 0, 0.5),
+                0 12px 24px rgba(0, 0, 0, 0.3),
+                0 0 0 1px rgba(255, 255, 255, 0.1),
+                inset 0 1px 0 rgba(255, 255, 255, 0.12);
+        }
+        
+        /* Card header */
+        .video-card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .video-card-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .video-card-controls {
+            display: flex;
+            gap: 8px;
+        }
+        
+        .card-control-btn {
+            width: 32px;
+            height: 32px;
+            border-radius: 6px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #999;
+            font-size: 12px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s;
+        }
+        
+        .card-control-btn:hover {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: rgba(255, 255, 255, 0.2);
+            color: #fff;
+            transform: scale(1.05);
+        }
+        
+        /* Video content area */
+        .video-card-content {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(45deg, #0f0f0f 0%, #1a1a1a 100%);
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .video-placeholder {
+            text-align: center;
+            color: #666;
+        }
+        
+        .video-placeholder-icon {
+            font-size: 32px;
+            margin-bottom: 12px;
+            opacity: 0.7;
+        }
+        
+        .video-placeholder-text {
+            font-size: 14px;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        /* Subtle ambient glow effect */
+        .video-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: radial-gradient(circle at 30% 30%, rgba(29, 185, 84, 0.05) 0%, transparent 70%);
+            pointer-events: none;
+            z-index: 1;
+        }
+        
+        .video-card-header,
+        .video-card-content {
+            position: relative;
+            z-index: 2;
+        }
+        
+        /* Controls area */
+        .controls-area {
+            padding: 24px;
+            background: linear-gradient(135deg, #1a1a1a 0%, #111 100%);
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            box-shadow: 
+                0 8px 16px rgba(0, 0, 0, 0.2),
+                inset 0 1px 0 rgba(255, 255, 255, 0.05);
+        }
+        
+        .now-playing {
+            text-align: center;
+            margin-bottom: 16px;
+        }
+        
+        .track-title {
+            font-size: 24px;
+            font-weight: bold;
+            color: #fff;
+            margin-bottom: 8px;
+        }
+        
+        .progress-container {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .time-label {
+            font-size: 12px;
+            color: #B3B3B3;
+            min-width: 40px;
+            font-weight: 500;
+        }
+        
+        .progress-bar {
+            flex: 1;
+            height: 6px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 3px;
+            position: relative;
+            cursor: pointer;
+            overflow: hidden;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #1DB954 0%, #1ed760 100%);
+            border-radius: 3px;
+            width: 35%;
+            box-shadow: 0 0 8px rgba(29, 185, 84, 0.3);
+        }
+        
+        /* Annotation */
+        .annotation {
+            position: absolute;
+            top: 50%;
+            right: -220px;
+            transform: translateY(-50%);
+            background: #1DB954;
+            color: #000;
+            padding: 12px 16px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            z-index: 100;
+            max-width: 200px;
+            line-height: 1.4;
+            box-shadow: 0 4px 12px rgba(29, 185, 84, 0.3);
+        }
+        
+        .annotation::before {
+            content: '';
+            position: absolute;
+            left: -6px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 0;
+            height: 0;
+            border-top: 6px solid transparent;
+            border-bottom: 6px solid transparent;
+            border-right: 6px solid #1DB954;
+        }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <div class="sidebar-title">Silence Suzuka Player</div>
+            </div>
+            <div class="playlist-container">
+                <div class="playlist-item active">
+                    <div class="playlist-item-icon">🎬</div>
+                    <div class="playlist-item-text">Horse Racing Highlights 2023</div>
+                </div>
+                <div class="playlist-item">
+                    <div class="playlist-item-icon">🎵</div>
+                    <div class="playlist-item-text">Training Music Mix</div>
+                </div>
+                <div class="playlist-item">
+                    <div class="playlist-item-icon">🎬</div>
+                    <div class="playlist-item-text">Derby Championship Final</div>
+                </div>
+                <div class="playlist-item">
+                    <div class="playlist-item-icon">🎵</div>
+                    <div class="playlist-item-text">Victory Celebration Songs</div>
+                </div>
+                <div class="playlist-item">
+                    <div class="playlist-item-icon">🎬</div>
+                    <div class="playlist-item-text">Behind the Scenes</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Main Content -->
+        <div class="main-content">
+            <!-- OPTION C: Modern Card-style Video -->
+            <div class="video-card-container">
+                <div class="video-card">
+                    <div class="video-card-header">
+                        <div class="video-card-title">
+                            🎬 Video Player
+                        </div>
+                        <div class="video-card-controls">
+                            <button class="card-control-btn" title="Fullscreen">⛶</button>
+                            <button class="card-control-btn" title="Picture-in-Picture">⧉</button>
+                            <button class="card-control-btn" title="Settings">⚙</button>
+                        </div>
+                    </div>
+                    <div class="video-card-content">
+                        <div class="video-placeholder">
+                            <div class="video-placeholder-icon">▶️</div>
+                            <div class="video-placeholder-text">Video Content</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Annotation -->
+                <div class="annotation">
+                    Professional card design<br>
+                    Multiple elevation layers<br>
+                    Integrated controls<br>
+                    Smooth hover effects<br>
+                    Premium feel
+                </div>
+            </div>
+            
+            <!-- Controls -->
+            <div class="controls-area">
+                <div class="now-playing">
+                    <div class="track-title">Horse Racing Highlights 2023</div>
+                </div>
+                <div class="progress-container">
+                    <div class="time-label">2:45</div>
+                    <div class="progress-bar">
+                        <div class="progress-fill"></div>
+                    </div>
+                    <div class="time-label">8:12</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

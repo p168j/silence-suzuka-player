@@ -1,0 +1,47 @@
+# Ignore Python bytecode and test cache
+__pycache__/
+.pytest_cache/
+*.pyc
+*.pyo
+*.pyd
+.eggs/
+*.egg-info/
+dist/
+build/
+
+# Ignore runtime/user data
+*.log
+*.bak
+*.tmp
+*.temp
+
+# Ignore user/session/config data
+*.cookies.txt
+*_positions.json
+*_stats.json
+*_completed.json
+*_current.json
+*_playlists.json
+save/
+logs/
+backup/
+cookies.txt
+positions.json
+stats.json
+completed.json
+current.json
+config.json
+playlists.json
+
+
+
+# Ignore IDE/editor/project files
+.vscode/
+*.code-workspace
+
+# Ignore OS and miscellaneous junk
+Thumbs.db
+.DS_Store
+
+# Ignore other junk
+*.workspace

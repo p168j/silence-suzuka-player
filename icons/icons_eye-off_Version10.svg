@@ -1,0 +1,7 @@
+<!-- Eye-off / slashed eye icon (mono) -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-7 0-11-7-11-7a21.9 21.9 0 0 1 5.06-6.06"/>
+  <path d="M1 1l22 22" />
+  <path d="M9.88 9.88A3 3 0 0 0 14.12 14.12" />
+  <path d="M15.5 15.5C17 14.1 18.2 12.3 19 11c-4-4-11-7-11-7" />
+</svg>

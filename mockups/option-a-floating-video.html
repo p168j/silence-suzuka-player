@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Option A: Spotify-style Floating Video</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #121212;
+            color: #fff;
+            height: 100vh;
+            overflow: hidden;
+        }
+        
+        .app-container {
+            display: flex;
+            height: 100vh;
+        }
+        
+        /* Sidebar with playlist */
+        .sidebar {
+            width: 320px;
+            background: #000;
+            border-right: 1px solid #282828;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .sidebar-header {
+            padding: 24px 24px 0;
+            background: #000;
+        }
+        
+        .sidebar-title {
+            font-size: 24px;
+            font-weight: 900;
+            margin-bottom: 16px;
+            color: #fff;
+        }
+        
+        .playlist-container {
+            flex: 1;
+            padding: 16px 24px;
+            overflow-y: auto;
+        }
+        
+        .playlist-item {
+            display: flex;
+            align-items: center;
+            padding: 8px 12px;
+            border-radius: 4px;
+            margin-bottom: 4px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        
+        .playlist-item:hover {
+            background: #282828;
+        }
+        
+        .playlist-item.active {
+            background: #282828;
+            color: #1DB954;
+        }
+        
+        .playlist-item-icon {
+            width: 28px;
+            height: 28px;
+            background: #535353;
+            border-radius: 4px;
+            margin-right: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .playlist-item-text {
+            flex: 1;
+            font-size: 14px;
+            color: #B3B3B3;
+        }
+        
+        .playlist-item.active .playlist-item-text {
+            color: #1DB954;
+        }
+        
+        /* Main content area */
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: #121212;
+            position: relative;
+        }
+        
+        /* Current large video area - now empty/minimal */
+        .main-video-area {
+            flex: 1;
+            background: linear-gradient(135deg, #1a1a1a 0%, #0d0d0d 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+        
+        .main-video-placeholder {
+            text-align: center;
+            color: #535353;
+        }
+        
+        .main-video-placeholder-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+            opacity: 0.3;
+        }
+        
+        .main-video-placeholder-text {
+            font-size: 18px;
+            font-weight: 500;
+        }
+        
+        /* Controls area */
+        .controls-area {
+            padding: 24px;
+            background: #181818;
+            border-top: 1px solid #282828;
+        }
+        
+        .now-playing {
+            text-align: center;
+            margin-bottom: 16px;
+        }
+        
+        .track-title {
+            font-size: 24px;
+            font-weight: bold;
+            color: #fff;
+            margin-bottom: 8px;
+        }
+        
+        .progress-container {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .time-label {
+            font-size: 12px;
+            color: #B3B3B3;
+            min-width: 40px;
+        }
+        
+        .progress-bar {
+            flex: 1;
+            height: 4px;
+            background: #535353;
+            border-radius: 2px;
+            position: relative;
+            cursor: pointer;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: #1DB954;
+            border-radius: 2px;
+            width: 35%;
+        }
+        
+        /* OPTION A: Floating video player */
+        .floating-video {
+            position: fixed;
+            bottom: 24px;
+            left: 24px;
+            width: 200px;
+            height: 150px;
+            background: #000;
+            border-radius: 8px;
+            box-shadow: 
+                0 8px 25px rgba(0, 0, 0, 0.4),
+                0 0 0 1px rgba(255, 255, 255, 0.1);
+            z-index: 1000;
+            overflow: hidden;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+        
+        .floating-video:hover {
+            transform: translateY(-4px);
+            box-shadow: 
+                0 12px 35px rgba(0, 0, 0, 0.5),
+                0 0 0 1px rgba(255, 255, 255, 0.15);
+        }
+        
+        .floating-video-content {
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(45deg, #1a1a1a, #0a0a0a);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+        
+        .floating-video-placeholder {
+            color: #535353;
+            text-align: center;
+        }
+        
+        .floating-video-icon {
+            font-size: 24px;
+            margin-bottom: 8px;
+        }
+        
+        .floating-video-text {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        /* Minimize button */
+        .floating-video-controls {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            display: flex;
+            gap: 4px;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        
+        .floating-video:hover .floating-video-controls {
+            opacity: 1;
+        }
+        
+        .floating-control-btn {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: rgba(0, 0, 0, 0.7);
+            border: none;
+            color: #fff;
+            font-size: 10px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .floating-control-btn:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+        
+        /* Annotation to highlight the floating video */
+        .annotation {
+            position: absolute;
+            bottom: 200px;
+            left: 250px;
+            background: #1DB954;
+            color: #000;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+            z-index: 1001;
+        }
+        
+        .annotation::before {
+            content: '';
+            position: absolute;
+            bottom: -6px;
+            left: 20px;
+            width: 0;
+            height: 0;
+            border-left: 6px solid transparent;
+            border-right: 6px solid transparent;
+            border-top: 6px solid #1DB954;
+        }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <div class="sidebar-title">Silence Suzuka Player</div>
+            </div>
+            <div class="playlist-container">
+                <div class="playlist-item active">
+                    <div class="playlist-item-icon">🎬</div>
+                    <div class="playlist-item-text">Horse Racing Highlights 2023</div>
+                </div>
+                <div class="playlist-item">
+                    <div class="playlist-item-icon">🎵</div>
+                    <div class="playlist-item-text">Training Music Mix</div>
+                </div>
+                <div class="playlist-item">
+                    <div class="playlist-item-icon">🎬</div>
+                    <div class="playlist-item-text">Derby Championship Final</div>
+                </div>
+                <div class="playlist-item">
+                    <div class="playlist-item-icon">🎵</div>
+                    <div class="playlist-item-text">Victory Celebration Songs</div>
+                </div>
+                <div class="playlist-item">
+                    <div class="playlist-item-icon">🎬</div>
+                    <div class="playlist-item-text">Behind the Scenes</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Main Content -->
+        <div class="main-content">
+            <!-- Main area now shows audio/minimal content -->
+            <div class="main-video-area">
+                <div class="main-video-placeholder">
+                    <div class="main-video-placeholder-icon">🎵</div>
+                    <div class="main-video-placeholder-text">Audio Content Playing</div>
+                </div>
+            </div>
+            
+            <!-- Controls -->
+            <div class="controls-area">
+                <div class="now-playing">
+                    <div class="track-title">Horse Racing Highlights 2023</div>
+                </div>
+                <div class="progress-container">
+                    <div class="time-label">2:45</div>
+                    <div class="progress-bar">
+                        <div class="progress-fill"></div>
+                    </div>
+                    <div class="time-label">8:12</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- OPTION A: Floating Video Player -->
+        <div class="floating-video">
+            <div class="floating-video-content">
+                <div class="floating-video-placeholder">
+                    <div class="floating-video-icon">▶️</div>
+                    <div class="floating-video-text">Video Player</div>
+                </div>
+            </div>
+            <div class="floating-video-controls">
+                <button class="floating-control-btn" title="Minimize">−</button>
+                <button class="floating-control-btn" title="Close">×</button>
+            </div>
+        </div>
+        
+        <!-- Annotation -->
+        <div class="annotation">
+            Small floating video (200×150px)<br>
+            Spotify-style with subtle shadow
+        </div>
+    </div>
+</body>
+</html>

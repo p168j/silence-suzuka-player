@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Style B: Ripple Effect - Button Feedback Mockup</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #191414;
+            color: #FFFFFF;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .demo-container {
+            background: #282828;
+            border-radius: 12px;
+            padding: 40px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            text-align: center;
+            max-width: 600px;
+            width: 100%;
+        }
+
+        h1 {
+            margin-bottom: 10px;
+            color: #1DB954;
+            font-size: 24px;
+        }
+
+        .description {
+            margin-bottom: 40px;
+            color: #B3B3B3;
+            line-height: 1.5;
+        }
+
+        .button-showcase {
+            display: flex;
+            flex-direction: column;
+            gap: 30px;
+            align-items: center;
+        }
+
+        /* Ripple Effect Base */
+        .ripple-container {
+            position: relative;
+            overflow: hidden;
+            border-radius: inherit;
+        }
+
+        .ripple {
+            position: absolute;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.3);
+            transform: scale(0);
+            animation: ripple-animation 0.6s linear;
+            pointer-events: none;
+        }
+
+        @keyframes ripple-animation {
+            to {
+                transform: scale(4);
+                opacity: 0;
+            }
+        }
+
+        /* Primary Play/Pause Button */
+        .play-pause-btn {
+            background: #FFFFFF;
+            color: #000000;
+            border: none;
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+            font-size: 24px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s cubic-bezier(0.4, 0.0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .play-pause-btn:hover {
+            background: #f0f0f0;
+            transform: scale(1.05);
+        }
+
+        .play-pause-btn .ripple {
+            background: rgba(0, 0, 0, 0.2);
+        }
+
+        /* Control Buttons */
+        .controls-row {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+        }
+
+        .control-btn {
+            background: transparent;
+            color: #B3B3B3;
+            border: none;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            font-size: 18px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s cubic-bezier(0.4, 0.0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .control-btn:hover {
+            background: #282828;
+            color: #FFFFFF;
+            transform: scale(1.1);
+        }
+
+        .control-btn .ripple {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        /* Add Media Button */
+        .add-media-btn {
+            background: transparent;
+            color: #1DB954;
+            border: 1px solid #1DB954;
+            border-radius: 20px;
+            padding: 8px 16px;
+            font-size: 14px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s cubic-bezier(0.4, 0.0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .add-media-btn:hover {
+            background: rgba(29, 185, 84, 0.1);
+            transform: scale(1.05);
+        }
+
+        .add-media-btn .ripple {
+            background: rgba(29, 185, 84, 0.3);
+        }
+
+        /* Volume Controls */
+        .volume-section {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .volume-btn {
+            background: transparent;
+            color: #B3B3B3;
+            border: none;
+            border-radius: 50%;
+            width: 32px;
+            height: 32px;
+            font-size: 16px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s cubic-bezier(0.4, 0.0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .volume-btn:hover {
+            color: #FFFFFF;
+            transform: scale(1.1);
+        }
+
+        .volume-btn .ripple {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .volume-slider {
+            width: 100px;
+            height: 4px;
+            background: #535353;
+            border-radius: 2px;
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .volume-fill {
+            height: 100%;
+            background: #1DB954;
+            border-radius: 2px;
+            width: 70%;
+            transition: width 0.1s ease;
+        }
+
+        .volume-slider .ripple {
+            background: rgba(29, 185, 84, 0.4);
+            height: 20px;
+            top: -8px;
+            border-radius: 50%;
+        }
+
+        .section {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            align-items: center;
+        }
+
+        .section-title {
+            color: #FFFFFF;
+            font-weight: 600;
+            font-size: 16px;
+        }
+
+        .timing-info {
+            margin-top: 30px;
+            padding: 20px;
+            background: #1a1a1a;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            color: #B3B3B3;
+            text-align: left;
+        }
+
+        .timing-info h3 {
+            color: #1DB954;
+            margin-bottom: 10px;
+            font-family: inherit;
+        }
+
+        .state-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #535353;
+            margin-right: 8px;
+            transition: background 0.2s;
+        }
+
+        .play-pause-btn.playing .state-indicator {
+            background: #1DB954;
+        }
+
+        /* Enhanced ripples for different contexts */
+        .play-pause-btn.active-ripple .ripple {
+            background: rgba(29, 185, 84, 0.4);
+        }
+
+        .control-btn.shuffle.active .ripple {
+            background: rgba(29, 185, 84, 0.3);
+        }
+
+        .control-btn.repeat.active .ripple {
+            background: rgba(29, 185, 84, 0.3);
+        }
+    </style>
+</head>
+<body>
+    <div class="demo-container">
+        <h1>Style B: Ripple Effect (Material Design)</h1>
+        <p class="description">
+            Subtle circular ripple that expands from the exact click point with a color wave that spreads outward. 
+            Modern, tactile feedback that works well with dark themes and provides visual confirmation of user interaction.
+        </p>
+
+        <div class="button-showcase">
+            <!-- Primary Play/Pause Button -->
+            <div class="section">
+                <div class="section-title">Primary Play/Pause Button</div>
+                <button class="play-pause-btn ripple-container" id="playPauseBtn">
+                    <span class="state-indicator"></span>
+                    <span class="play-icon">▶</span>
+                </button>
+            </div>
+
+            <!-- Control Buttons -->
+            <div class="section">
+                <div class="section-title">Control Buttons</div>
+                <div class="controls-row">
+                    <button class="control-btn ripple-container shuffle" data-action="shuffle">🔀</button>
+                    <button class="control-btn ripple-container" data-action="previous">⏮</button>
+                    <button class="control-btn ripple-container" data-action="next">⏭</button>
+                    <button class="control-btn ripple-container repeat" data-action="repeat">🔁</button>
+                </div>
+            </div>
+
+            <!-- Add Media Button -->
+            <div class="section">
+                <div class="section-title">Add Media Button</div>
+                <button class="add-media-btn ripple-container">
+                    <span>+</span>
+                    <span>Add Media</span>
+                </button>
+            </div>
+
+            <!-- Volume Controls -->
+            <div class="section">
+                <div class="section-title">Volume Controls</div>
+                <div class="volume-section">
+                    <button class="volume-btn ripple-container" data-action="volume-down">🔉</button>
+                    <div class="volume-slider ripple-container">
+                        <div class="volume-fill"></div>
+                    </div>
+                    <button class="volume-btn ripple-container" data-action="volume-up">🔊</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="timing-info">
+            <h3>Animation Timing</h3>
+            <strong>Ripple Duration:</strong> 0.6s linear<br>
+            <strong>Button Transitions:</strong> 0.2s cubic-bezier(0.4, 0.0, 0.2, 1)<br>
+            <strong>Scale:</strong> 0 → 4x (covers button area)<br><br>
+            <strong>Ripple Colors:</strong><br>
+            - White buttons: rgba(0, 0, 0, 0.2)<br>
+            - Dark buttons: rgba(255, 255, 255, 0.2)<br>
+            - Green accent: rgba(29, 185, 84, 0.3)<br><br>
+            <strong>Feel:</strong> Modern, tactile, precise feedback from click point
+        </div>
+    </div>
+
+    <script>
+        // Create ripple effect
+        function createRipple(event, element) {
+            const circle = document.createElement('span');
+            const diameter = Math.max(element.clientWidth, element.clientHeight);
+            const radius = diameter / 2;
+            
+            circle.style.width = circle.style.height = diameter + 'px';
+            circle.style.left = (event.clientX - element.getBoundingClientRect().left - radius) + 'px';
+            circle.style.top = (event.clientY - element.getBoundingClientRect().top - radius) + 'px';
+            circle.classList.add('ripple');
+            
+            const rippleElement = element.getElementsByClassName('ripple')[0];
+            if (rippleElement) {
+                rippleElement.remove();
+            }
+            
+            element.appendChild(circle);
+            
+            // Remove ripple after animation
+            setTimeout(() => {
+                circle.remove();
+            }, 600);
+        }
+
+        // Play/Pause functionality
+        const playPauseBtn = document.getElementById('playPauseBtn');
+        const playIcon = playPauseBtn.querySelector('.play-icon');
+        let isPlaying = false;
+
+        playPauseBtn.addEventListener('click', function(e) {
+            createRipple(e, this);
+
+            // Toggle play/pause state
+            isPlaying = !isPlaying;
+            if (isPlaying) {
+                playIcon.textContent = '⏸';
+                this.classList.add('playing', 'active-ripple');
+            } else {
+                playIcon.textContent = '▶';
+                this.classList.remove('playing', 'active-ripple');
+            }
+        });
+
+        // Control buttons ripple
+        document.querySelectorAll('.control-btn').forEach(btn => {
+            let isActive = false;
+            
+            btn.addEventListener('click', function(e) {
+                createRipple(e, this);
+                
+                const action = this.getAttribute('data-action');
+                if (action === 'shuffle' || action === 'repeat') {
+                    isActive = !isActive;
+                    if (isActive) {
+                        this.classList.add('active');
+                        this.style.color = '#1DB954';
+                    } else {
+                        this.classList.remove('active');
+                        this.style.color = '#B3B3B3';
+                    }
+                }
+            });
+        });
+
+        // Add media button ripple
+        document.querySelector('.add-media-btn').addEventListener('click', function(e) {
+            createRipple(e, this);
+        });
+
+        // Volume buttons ripple
+        document.querySelectorAll('.volume-btn').forEach(btn => {
+            btn.addEventListener('click', function(e) {
+                createRipple(e, this);
+
+                // Simulate volume change
+                const volumeFill = document.querySelector('.volume-fill');
+                const action = this.getAttribute('data-action');
+                let currentWidth = parseInt(volumeFill.style.width || '70%');
+                
+                if (action === 'volume-up' && currentWidth < 100) {
+                    volumeFill.style.width = Math.min(100, currentWidth + 10) + '%';
+                } else if (action === 'volume-down' && currentWidth > 0) {
+                    volumeFill.style.width = Math.max(0, currentWidth - 10) + '%';
+                }
+            });
+        });
+
+        // Volume slider interaction with ripple
+        document.querySelector('.volume-slider').addEventListener('click', function(e) {
+            createRipple(e, this);
+            
+            const rect = this.getBoundingClientRect();
+            const percentage = ((e.clientX - rect.left) / rect.width) * 100;
+            document.querySelector('.volume-fill').style.width = Math.max(0, Math.min(100, percentage)) + '%';
+        });
+    </script>
+</body>
+</html>
