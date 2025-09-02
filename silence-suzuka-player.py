@@ -221,6 +221,20 @@ def human_duration(seconds):
         
     return " ".join(parts) if parts else "0s"
 
+def format_time(ms):
+    """Converts milliseconds to a MM:SS or H:MM:SS string."""
+    if ms < 0:
+        return "0:00"
+    
+    seconds_total = ms // 1000
+    minutes, seconds = divmod(seconds_total, 60)
+    hours, minutes = divmod(minutes, 60)
+    
+    if hours > 0:
+        return f"{hours}:{minutes:02d}:{seconds:02d}"
+    else:
+        return f"{minutes}:{seconds:02d}"    
+
 # Initialize with default level (will be updated from settings)
 logger = setup_logging()
 
@@ -4376,6 +4390,26 @@ class MediaPlayer(QMainWindow):
                     pass
             except Exception as e:
                 print(f"Settings load error: {e}")
+                
+        # --- FIX: Apply theme and fonts AFTER loading settings, but ALWAYS ---
+        # This ensures the theme is set on first launch using the default value.
+        if self.theme == 'vinyl':
+            self._apply_vinyl_theme()
+        else:
+            self._apply_dark_theme()
+        
+        # Apply dynamic font scaling after theme
+        self._apply_dynamic_fonts()
+
+        # Force update to ensure styling takes effect
+        try:
+            self.update()
+            if hasattr(self, 'centralWidget') and self.centralWidget():
+                self.centralWidget().update()
+        except Exception:
+            pass
+        # --- END FIX ---
+               
     # ...rest of your function unchanged...
         # Front page auto-play checkbox removed; use Settings dialog
         # Apply persisted UI toggle states
@@ -5263,21 +5297,25 @@ class MediaPlayer(QMainWindow):
         pass
 
     def _update_scope_label(self):
-        """Update the dropdown to reflect the current playback scope."""
-        try:
-            if self.play_scope is None:
-                # No specific group selected, default to "Library"
-                self.scope_dropdown.setCurrentText("Library")
-            else:
-                # A group is selected (e.g., playlist or media type)
-                kind, key = self.play_scope
-                if kind == 'group':
-                    # Update dropdown to show the correct group name
-                    name = self._scope_title_from_key(key)
-                    self.scope_dropdown.setCurrentText(name)
-        except Exception as e:
-            # Log any errors for debugging
-            print(f"[ScopeLabel] Error updating scope label: {e}")      
+            """Update the dropdown to reflect the current playback scope."""
+            try:
+                # --- FIX: Check if the attribute exists before using it ---
+                if not hasattr(self, 'scope_dropdown'):
+                    return
+
+                if self.play_scope is None:
+                    # No specific group selected, default to "Library"
+                    self.scope_dropdown.setCurrentText("Library")
+                else:
+                    # A group is selected (e.g., playlist or media type)
+                    kind, key = self.play_scope
+                    if kind == 'group':
+                        # Update dropdown to show the correct group name
+                        name = self._scope_title_from_key(key)
+                        self.scope_dropdown.setCurrentText(name)
+            except Exception as e:
+                # Log any errors for debugging
+                print(f"[ScopeLabel] Error updating scope label: {e}")   
 
     def _group_effective_key(self, raw_key, item=None):
         try:
