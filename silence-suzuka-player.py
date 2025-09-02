@@ -18,6 +18,7 @@ import zipfile
 import qtawesome as qta
 import re
 import queue
+import warnings
 from PySide6.QtGui import QIcon
 from pathlib import Path
 from datetime import datetime
@@ -36,7 +37,12 @@ from PySide6.QtCore import QTimer, QEvent
 from PySide6.QtGui import QInputMethodEvent
 from PySide6.QtWidgets import QLineEdit
 
-
+import warnings
+warnings.filterwarnings(
+    "ignore",
+    message="Failed to disconnect",
+    category=RuntimeWarning
+)
 
 class SearchBar(QLineEdit):
     def __init__(self, parent=None):
@@ -54,9 +60,10 @@ class SearchBar(QLineEdit):
         if isinstance(event, QInputMethodEvent):
             self._ime_composing = event.commitString() == ""
             if self._ime_composing:
-                print("[DEBUG] IME composition started.")
+                # print("[DEBUG] IME composition started.")
+                pass  
             else:
-                print("[DEBUG] IME composition finalized.")
+                # print("[DEBUG] IME composition finalized.")
                 self._apply_search_filter()  # Trigger search when IME finalizes input
         super().inputMethodEvent(event)
 
@@ -68,9 +75,10 @@ class SearchBar(QLineEdit):
     def _apply_search_filter(self):
         """Apply the search filter logic."""
         search_text = self.text().strip()
-        print(f"Applying search filter: {search_text}")
+        # print(f"Applying search filter: {search_text}")
         # Add your filtering logic or signal emission here
 
+# REPLACE your existing PlayingItemDelegate class with this one
 class PlayingItemDelegate(QStyledItemDelegate):
     def __init__(self, player, parent=None):
         super().__init__(parent)
@@ -80,19 +88,15 @@ class PlayingItemDelegate(QStyledItemDelegate):
         # First, let Qt draw the normal item
         super().paint(painter, option, index)
         
-        # Then check if this is the currently playing item
+        # Then check if this is the currently playing item to draw the background
         item = self.player.playlist_tree.itemFromIndex(index)
         if item:
             data = item.data(0, Qt.UserRole)
             if isinstance(data, tuple) and data[0] == 'current':
                 idx = data[1]
                 if idx == self.player.current_index:
-                    # This is the currently playing item - draw background overlay
+                    bg_color = QColor(231, 111, 81, 40) # Subtle orange tint
                     painter.save()
-                    
-                    # Use the same orange color for both themes
-                    bg_color = QColor(231, 111, 81, 40)  # Orange with alpha for both themes
-                    
                     painter.fillRect(option.rect, bg_color)
                     painter.restore()
 
@@ -239,7 +243,7 @@ def format_time(ms):
 logger = setup_logging()
 
 # Debug banner
-logger.info("Starting Silence Auto-Player (mpv)...")
+logger.info("Starting Silence Suzuka Player...")
 # logger.info(f"Python version: {sys.version}")
 
 # Dependencies
@@ -255,10 +259,10 @@ try:
     )
     from PySide6.QtCore import Qt, QTimer, QSize, QThread, Signal, QEvent, QPropertyAnimation, QEasingCurve, Property
     from PySide6.QtGui import QIcon, QPixmap, QKeySequence, QShortcut, QAction, QPainter, QColor, QPen, QBrush, QFont, QFontDatabase, QFontMetrics, QGuiApplication
-    print("✓ PySide6 imported")
+    # print("✓ PySide6 imported")
     try:
         from PySide6.QtSvg import QSvgRenderer
-        print("✓ QtSvg imported")
+        # print("✓ QtSvg imported")
     except Exception as e:
         QSvgRenderer = None
         print(f"⚠ QtSvg not available: {e}")
@@ -269,7 +273,7 @@ except Exception as e:
 
 try:
     from mpv import MPV
-    print("✓ python-mpv imported")
+    # print("✓ python-mpv imported")
 except Exception as e:
     print(f"✗ python-mpv import failed: {e}")
     print("pip install python-mpv")
@@ -277,7 +281,7 @@ except Exception as e:
 
 try:
     import yt_dlp
-    print("✓ yt-dlp imported")
+    # print("✓ yt-dlp imported")
 except Exception as e:
     print(f"✗ yt-dlp import failed: {e}")
     print("pip install yt-dlp")
@@ -286,7 +290,7 @@ except Exception as e:
 try:
     import requests  # Optional for thumbnails
     HAVE_REQUESTS = True
-    print("✓ requests imported")
+    # print("✓ requests imported")
 except Exception as e:
     HAVE_REQUESTS = False
     print(f"⚠ requests not available (thumbnails disabled): {e}")
@@ -332,7 +336,7 @@ class SystemAudioMonitor(QThread):
         try:
             import sounddevice as sd
             self._sd = sd
-            logger.info("✓ sounddevice available for system audio monitoring")
+            logger.debug("✓ sounddevice available for system audio monitoring")
         except Exception as e:
             self._sd = None
             self.last_error = f"Failed to import the 'sounddevice' library.\n\nTo enable this feature, please run:\npip install sounddevice"
@@ -387,7 +391,7 @@ class SystemAudioMonitor(QThread):
         while self._is_running:
             try:
                 monitor_device = self.device_id if (isinstance(self.device_id, int) and self.device_id >= 0) else None
-                logger.info(f"[AudioMonitor] Starting stream setup. Preferred device ID: {monitor_device}")
+                logger.debug(f"[AudioMonitor] Starting stream setup. Preferred device ID: {monitor_device}")
 
                 if self.monitor_system_output and hasattr(self._sd, 'query_devices'):
                     try:
@@ -413,7 +417,7 @@ class SystemAudioMonitor(QThread):
                     except Exception as e:
                         print(f"WASAPI loopback detection failed: {e}")
                 
-                logger.info(f"[AudioMonitor] Attempting to use device ID: {monitor_device}")
+                logger.debug(f"[AudioMonitor] Attempting to use device ID: {monitor_device}")
 
                 try:
                     samplerate = self._sd.query_devices(monitor_device, 'input')['default_samplerate']
@@ -424,9 +428,9 @@ class SystemAudioMonitor(QThread):
 
                 def audio_callback(indata, frames, time_info, status):
                     if status:
-                        logger.warning(f"[AudioMonitor] Callback status: {status}")
+                        logger.debug(f"[AudioMonitor] Callback status: {status}")
                         if status.input_overflow:
-                            logger.error("[AudioMonitor] Input overflow occurred. Data may be lost.")
+                            logger.debug("[AudioMonitor] Input overflow occurred. Data may be lost.")
 
                     if frames > 0 and indata.size > 0:
                         try:
@@ -464,7 +468,7 @@ class SystemAudioMonitor(QThread):
                         self.audioStateChanged.emit(is_currently_silent)
                         self._last_state_is_silent = is_currently_silent
                 
-                logger.info(f"[AudioMonitor] Opening audio InputStream with samplerate={samplerate}, channels={channels}")
+                logger.debug(f"[AudioMonitor] Opening audio InputStream with samplerate={samplerate}, channels={channels}")
                 with self._sd.InputStream(
                     device=monitor_device, samplerate=samplerate, channels=channels,
                     callback=audio_callback, blocksize=1024, extra_settings=extra_settings
@@ -641,7 +645,7 @@ class YtdlManager(QThread):
         self._queue.put(None)  # Sentinel value to unblock the queue.get()
 
     def run(self):
-        logger.info("[YtdlManager] Background thread started.")
+        logger.debug("[YtdlManager] Background thread started.")
         import yt_dlp
 
         while not self._should_stop:
@@ -994,12 +998,15 @@ class ClickableLabel(QLabel):
         try:
             # Only emit clicked signal for left clicks
             if event.button() == Qt.LeftButton:
-                self.clicked.emit()
-                print(f"[HEADER DEBUG] Left click - emitted clicked signal")
+                pass  
+                # self.clicked.emit()
+                # print(f"[HEADER DEBUG] Left click - emitted clicked signal")
             elif event.button() == Qt.RightButton:
-                print(f"[HEADER DEBUG] Right click - passing through to context menu")
+                pass  
+                # print(f"[HEADER DEBUG] Right click - passing through to context menu")
         except Exception as e:
-             print(f"[HEADER DEBUG] Exception in mousePressEvent: {e}")
+             # print(f"[HEADER DEBUG] Exception in mousePressEvent: {e}")
+             pass
         super().mousePressEvent(event)
 
 class PlaylistTree(QTreeWidget):
@@ -1197,6 +1204,8 @@ class ScrollingTreeWidget(QTreeWidget):
 # --- Player ---
 class MediaPlayer(QMainWindow):
     requestTimerSignal = Signal(int, object)
+    statusMessageSignal = Signal(str, int)
+    
     def __init__(self):
         super().__init__()
 
@@ -1210,6 +1219,7 @@ class MediaPlayer(QMainWindow):
         self.setGeometry(100, 100, 1180, 760)
 
         # --- 1. Define All State Variables First ---
+        self._was_maximized = False
         self.playlist = []
         self.current_index = -1
         self.playback_positions = {}
@@ -1311,6 +1321,7 @@ class MediaPlayer(QMainWindow):
 
         # --- 3. Connect Signals and Build the Rest of the App ---
         self.requestTimerSignal.connect(self._start_timer_from_main_thread)
+        self.statusMessageSignal.connect(self._show_status_message)
         self._build_ui()
         self._setup_keyboard_shortcuts()
         self._init_mpv()
@@ -1363,12 +1374,12 @@ class MediaPlayer(QMainWindow):
 
     def _show_library_header_context_menu(self, pos):
         """Show context menu for the library header"""
-        print(f"[HEADER DEBUG] *** LIBRARY HEADER CONTEXT MENU TRIGGERED at pos: {pos} ***")
+        # print(f"[HEADER DEBUG] *** LIBRARY HEADER CONTEXT MENU TRIGGERED at pos: {pos} ***")
         try:
             menu = QMenu(self)
             self._apply_menu_theme(menu)
             
-            print(f"[HEADER DEBUG] Menu created successfully")
+            # print(f"[HEADER DEBUG] Menu created successfully")
             
             # Reset all playback positions
             reset_action = menu.addAction("🔄 Reset All Playback Positions")
@@ -1379,15 +1390,15 @@ class MediaPlayer(QMainWindow):
             clear_completed_action = menu.addAction("✅ Mark All as Unwatched")
             clear_completed_action.triggered.connect(self._mark_all_unwatched)
             
-            print(f"[HEADER DEBUG] About to exec menu with {len(menu.actions())} actions")
+            # print(f"[HEADER DEBUG] About to exec menu with {len(menu.actions())} actions")
             
             # Show the menu
             menu.exec(self.library_header_label.mapToGlobal(pos))
             
-            print(f"[HEADER DEBUG] Menu exec completed")
+            # print(f"[HEADER DEBUG] Menu exec completed")
             
         except Exception as e:
-            print(f"[HEADER DEBUG] Exception: {e}")
+            # print(f"[HEADER DEBUG] Exception: {e}")
             logger.error(f"Library header context menu error: {e}") 
 
     def _reset_all_playback_positions(self):
@@ -1620,7 +1631,7 @@ class MediaPlayer(QMainWindow):
 
     def _reset_group_playback_positions(self, group_key):
         """Reset playback positions for all items in a specific group"""
-        print(f"DEBUG: _reset_group_playback_positions called with key: {group_key}")
+        # print(f"DEBUG: _reset_group_playback_positions called with key: {group_key}")
         try:
             indices = self._iter_indices_for_group(group_key)
             if not indices:
@@ -1678,7 +1689,7 @@ class MediaPlayer(QMainWindow):
 
     def _mark_group_unwatched_enhanced(self, group_key):
         """Mark all items in a specific group as unwatched with confirmation"""
-        print(f"DEBUG: _mark_group_unwatched_enhanced called with key: {group_key}") 
+        # print(f"DEBUG: _mark_group_unwatched_enhanced called with key: {group_key}") 
         try:
             indices = self._iter_indices_for_group(group_key)
             if not indices:
@@ -1800,10 +1811,10 @@ class MediaPlayer(QMainWindow):
     def _setup_up_next_scrolling(self):
         """Setup mouse tracking and scrolling for Up Next"""
         if not hasattr(self, 'up_next'):
-            print("[DEBUG] No up_next widget found")
+            # print("[DEBUG] No up_next widget found")
             return
         
-        print("[DEBUG] Setting up Up Next scrolling")
+        # print("[DEBUG] Setting up Up Next scrolling")
         
         # Enable mouse tracking
         self.up_next.setMouseTracking(True)
@@ -1840,7 +1851,7 @@ class MediaPlayer(QMainWindow):
             # Call original handler first
             self._original_leave_event(event)
             self._stop_scrolling()
-            print("[DEBUG] Mouse left Up Next")
+            # print("[DEBUG] Mouse left Up Next")
         
         # Replace event handlers
         self.up_next.mouseMoveEvent = on_mouse_move
@@ -1924,14 +1935,25 @@ class MediaPlayer(QMainWindow):
         try:
             if hasattr(self, 'audio_monitor') and self.audio_monitor:
                 self.audio_monitor._silence_counter = 0.0
-                print("[SILENCE] Counter reset to 0")
+                # print("[SILENCE] Counter reset to 0")
         except Exception as e:
             print(f"[SILENCE] Reset failed: {e}")   
 
     def _start_timer_from_main_thread(self, delay, function_to_call):
         """A thread-safe slot to start a QTimer."""
-        self.requestTimerSignal.connect(self._start_timer_from_main_thread)
-        
+        try:
+            # Use QTimer.singleShot, which is thread-safe and executes on the main thread
+            QTimer.singleShot(delay, function_to_call)
+        except Exception as e:
+            print(f"Error starting timer from main thread: {e}")
+
+    def _show_status_message(self, message: str, timeout: int):
+        """A thread-safe slot to show a status bar message."""
+        try:
+            self.status.showMessage(message, timeout)
+        except Exception as e:
+            print(f"Error showing status message: {e}")        
+            
     def _update_volume_icon(self, is_muted):
             """Updates the volume icon to reflect the mute state, handling both QIcon and emoji."""
             try:
@@ -3258,7 +3280,7 @@ class MediaPlayer(QMainWindow):
             border: 1px solid #4a4a4a;
         }        
         #settingsBtn { background: transparent; color: #b3b3b3; font-size: 18px; border: none; padding: 2px 6px; min-width: 32px; min-height: 28px; border-radius: 6px; }
-        #settingsBtn:hover { background-color: rgba(255,255,255,0.08); color: #f3f3f3; transition: all 150ms ease-out; }
+        #settingsBtn:hover { background-color: rgba(255,255,255,0.08); color: #f3f3f3; }
         #settingsBtn:pressed { background-color: rgba(255,255,255,0.2); }
         #scopeChip { background-color: rgba(48,48,48,0.9); color: #f3f3f3; border: 1px solid #4a4a4a; padding: 2px 8px; border-radius: 10px; font-size: 12px; margin-left: 8px; }
         #statsBadge { background-color: transparent; color: #b3b3b3; border: 1px solid #4a4a4a; padding: 4px 12px; margin-left: 8px; margin-right: 8px; border-radius: 10px; font-size: 12px; }
@@ -3284,7 +3306,7 @@ class MediaPlayer(QMainWindow):
         #addBtn:hover { background-color: #d86a4a; }
         #addBtn:pressed { background-color: #d1603f; }
         #miniBtn { background: transparent; color: #b3b3b3; border: none; font-size: 16px; }
-        #miniBtn:hover { color: #ffffff; transition: color 150ms ease-out; }
+        #miniBtn:hover { color: #ffffff; }
         #miniBtn:pressed { color: #888888; }
         #playlistTree { background-color: transparent; border: none; color: #f3f3f3; font-family: '{self._serif_font}'; alternate-background-color: #2a2a2a; margin-left: 8px; }
         #playlistTree::item {
@@ -3302,8 +3324,12 @@ class MediaPlayer(QMainWindow):
         #playlistTree::item:!selected {
             border-bottom: 1px solid #3a3a3a;
         }
-        #playlistTree::item:hover { background-color: rgba(255, 85, 85, 0.15); transition: background-color 150ms ease-out; }
+        #playlistTree::item:hover { background-color: rgba(255, 85, 85, 0.15); }
         #playlistTree::item:selected { background-color: #e76f51; color: #ffffff; }
+        #playlistTree::item[loading="true"] {
+            color: #888888;
+            font-style: italic;
+        }
         #videoWidget { background-color: #000; border-radius: 8px; border: 10px solid #1e1e1e; }
         #playPauseBtn { background-color: #e76f51; color: #f3f3f3; font-size: 26px; border: none; border-radius: 30px; width: 60px; height: 60px; padding: 0px; }
         #playPauseBtn:hover { background-color: #d86a4a; }
@@ -3323,7 +3349,7 @@ class MediaPlayer(QMainWindow):
         #timeLabel, #durLabel { font-family: '{self._ui_font}'; font-size: 13px; color: #b3b3b3; }
         #silenceIndicator { color: #e76f51; font-size: 18px; margin: 0 8px; padding-bottom: 3px; }
         #upNext::item { min-height: 28px; height: 28px; padding: 6px 12px; }
-        #upNext::item:hover { background-color: rgba(255, 85, 85, 0.08); transition: background-color 150ms ease-out; }
+        #upNext::item:hover { background-color: rgba(255, 85, 85, 0.08); }
         #upNext::item:selected { background-color: #e76f51; color: #f3f3f3; }
         #upNext { 
             background-color: #2a2a2a; 
@@ -3610,7 +3636,7 @@ class MediaPlayer(QMainWindow):
             border: 1px solid #c2a882;
         }        
         #settingsBtn { background: transparent; color: #654321; font-size: 18px; border: none; padding: 2px 6px; min-width: 32px; min-height: 28px; border-radius: 6px; }
-        #settingsBtn:hover { background-color: rgba(0,0,0,0.03); color: #4a2c2a; transition: all 150ms ease-out; }
+        #settingsBtn:hover { background-color: rgba(0,0,0,0.03); color: #4a2c2a; }
         #settingsBtn:pressed { background-color: rgba(0,0,0,0.08); }
         #scopeChip { background-color: rgba(250,243,224,0.9); color: #4a2c2a; border: 1px solid #c2a882; padding: 2px 8px; border-radius: 10px; font-size: 12px; margin-left: 8px; }
         #statsBadge { background-color: transparent; color: #654321; border: 1px solid #c2a882; padding: 4px 12px; margin-left: 8px; margin-right: 8px; border-radius: 10px; font-size: 12px; }
@@ -3636,7 +3662,7 @@ class MediaPlayer(QMainWindow):
         #addBtn:hover { background-color: #d86a4a; }
         #addBtn:pressed { background-color: #d1603f; }
         #miniBtn { background: transparent; color: #654321; border: none; font-size: 16px; }
-        #miniBtn:hover { color: #4a2c2a; transition: color 150ms ease-out; }
+        #miniBtn:hover { color: #4a2c2a; }
         #miniBtn:pressed { color: #654321; }
         #playlistTree { background-color: transparent; border: none; color: #4a2c2a; font-family: '{self._serif_font}'; alternate-background-color: #f0e7cf; margin-left: 8px; }
         #playlistTree::item {
@@ -3662,8 +3688,12 @@ class MediaPlayer(QMainWindow):
             color: #fff6d9;
             font-weight: bold;
         }
-        #playlistTree::item:hover { background-color: rgba(239, 227, 200, 0.5); transition: background-color 150ms ease-out; }
+        #playlistTree::item:hover { background-color: rgba(239, 227, 200, 0.5); }
         #playlistTree::item:selected { background-color: #e76f51; color: #f3ead3; }
+        #playlistTree::item[loading="true"] {
+            color: #888888;
+            font-style: italic;
+        }
         #videoWidget { background-color: #000; border-radius: 8px; border: 10px solid #faf3e0; }
         /* REMOVED: #trackLabel styling - let _update_widget_themes() handle it */
         #playPauseBtn { background-color: #e76f51; color: #f3ead3; font-size: 26px; border: none; border-radius: 30px; width: 60px; height: 60px; padding: 0px; }
@@ -3686,7 +3716,7 @@ class MediaPlayer(QMainWindow):
         #timeLabel, #durLabel { font-family: '{self._ui_font}'; font-size: 13px; color: #654321; }
         #silenceIndicator { color: #b00000; font-size: 18px; margin: 0 8px; padding-bottom: 3px; }
         #upNext::item { min-height: 28px; height: 28px; padding: 6px 12px; }
-        #upNext::item:hover { background-color: rgba(239, 227, 200, 0.4); transition: background-color 150ms ease-out; }
+        #upNext::item:hover { background-color: rgba(239, 227, 200, 0.4); }
         #upNext::item:selected { background-color: #e76f51; color: #f3ead3; }
         #upNextHeader { 
             background-color: rgba(250,243,224,0.9); 
@@ -4054,10 +4084,10 @@ class MediaPlayer(QMainWindow):
                             # Only update every 5 seconds to avoid spam
                             now = time.time()
                             if not hasattr(self, '_last_buffer_msg') or now - self._last_buffer_msg > 5:
-                                self.status.showMessage(f"Buffered: {format_time(int(cached * 1000))}", 1000)
+                                self.statusMessageSignal.emit(f"Buffered: {format_time(int(cached * 1000))}", 1000) # <-- FIX
                                 self._last_buffer_msg = now
                 except Exception:
-                    pass 
+                    pass
                     
             @self.mpv.property_observer('mute')
             def _mute(_name, value):
@@ -4242,15 +4272,19 @@ class MediaPlayer(QMainWindow):
             logger.error(f"Failed to setup button animations: {e}")
 
     def _show_player(self):
-        # First, check if centering is enabled and the window is not maximized.
-        # By doing this *before* showing, we eliminate the flicker.
-        if getattr(self, 'center_on_restore', True) and not self.isMaximized():
-            self.center_on_screen()
-        
-        # Now, show the window at its (potentially new) position.
-        self.showNormal()
-        self.activateWindow()
-        self.raise_()
+            # Restore the window intelligently
+            if getattr(self, '_was_maximized', False):
+                # If it was maximized before, restore it to maximized.
+                self.showMaximized()
+            else:
+                # Otherwise, use the existing logic for normal windows.
+                if getattr(self, 'center_on_restore', True):
+                    self.center_on_screen()
+                self.showNormal()
+            
+            # Activate and raise the window regardless of state
+            self.activateWindow()
+            self.raise_()
 
     def closeEvent(self, e):
         # Gracefully stop monitors/threads and persist settings
@@ -4322,7 +4356,7 @@ class MediaPlayer(QMainWindow):
                 # Update logging level immediately
                 try:
                     logging.getLogger().setLevel(getattr(logging, self.log_level.upper(), logging.INFO))
-                    logger.info(f"Logging level set to {self.log_level}")
+                    # logger.info(f"Logging level set to {self.log_level}") # 
                 except Exception:
                     pass
                 # Restore scope if available
@@ -4995,7 +5029,7 @@ class MediaPlayer(QMainWindow):
     def _highlight_current_row(self):
         """Highlight the currently playing item with icon and bold text"""
         try:
-            print(f"\n[HIGHLIGHT DEBUG] Starting highlight_current_row")
+            # print(f"\n[HIGHLIGHT DEBUG] Starting highlight_current_row")
             
             # Get fonts
             default_font = self._font_serif_no_size(italic=True, bold=True)
@@ -5018,7 +5052,7 @@ class MediaPlayer(QMainWindow):
                         original_text = original_text[2:]
                     
                     if idx == self.current_index:
-                        print(f"[HIGHLIGHT DEBUG] *** MATCH FOUND! Setting highlight for idx={idx}")
+                        # print(f"[HIGHLIGHT DEBUG] *** MATCH FOUND! Setting highlight for idx={idx}")
                         
                         # Add play icon and extra bold font
                         item.setText(0, f"▶ {original_text}")
@@ -5043,7 +5077,8 @@ class MediaPlayer(QMainWindow):
             self.playlist_tree.viewport().update()
             
         except Exception as e:
-            print(f"[HIGHLIGHT DEBUG] ERROR: {e}")
+            pass
+            # print(f"[HIGHLIGHT DEBUG] ERROR: {e}")
         
     def _on_title_resolved(self, url: str, title: str):
         try:
@@ -5101,6 +5136,12 @@ class MediaPlayer(QMainWindow):
                             item.setIcon(0, icon)
                         else:
                             item.setText(0, f"{icon} {title}")
+
+                        # Reset the item's style from its loading state
+                        font = item.font(0)
+                        font.setItalic(False)
+                        item.setFont(0, font)
+                        item.setForeground(0, QBrush()) # Resets to default color
                         
                         # Update the data reference
                         item_data['title'] = title
@@ -5420,7 +5461,7 @@ class MediaPlayer(QMainWindow):
     def _iter_indices_for_group(self, key):
         """Get all playlist indices for the given group key."""
         try:
-            print(f"[GroupIndices] Searching for key: {repr(key)}")
+            # print(f"[GroupIndices] Searching for key: {repr(key)}")
             
             # Primary: match either playlist_key OR playlist title
             indices = []
@@ -5432,7 +5473,7 @@ class MediaPlayer(QMainWindow):
                     indices.append(i)
             
             if indices:
-                print(f"[GroupIndices] Found {len(indices)} items via playlist matching")
+                # print(f"[GroupIndices] Found {len(indices)} items via playlist matching")
                 return indices
 
             # Fallback: Group by source type
@@ -5716,7 +5757,7 @@ class MediaPlayer(QMainWindow):
     def _copy_url(self, url: str):
         """Copies the given URL to the system clipboard."""
         try:
-            print(f"[DEBUG] _copy_url called with URL: {repr(url)}")
+            # print(f"[DEBUG] _copy_url called with URL: {repr(url)}")
             
             if not url:
                 print("[DEBUG] URL is empty or None")
@@ -5724,43 +5765,44 @@ class MediaPlayer(QMainWindow):
                 return
                 
             url_str = str(url).strip()
-            print(f"[DEBUG] Processed URL string: {repr(url_str)}")
+            # print(f"[DEBUG] Processed URL string: {repr(url_str)}")
             
             # Try QGuiApplication first, fallback to QApplication
             clipboard = None
             try:
                 clipboard = QGuiApplication.clipboard()
-                print("[DEBUG] Using QGuiApplication.clipboard()")
+                # print("[DEBUG] Using QGuiApplication.clipboard()")
             except Exception as e1:
-                print(f"[DEBUG] QGuiApplication.clipboard() failed: {e1}")
+                # print(f"[DEBUG] QGuiApplication.clipboard() failed: {e1}")
                 try:
                     clipboard = QApplication.clipboard()
-                    print("[DEBUG] Using QApplication.clipboard()")
+                    # print("[DEBUG] Using QApplication.clipboard()")
                 except Exception as e2:
-                    print(f"[DEBUG] QApplication.clipboard() failed: {e2}")
+                    pass
+                    # print(f"[DEBUG] QApplication.clipboard() failed: {e2}")
                     
             if not clipboard:
                 raise Exception("Could not access system clipboard")
                 
-            print(f"[DEBUG] Clipboard object obtained: {type(clipboard)}")
+            # print(f"[DEBUG] Clipboard object obtained: {type(clipboard)}")
             
             # Set the text
             clipboard.setText(url_str)
-            print(f"[DEBUG] setText() called successfully")
+            # print(f"[DEBUG] setText() called successfully")
             
             # Verify the copy worked
             copied_text = clipboard.text()
-            print(f"[DEBUG] Verification - clipboard now contains: {repr(copied_text)}")
+            # print(f"[DEBUG] Verification - clipboard now contains: {repr(copied_text)}")
             
             if copied_text == url_str:
                 self.status.showMessage("URL copied to clipboard", 2000)
                 logger.info(f"Successfully copied URL to clipboard: {url_str[:50]}...")
             else:
                 self.status.showMessage("Copy may have failed - clipboard content differs", 3000)
-                print(f"[DEBUG] WARNING: Expected {repr(url_str)}, got {repr(copied_text)}")
+                # print(f"[DEBUG] WARNING: Expected {repr(url_str)}, got {repr(copied_text)}")
                 
         except Exception as e:
-            print(f"[DEBUG] Exception in _copy_url: {e}")
+            # print(f"[DEBUG] Exception in _copy_url: {e}")
             import traceback
             traceback.print_exc()
             logger.error(f"Failed to copy URL to clipboard: {e}")
@@ -5928,7 +5970,8 @@ class MediaPlayer(QMainWindow):
                 loader.start()
             else:
                 # --- Fast path for single videos ---
-                item = {'title': url, 'url': url, 'type': media_type}
+                # Use a placeholder title to show something is happening
+                item = {'title': f"[Loading...] {Path(url).name}", 'url': url, 'type': media_type}
 
                 # Add item to the end of the list
                 new_index = len(self.playlist)
@@ -5970,9 +6013,10 @@ class MediaPlayer(QMainWindow):
             
             if has_playlist:
                 # This item belongs to a specific playlist group
-                # For now, do a targeted refresh of just that group
-                # (Full implementation would be more complex)
-                self._refresh_playlist_widget_full()
+                
+                # --- FIX: Save the expansion state before refreshing ---
+                expansion_state = self._get_tree_expansion_state()
+                self._refresh_playlist_widget_full(expansion_state=expansion_state)
             elif should_group_singles:
                 # Add to miscellaneous group
                 misc_group = self._find_or_create_misc_group()
@@ -5983,6 +6027,11 @@ class MediaPlayer(QMainWindow):
                     node.setText(0, f"{icon} {item.get('title', 'Unknown')}")
                 node.setFont(0, self._font_serif_no_size(italic=True, bold=True))
                 node.setData(0, Qt.UserRole, ('current', index, item))
+                # Set loading style directly on the item
+                font = node.font(0)
+                font.setItalic(True)
+                node.setFont(0, font)
+                node.setForeground(0, QColor("#888888"))
                 misc_group.addChild(node)
                 # Update group header count
                 misc_group.setText(0, f"🎵 Miscellaneous ({misc_group.childCount()})")
@@ -5995,6 +6044,11 @@ class MediaPlayer(QMainWindow):
                     node.setText(0, f"{icon} {item.get('title', 'Unknown')}")
                 node.setFont(0, self._font_serif_no_size(italic=True, bold=True))
                 node.setData(0, Qt.UserRole, ('current', index, item))
+                # Set loading style directly on the item
+                font = node.font(0)
+                font.setItalic(True)
+                node.setFont(0, font)
+                node.setForeground(0, QColor("#888888"))
             
             # Show main content if we were showing empty state
             if self.playlist_stack.currentIndex() == 1:
@@ -6510,7 +6564,7 @@ class MediaPlayer(QMainWindow):
     def _remove_index(self, idx):
         import traceback
         print("🗑️ _remove_index called!")
-        print("📍 Called from:", traceback.format_stack()[-2].strip())  # Shows who called this
+        # print("📍 Called from:", traceback.format_stack()[-2].strip())  # Shows who called this
         if 0 <= idx < len(self.playlist):
 
             # --- FIX: Remember which folders are open ---
@@ -6777,7 +6831,8 @@ class MediaPlayer(QMainWindow):
     # Playback
     def play_current(self):
         try:
-            print(f"[play_current] idx={self.current_index} len={len(self.playlist)} scope={self.play_scope}")
+            # print(f"[play_current] idx={self.current_index} len={len(self.playlist)} scope={self.play_scope}")
+            pass
         except Exception:
             pass
         if not (0 <= self.current_index < len(self.playlist)):
@@ -6833,12 +6888,13 @@ class MediaPlayer(QMainWindow):
         self._update_up_next()
         # Seamless resume: load with start option to avoid 0:00 flash
         _url = it.get('url')
-        print(f"[DEBUG] Context menu - extracted URL: {repr(url)} from item: {repr(it)}")
+        # print(f"[DEBUG] Context menu - extracted URL: {repr(url)} from item: {repr(it)}")
         _key = self._canonical_url_key(_url) if _url else None
         _resume_ms = int(self.playback_positions.get(_key, self.playback_positions.get(_url, 0))) if _url else 0
         _resume_sec = max(0.0, float(_resume_ms) / 1000.0)
         try:
-            print(f"[play_current] loading title={it.get('title')} url={_url} resume_ms={_resume_ms}")
+            # print(f"[play_current] loading title={it.get('title')} url={_url} resume_ms={_resume_ms}")
+            pass
         except Exception:
             pass
         # Set enforcement window to protect target from early regressions
@@ -6923,10 +6979,10 @@ class MediaPlayer(QMainWindow):
 
     def toggle_play_pause(self):
         if self._is_playing():
-            print("[DEBUG] Attempting to pause...")
+            # print("[DEBUG] Attempting to pause...")
             self.mpv.pause = True
             self._intended_playback_state = False
-            print(f"[DEBUG] After pause command: mpv.pause = {self.mpv.pause}")
+            # print(f"[DEBUG] After pause command: mpv.pause = {self.mpv.pause}")
             self._save_current_position()
             try:
                 self.play_pause_btn.setIcon(self._play_icon_normal)
@@ -6938,17 +6994,17 @@ class MediaPlayer(QMainWindow):
                 except Exception:
                     pass
             self._end_session()
-            print("[DEBUG] Pause complete, calling _update_silence_indicator...")
+            # print("[DEBUG] Pause complete, calling _update_silence_indicator...")
             self._update_silence_indicator()
         else:
-            print("[DEBUG] Attempting to play...")
+            # print("[DEBUG] Attempting to play...")
             if self.current_index == -1 and self.playlist:
                 self.current_index = 0
                 self.play_current()
                 return
             self.mpv.pause = False
             self._intended_playback_state = True
-            print(f"[DEBUG] After play command: mpv.pause = {self.mpv.pause}")
+            # print(f"[DEBUG] After play command: mpv.pause = {self.mpv.pause}")
             
             # RESET SILENCE TIMER when starting playback
             self._reset_silence_counter()
@@ -6966,7 +7022,7 @@ class MediaPlayer(QMainWindow):
                 except Exception:
                     pass
             self._start_session()
-            print("[DEBUG] Play complete, calling _update_silence_indicator...")
+            # print("[DEBUG] Play complete, calling _update_silence_indicator...")
             self._update_silence_indicator()
         self._update_tray()
 
@@ -7040,7 +7096,7 @@ class MediaPlayer(QMainWindow):
             cur = int(self._last_play_pos_ms or 0)
             # If we're significantly before the target, re-apply seek
             if cur < tgt - 1500:
-                print(f"[resume] reapply from {format_time(cur)} to {format_time(tgt)} source={source}")
+                # print(f"[resume] reapply from {format_time(cur)} to {format_time(tgt)} source={source}")
                 self.mpv.time_pos = max(0.0, float(tgt) / 1000.0)
         except Exception:
             pass
@@ -7127,7 +7183,7 @@ class MediaPlayer(QMainWindow):
         try:
             cur = float(self.mpv.time_pos or 0.0) * 1000.0
             if abs(cur - pos_ms) < 1500:  # within 1.5s
-                print(f"[resume] confirmed at {format_time(int(cur))} for {url}")
+                # print(f"[resume] confirmed at {format_time(int(cur))} for {url}")
                 return
         except Exception:
             pass
@@ -7652,145 +7708,108 @@ class MediaPlayer(QMainWindow):
 
     # Stats dialog
     def open_stats(self):
-        dlg = QDialog(self); dlg.setWindowTitle("Listening Statistics"); dlg.resize(780, 460)
-        layout = QVBoxLayout(dlg)
-        overall = QLabel(f"Total time: {human_duration(self.listening_stats.get('overall', 0))}")
-        layout.addWidget(overall)
+            dlg = QDialog(self); dlg.setWindowTitle("Listening Statistics"); dlg.resize(780, 460)
+            layout = QVBoxLayout(dlg)
+            overall = QLabel(f"Total time: {human_duration(self.listening_stats.get('overall', 0))}")
+            layout.addWidget(overall)
 
-        # Heatmap
-        daily = dict(self.listening_stats.get('daily', {}))
-        heat = StatsHeatmapWidget(daily, theme=getattr(self, 'theme', 'dark'))
-        layout.addWidget(heat)
+            # Heatmap
+            daily = dict(self.listening_stats.get('daily', {}))
+            heat = StatsHeatmapWidget(daily, theme=getattr(self, 'theme', 'dark'))
+            layout.addWidget(heat)
 
-        # Metrics under heatmap
-        def _compute_metrics(dmap):
-            import datetime as _dt
-            if not dmap:
-                return 0, 0.0
-            items = []
-            for k, v in dmap.items():
-                try:
-                    y, m, d = [int(x) for x in k.split('-')]
-                    items.append((_dt.date(y, m, d), float(v or 0)))
-                except Exception:
-                    continue
-            if not items:
-                return 0, 0.0
-            items.sort(key=lambda x: x[0])
-            # Average over non-zero days
-            nz = [v for _, v in items if v > 0]
-            avg = (sum(nz) / len(nz)) if nz else 0.0
-            # Longest consecutive-day streak with >0 seconds
-            longest = cur = 0
-            prev_date = None
-            for dte, val in items:
-                if val > 0:
-                    if prev_date is not None and dte == prev_date + _dt.timedelta(days=1):
-                        cur += 1
+            # Metrics under heatmap
+            def _compute_metrics(dmap):
+                import datetime as _dt
+                if not dmap:
+                    return 0, 0.0
+                items = []
+                for k, v in dmap.items():
+                    try:
+                        y, m, d = [int(x) for x in k.split('-')]
+                        items.append((_dt.date(y, m, d), float(v or 0)))
+                    except Exception:
+                        continue
+                if not items:
+                    return 0, 0.0
+                items.sort(key=lambda x: x[0])
+                # Average over non-zero days
+                nz = [v for _, v in items if v > 0]
+                avg = (sum(nz) / len(nz)) if nz else 0.0
+                # Longest consecutive-day streak with >0 seconds
+                longest = cur = 0
+                prev_date = None
+                for dte, val in items:
+                    if val > 0:
+                        if prev_date is not None and dte == prev_date + _dt.timedelta(days=1):
+                            cur += 1
+                        else:
+                            cur = 1
                     else:
-                        cur = 1
+                        cur = 0
+                    if cur > longest:
+                        longest = cur
+                    prev_date = dte
+                return int(longest), float(avg)
+
+            _longest, _avg_sec = _compute_metrics(daily)
+            metrics = QLabel(f"Longest streak: {_longest} days    •    Average daily: {human_duration(_avg_sec)}")
+            layout.addWidget(metrics)
+
+            # Table and filter controls
+            table = QTableWidget()
+            table.setColumnCount(2)
+            table.setHorizontalHeaderLabels(["Date", "Time Listened"])
+            table.horizontalHeader().setStretchLastSection(True)
+            table.verticalHeader().setVisible(False)
+            # Make the table read-only (disable in-place editing) but keep selection/navigation
+            try:
+                from PySide6.QtWidgets import QAbstractItemView
+                table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+                table.setSelectionBehavior(QAbstractItemView.SelectRows)
+                table.setSelectionMode(QAbstractItemView.SingleSelection)
+            except Exception:
+                pass
+            layout.addWidget(table)
+
+            flt = QHBoxLayout()
+            selected_label = QLabel("Click a day in the heatmap to filter the table"); flt.addWidget(selected_label); flt.addStretch()
+            show_all_btn = QPushButton("Show All"); show_all_btn.setVisible(False); flt.addWidget(show_all_btn)
+            layout.addLayout(flt)
+
+            def rebuild_table(filter_date=None):
+                rows = sorted(daily.items(), key=lambda x: x[0], reverse=True)
+                if filter_date:
+                    rows = [(d, s) for d, s in rows if d == filter_date]
+                    sel_sec = daily.get(filter_date, 0)
+                    selected_label.setText(f"Selected: {filter_date} — {human_duration(sel_sec)}")
+                    show_all_btn.setVisible(True)
                 else:
-                    cur = 0
-                if cur > longest:
-                    longest = cur
-                prev_date = dte
-            return int(longest), float(avg)
+                    selected_label.setText("Click a day in the heatmap to filter the table")
+                    show_all_btn.setVisible(False)
+                table.setRowCount(len(rows))
+                for r, (d, sec) in enumerate(rows):
+                    it0 = QTableWidgetItem(d)
+                    try:
+                        it0.setFlags(it0.flags() & ~Qt.ItemIsEditable)
+                    except Exception:
+                        pass
+                    table.setItem(r, 0, it0)
 
-        _longest, _avg_sec = _compute_metrics(daily)
-        metrics = QLabel(f"Longest streak: {_longest} days    •    Average daily: {human_duration(_avg_sec)}")
-        layout.addWidget(metrics)
+                    it1 = QTableWidgetItem(human_duration(sec))
+                    try:
+                        it1.setFlags(it1.flags() & ~Qt.ItemIsEditable)
+                    except Exception:
+                        pass
+                    table.setItem(r, 1, it1)
+                table.resizeColumnsToContents()
 
-        # Table and filter controls
-        table = QTableWidget()
-        table.setColumnCount(2)
-        table.setHorizontalHeaderLabels(["Date", "Time Listened"])
-        table.horizontalHeader().setStretchLastSection(True)
-        table.verticalHeader().setVisible(False)
-        # Make the table read-only (disable in-place editing) but keep selection/navigation
-        try:
-            from PySide6.QtWidgets import QAbstractItemView
-            table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-            table.setSelectionBehavior(QAbstractItemView.SelectRows)
-            table.setSelectionMode(QAbstractItemView.SingleSelection)
-        except Exception:
-            pass
-        layout.addWidget(table)
+            heat.daySelected.connect(lambda d: rebuild_table(d))
+            show_all_btn.clicked.connect(lambda: rebuild_table(None))
+            rebuild_table(None)
 
-        flt = QHBoxLayout()
-        selected_label = QLabel("Click a day in the heatmap to filter the table"); flt.addWidget(selected_label); flt.addStretch()
-        show_all_btn = QPushButton("Show All"); show_all_btn.setVisible(False); flt.addWidget(show_all_btn)
-        layout.addLayout(flt)
-
-        def rebuild_table(filter_date=None):
-            rows = sorted(daily.items(), key=lambda x: x[0], reverse=True)
-            if filter_date:
-                rows = [(d, s) for d, s in rows if d == filter_date]
-                sel_sec = daily.get(filter_date, 0)
-                selected_label.setText(f"Selected: {filter_date} — {human_duration(sel_sec)}")
-                show_all_btn.setVisible(True)
-            else:
-                selected_label.setText("Click a day in the heatmap to filter the table")
-                show_all_btn.setVisible(False)
-            table.setRowCount(len(rows))
-            for r, (d, sec) in enumerate(rows):
-                it0 = QTableWidgetItem(d)
-                try:
-                    it0.setFlags(it0.flags() & ~Qt.ItemIsEditable)
-                except Exception:
-                    pass
-                table.setItem(r, 0, it0)
-
-                it1 = QTableWidgetItem(human_duration(sec))
-                try:
-                    it1.setFlags(it1.flags() & ~Qt.ItemIsEditable)
-                except Exception:
-                    pass
-                table.setItem(r, 1, it1)
-            table.resizeColumnsToContents()
-
-        heat.daySelected.connect(lambda d: rebuild_table(d))
-        show_all_btn.clicked.connect(lambda: rebuild_table(None))
-        rebuild_table(None)
-
-        btns = QDialogButtonBox(QDialogButtonBox.Close); btns.rejected.connect(dlg.reject); layout.addWidget(btns)
-        layout = QVBoxLayout(dlg)
-        overall = QLabel(f"Total time: {human_duration(self.listening_stats.get('overall', 0))}")
-        layout.addWidget(overall)
-        table = QTableWidget()
-        table.setColumnCount(2)
-        table.setHorizontalHeaderLabels(["Date", "Time Listened"])
-        # Make the table read-only
-        try:
-            from PySide6.QtWidgets import QAbstractItemView
-            table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-            table.setSelectionBehavior(QAbstractItemView.SelectRows)
-            table.setSelectionMode(QAbstractItemView.SingleSelection)
-        except Exception:
-            pass
-
-        daily = self.listening_stats.get('daily', {})
-        rows = sorted(daily.items(), key=lambda x: x[0], reverse=True)
-        table.setRowCount(len(rows))
-        for i, (day, secs) in enumerate(rows):
-            it0 = QTableWidgetItem(day)
-            try:
-                it0.setFlags(it0.flags() & ~Qt.ItemIsEditable)
-            except Exception:
-                pass
-            table.setItem(i, 0, it0)
-
-            it1 = QTableWidgetItem(human_duration(secs))
-            try:
-                it1.setFlags(it1.flags() & ~Qt.ItemIsEditable)
-            except Exception:
-                pass
-            table.setItem(i, 1, it1)
-
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        layout.addWidget(table)
-        reset = QPushButton("Reset All Stats"); reset.clicked.connect(lambda: self._reset_stats(dlg)); layout.addWidget(reset)
-        btns = QDialogButtonBox(QDialogButtonBox.Close); btns.rejected.connect(dlg.reject); layout.addWidget(btns)
-        dlg.exec()
+            btns = QDialogButtonBox(QDialogButtonBox.Close); btns.rejected.connect(dlg.reject); layout.addWidget(btns)
+            dlg.exec()
 
     def _reset_stats(self, dlg):
         if QMessageBox.question(self, "Reset Stats", "Are you sure?", QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
@@ -7898,7 +7917,7 @@ class MediaPlayer(QMainWindow):
             # Only save if advanced by >=5s since last save for this URL
             prev = self._last_saved_pos_ms.get(url, -1)
             if prev >= 0 and abs(pos - prev) < 5000:
-                print(f"[resume] skip (no movement) at {format_time(pos)} for {url}")
+                # print(f"[resume] skip (no movement) at {format_time(pos)} for {url}")
                 return
             self.playback_positions[url] = pos
             self._last_saved_pos_ms[url] = pos
@@ -7933,7 +7952,7 @@ class MediaPlayer(QMainWindow):
                 EXPANSION_THRESHOLD = 5 
 
                 query = text.lower().strip()
-                print(f"[SEARCH] Filtering with query: '{query}'")
+                # print(f"[SEARCH] Filtering with query: '{query}'")
 
                 if not query:
                     self._show_all_items()
@@ -7984,7 +8003,7 @@ class MediaPlayer(QMainWindow):
                             total_matches_found += 1 
 
                 # --- NEW, MORE FLEXIBLE AUTO-EXPAND LOGIC ---
-                print(f"[SEARCH] Found {total_matches_found} total matching items.")
+                # print(f"[SEARCH] Found {total_matches_found} total matching items.")
 
                 # If the total number of results is small, expand all parent groups that have matches.
                 if 0 < total_matches_found <= EXPANSION_THRESHOLD:
@@ -8044,7 +8063,7 @@ class MediaPlayer(QMainWindow):
     def _on_search_text_changed(self, text):
         """Simplified search with better Japanese support"""
         try:
-            print(f"[DEBUG] Search text changed: '{text}'")  # DEBUG LINE
+            # print(f"[DEBUG] Search text changed: '{text}'")  # DEBUG LINE
             
             # Stop any existing timer
             self._search_timer.stop()
@@ -8059,7 +8078,7 @@ class MediaPlayer(QMainWindow):
                 # For ASCII, still use a small delay for consistency
                 delay = 200
                 
-            print(f"[DEBUG] Starting timer with delay: {delay}ms")  # DEBUG LINE
+            # print(f"[DEBUG] Starting timer with delay: {delay}ms")  # DEBUG LINE
             self._search_timer.start(delay)
             
         except Exception as e:
@@ -8325,16 +8344,28 @@ class MediaPlayer(QMainWindow):
 
     # Window + close
     def changeEvent(self, event):
-            if event.type() == QEvent.WindowStateChange:
-                if self.windowState() & Qt.WindowMinimized:
-                    if self.minimize_to_tray:
-                        # If the setting is on, hide the window to the tray.
-                        QTimer.singleShot(100, self.hide)
-                        return
-            elif event.type() == QEvent.ApplicationFontChange:
-                self._apply_dynamic_fonts()
-            super().changeEvent(event)
+        if event.type() == QEvent.WindowStateChange:
+            # --- THIS IS THE CRITICAL FIX ---
+            # We ONLY update our state tracker when the window is in a visible, stable state.
+            # We explicitly IGNORE the minimized state for this check.
+            if not self.isMinimized():
+                if self.isMaximized():
+                    self._was_maximized = True
+                else:
+                    # This covers both Normal and FullScreen states that aren't Maximized
+                    self._was_maximized = False
+            
+            # Now, separately handle the action of minimizing to the tray.
+            # This logic now correctly uses the last known stable state.
+            if self.isMinimized() and self.minimize_to_tray:
+                QTimer.singleShot(100, self.hide)
+                return # We've handled the event
 
+        elif event.type() == QEvent.ApplicationFontChange:
+            self._apply_dynamic_fonts()
+        
+        # Always call the superclass method for other events.
+        super().changeEvent(event)
     def closeEvent(self, event):
         try:
             if hasattr(self, 'audio_monitor') and self.audio_monitor is not None:

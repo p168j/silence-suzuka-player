@@ -152,7 +152,8 @@ class TypographyManager(QObject):
                         print(f"Failed to load font {font_path}: {e}")
                         
             if loaded_families:
-                print(f"Typography: Loaded fonts: {', '.join(set(loaded_families))}")
+                # print(f"Typography: Loaded fonts: {', '.join(set(loaded_families))}")
+                pass
             else:
                 print("Typography: No fonts loaded, using system fonts")
                 
