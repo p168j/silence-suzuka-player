@@ -22,7 +22,18 @@ import warnings
 from PySide6.QtGui import QIcon
 from pathlib import Path
 from datetime import datetime
-
+from datetime import datetime, timedelta
+from pathlib import Path
+from PySide6.QtWidgets import (
+    QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout,
+    QLabel, QLineEdit, QTextEdit, QPushButton, QListWidget, QListWidgetItem,
+    QTableWidget, QTableWidgetItem, QHeaderView, QSplitter, QGroupBox,
+    QComboBox, QCheckBox, QSpinBox, QProgressBar, QMessageBox, QFileDialog,
+    QInputDialog, QMenu, QFrame, QScrollArea, QWidget, QAbstractItemView,
+    QDialogButtonBox, QTabWidget, QTreeWidget, QTreeWidgetItem
+)
+from PySide6.QtCore import Qt, QTimer, Signal, QThread, QSize
+from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter, QColor, QBrush
 from PySide6.QtGui import QIcon, QPixmap, QPainter
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtCore import QSize, QRectF, QByteArray
@@ -36,13 +47,1389 @@ from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QPen, QBrush, QFont,
 from PySide6.QtCore import QTimer, QEvent
 from PySide6.QtGui import QInputMethodEvent
 from PySide6.QtWidgets import QLineEdit
-
-import warnings
-warnings.filterwarnings(
-    "ignore",
-    message="Failed to disconnect",
-    category=RuntimeWarning
+from datetime import datetime, timedelta
+from pathlib import Path
+from PySide6.QtWidgets import (
+    QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout,
+    QLabel, QLineEdit, QTextEdit, QPushButton, QListWidget, QListWidgetItem,
+    QTableWidget, QTableWidgetItem, QHeaderView, QSplitter, QGroupBox,
+    QComboBox, QCheckBox, QSpinBox, QProgressBar, QMessageBox, QFileDialog,
+    QInputDialog, QMenu, QFrame, QScrollArea, QWidget, QAbstractItemView,
+    QDialogButtonBox, QTabWidget, QTreeWidget, QTreeWidgetItem
 )
+from PySide6.QtCore import Qt, QTimer, Signal, QThread, QSize
+from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter, QColor, QBrush
+
+class PlaylistMetadataWidget(QWidget):
+    """Widget to display playlist metadata in a card-like format"""
+    
+    def __init__(self, playlist_data, parent=None):
+        super().__init__(parent)
+        self.playlist_data = playlist_data
+        self._setup_ui()
+    
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
+        
+        # Title
+        name = self.playlist_data.get('name', 'Unnamed Playlist')
+        title_label = QLabel(name)
+        title_label.setFont(QFont("Arial", 14, QFont.Bold))
+        title_label.setStyleSheet("color: #e76f51; margin-bottom: 4px;")
+        layout.addWidget(title_label)
+        
+        # Metadata grid
+        metadata = self.playlist_data.get('metadata', {})
+        items = self.playlist_data.get('items', [])
+        
+        info_layout = QGridLayout()
+        info_layout.setSpacing(6)
+        
+        # Basic stats
+        info_layout.addWidget(QLabel("Items:"), 0, 0)
+        info_layout.addWidget(QLabel(str(len(items))), 0, 1)
+        
+        info_layout.addWidget(QLabel("Created:"), 1, 0)
+        created_date = metadata.get('created', '')
+        if created_date:
+            try:
+                dt = datetime.fromisoformat(created_date)
+                formatted_date = dt.strftime("%Y-%m-%d %H:%M")
+            except:
+                formatted_date = created_date
+        else:
+            formatted_date = "Unknown"
+        info_layout.addWidget(QLabel(formatted_date), 1, 1)
+        
+        # Duration (if available)
+        total_duration = metadata.get('total_duration', 0)
+        if total_duration > 0:
+            info_layout.addWidget(QLabel("Duration:"), 2, 0)
+            info_layout.addWidget(QLabel(self._format_duration(total_duration)), 2, 1)
+        
+        # Source breakdown
+        source_counts = {}
+        for item in items:
+            source_type = item.get('type', 'unknown')
+            source_counts[source_type] = source_counts.get(source_type, 0) + 1
+        
+        if source_counts:
+            info_layout.addWidget(QLabel("Sources:"), 3, 0)
+            sources_text = ", ".join(f"{count} {type}" for type, count in source_counts.items())
+            sources_label = QLabel(sources_text)
+            sources_label.setWordWrap(True)
+            info_layout.addWidget(sources_label, 3, 1)
+        
+        layout.addLayout(info_layout)
+        
+        # Description (if available)
+        description = metadata.get('description', '')
+        if description:
+            layout.addWidget(QLabel("Description:"))
+            desc_label = QLabel(description)
+            desc_label.setWordWrap(True)
+            desc_label.setStyleSheet("background: rgba(0,0,0,0.1); padding: 8px; border-radius: 4px;")
+            layout.addWidget(desc_label)
+    
+    def _format_duration(self, seconds):
+        """Format duration in seconds to human readable format"""
+        if seconds < 60:
+            return f"{int(seconds)}s"
+        minutes = seconds // 60
+        if minutes < 60:
+            return f"{int(minutes)}m {int(seconds % 60)}s"
+        hours = minutes // 60
+        return f"{int(hours)}h {int(minutes % 60)}m"
+
+class PlaylistPreviewWidget(QTreeWidget):
+    """Widget to preview playlist contents"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setHeaderLabels(["Title", "Source", "Duration"])
+        self.setAlternatingRowColors(True)
+        self.setRootIsDecorated(False)
+        self.header().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.header().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.header().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.setMaximumHeight(200)
+        self.setIconSize(QSize(28, 28))
+
+        self.setStyleSheet("""
+            QTreeWidget::item {
+                min-height: 36px;      /* A taller row for good spacing */
+                padding-left: 5px;     /* A little space on the left */
+                padding-top: 4px;      /* This pushes the icon/text down to the center */
+            }
+        """)
+    
+    def load_playlist_items(self, items):
+        """Load playlist items into the preview"""
+        self.clear()
+        
+        for item in items[:50]:  # Limit to first 50 for performance
+            title = item.get('title', 'Unknown')
+            source = item.get('type', 'unknown').title()
+            
+            # Try to get duration from metadata if available
+            duration_text = "Unknown"
+            
+            tree_item = QTreeWidgetItem([title, source, duration_text])
+            
+            # Add source icons
+            item_type = item.get('type')
+            icon_size = QSize(28, 28) # Corrected size
+            if item_type == 'youtube':
+                icon = load_svg_icon(str(APP_DIR / 'icons/youtube-fa7.svg'), icon_size)
+                tree_item.setIcon(0, icon)
+            elif item_type == 'bilibili':
+                icon = load_svg_icon(str(APP_DIR / 'icons/bilibili-fa7.svg'), icon_size)
+                tree_item.setIcon(0, icon)
+            elif item_type == 'local':
+                # Use emoji for local as no SVG was specified
+                tree_item.setText(0, f"🎬 {title}")
+            
+            self.addTopLevelItem(tree_item)
+        
+        # Add "..." item if there are more items
+        if len(items) > 50:
+            more_item = QTreeWidgetItem([f"... and {len(items) - 50} more items", "", ""])
+            more_item.setDisabled(True)
+            self.addTopLevelItem(more_item)
+
+class PlaylistSaveDialog(QDialog):
+    """Enhanced dialog for saving playlists with metadata"""
+    def _size_and_center_relative_to_parent(self, parent):
+        """Calculate and set size relative to the parent window."""
+        if not parent:
+            return
+        parent_geom = parent.geometry()
+        
+        # Set the dialog size to be a percentage of the parent's size
+        self.resize(int(parent_geom.width() * 0.45), int(parent_geom.height() * 0.65))
+        
+        # Move the dialog to be centered over the parent
+        self_geom = self.geometry()
+        center_point = parent_geom.center()
+        self_geom.moveCenter(center_point)
+        self.move(self_geom.topLeft())
+    
+    def __init__(self, current_playlist, existing_names=None, parent=None):
+        super().__init__(parent)
+        self.current_playlist = current_playlist
+        self.existing_names = existing_names or []
+        self.setWindowTitle("Save Playlist")
+        self.setModal(True)
+
+        self._setup_ui()
+
+        # Apply the theme from the parent window
+        if parent and hasattr(parent, '_apply_dialog_theme'): # <--- ADD THIS BLOCK
+            parent._apply_dialog_theme(self)
+
+        # Size and center the dialog after the UI is built
+        self._size_and_center_relative_to_parent(parent)
+    
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(8)
+        
+        # Header
+        header_label = QLabel("Save Current Playlist")
+        header_label.setFont(QFont("Arial", 16, QFont.Bold))
+        header_label.setStyleSheet("color: #e76f51; margin-bottom: 10px;")
+        layout.addWidget(header_label)
+        
+        # Playlist info
+        info_frame = QFrame()
+        info_frame.setFrameStyle(QFrame.Box)
+        info_frame.setStyleSheet("background: rgba(0,0,0,0.05); border-radius: 6px; padding: 8px;")
+        info_layout = QHBoxLayout(info_frame)
+        
+        source_counts = {}
+        for item in self.current_playlist:
+            source_type = item.get('type', 'unknown')
+            source_counts[source_type] = source_counts.get(source_type, 0) + 1
+        
+        sources_text = ", ".join(f"{count} {type}" for type, count in source_counts.items())
+        info_label = QLabel(f"📊 {len(self.current_playlist)} items ({sources_text})")
+        info_layout.addWidget(info_label)
+        
+        layout.addWidget(info_frame)
+        
+        # Form
+        form_layout = QFormLayout()
+        form_layout.setSpacing(10)
+        
+        # Name field
+        self.name_edit = QLineEdit()
+        self.name_edit.setPlaceholderText("Enter playlist name...")
+        self.name_edit.textChanged.connect(self._validate_name)
+        form_layout.addRow("Name:", self.name_edit)
+        
+        # Description field
+        self.desc_edit = QTextEdit()
+        self.desc_edit.setPlaceholderText("Optional description...")
+        self.desc_edit.setMaximumHeight(80)
+        form_layout.addRow("Description:", self.desc_edit)
+        
+        # Options
+        self.overwrite_existing = QCheckBox("Overwrite if name exists")
+        form_layout.addRow("", self.overwrite_existing)
+        
+        layout.addLayout(form_layout)
+        
+        # Preview (collapsible)
+        preview_group = QGroupBox("Preview (first 20 items):")
+        preview_layout = QVBoxLayout(preview_group)
+        
+        
+        self.preview_list = QListWidget()
+        self.preview_list.setIconSize(QSize(28, 28))
+        self.preview_list.setAlternatingRowColors(True)
+        self.preview_list.setStyleSheet("""
+        QListWidget {
+            background-color: #f0e7cf;
+            color: #4a2c2a;
+            border: 1px solid #c2a882;
+            border-radius: 4px;
+            alternate-background-color: #e9e0c8;
+        }
+        QListWidget::item { 
+            padding: 4px 6px; 
+        }
+        """)
+                          
+        self.preview_list.setMaximumHeight(150)
+
+        for item in self.current_playlist[:20]:
+            title = item.get('title', 'Unknown')
+            item_type = item.get('type')
+
+            # Create the list item with just the title
+            list_item = QListWidgetItem(title)
+
+            # Set the icon based on the source type
+            icon_size = QSize(28, 28) # Corrected size
+            if item_type == 'youtube':
+                icon = load_svg_icon(str(APP_DIR / 'icons/youtube-fa7.svg'), icon_size)
+                list_item.setIcon(icon)
+            elif item_type == 'bilibili':
+                icon = load_svg_icon(str(APP_DIR / 'icons/bilibili-fa7.svg'), icon_size)
+                list_item.setIcon(icon)
+            else:
+                # Fallback for other types like 'local'
+                emoji = {"local": "🎬"}.get(item_type, "🎵")
+                list_item.setText(f"{emoji} {title}")
+
+            self.preview_list.addItem(list_item)
+        
+        if len(self.current_playlist) > 20:
+            more_item = QListWidgetItem(f"... and {len(self.current_playlist) - 20} more")
+            more_item.setFlags(more_item.flags() & ~Qt.ItemIsSelectable)
+            self.preview_list.addItem(more_item)
+
+        self.preview_list.setAlternatingRowColors(True)
+        
+        preview_layout.addWidget(self.preview_list)
+        layout.addWidget(preview_group)
+        
+        # Validation message
+        self.validation_label = QLabel("")
+        self.validation_label.setStyleSheet("color: #d86a4a; font-weight: bold;")
+        layout.addWidget(self.validation_label)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        
+        self.save_btn = QPushButton("💾 Save Playlist")
+        self.save_btn.setDefault(True)
+        self.save_btn.clicked.connect(self.accept)
+        
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        
+        button_layout.addWidget(cancel_btn)
+        button_layout.addWidget(self.save_btn)
+        layout.addLayout(button_layout)
+        
+        # Set focus to name field
+        self.name_edit.setFocus()
+        
+        # Initial validation
+        self._validate_name()
+    
+    def _validate_name(self):
+        """Validate the playlist name and update UI accordingly"""
+        name = self.name_edit.text().strip()
+        
+        if not name:
+            self.validation_label.setText("⚠️ Playlist name is required")
+            self.save_btn.setEnabled(False)
+            return False
+        
+        if name in self.existing_names:
+            if self.overwrite_existing.isChecked():
+                self.validation_label.setText("⚠️ Will overwrite existing playlist")
+                self.validation_label.setStyleSheet("color: #f39c12;")  # Orange warning
+                self.save_btn.setEnabled(True)
+                return True
+            else:
+                self.validation_label.setText("❌ Playlist name already exists")
+                self.validation_label.setStyleSheet("color: #d86a4a;")  # Red error
+                self.save_btn.setEnabled(False)
+                return False
+        
+        # Valid name
+        self.validation_label.setText("✅ Valid playlist name")
+        self.validation_label.setStyleSheet("color: #27ae60;")  # Green success
+        self.save_btn.setEnabled(True)
+        return True
+    
+    def get_name(self):
+        return self.name_edit.text().strip()
+    
+    def get_description(self):
+        return self.desc_edit.toPlainText().strip()
+    
+    def should_overwrite(self):
+        return self.overwrite_existing.isChecked()
+
+class PlaylistManagerDialog(QDialog):
+    """Comprehensive playlist management dialog with fixed lifecycle management"""
+
+    def _size_and_center_relative_to_parent(self, parent):
+        """Calculate and set size relative to the parent window."""
+        if not parent:
+            return
+        parent_geom = parent.geometry()
+
+        self.resize(int(parent_geom.width() * 0.60), int(parent_geom.height() * 0.70))
+
+        self_geom = self.geometry()
+        center_point = parent_geom.center()
+        self_geom.moveCenter(center_point)
+        self.move(self_geom.topLeft())
+    
+    def __init__(self, saved_playlists, current_playlist, parent=None):
+            super().__init__(parent)
+            self.saved_playlists = saved_playlists
+            self.current_playlist = current_playlist
+            self.selected_playlist_data = None
+            self.load_mode = "replace"
+            self._is_destroyed = False
+            self._initial_load_done = False # Flag to ensure we only load once
+
+            self.setWindowTitle("Playlist Manager")
+            self.setModal(True)
+
+            self._setup_ui()
+
+            # Apply the theme from the parent window
+            if parent and hasattr(parent, '_apply_dialog_theme'): # <--- ADD THIS BLOCK
+                parent._apply_dialog_theme(self)
+
+            # Size and center the dialog after the UI is built
+            self._size_and_center_relative_to_parent(parent)
+
+    def showEvent(self, event):
+        """Populate the list just before the dialog is shown for the first time."""
+        super().showEvent(event)
+        # The _initial_load_done flag prevents this from running again
+        # if the dialog is hidden and re-shown.
+        if not self._initial_load_done:
+            self._safe_refresh_playlist_list()
+            self._initial_load_done = True        
+    
+    def closeEvent(self, event):
+        """Mark dialog as destroyed when closing"""
+        self._is_destroyed = True
+        super().closeEvent(event)
+    
+    def reject(self):
+        """Mark dialog as destroyed when rejecting"""
+        self._is_destroyed = True
+        super().reject()
+    
+    def accept(self):
+        """Mark dialog as destroyed when accepting"""
+        self._is_destroyed = True
+        super().accept()
+    
+    def _safe_refresh_playlist_list(self):
+        """Safe wrapper for _refresh_playlist_list that checks object validity"""
+        try:
+            # Check if dialog was destroyed
+            if self._is_destroyed:
+                print("[DEBUG] Dialog destroyed, skipping refresh")
+                return
+                
+            # Check if we can safely access the playlist_list
+            if not hasattr(self, 'playlist_list'):
+                print("[DEBUG] playlist_list not available")
+                return
+                
+            # Try to access the C++ object safely
+            try:
+                # This will throw RuntimeError if C++ object is deleted
+                _ = self.playlist_list.count()
+            except RuntimeError as e:
+                print(f"[DEBUG] C++ object invalid: {e}")
+                return
+            
+            # Proceed with actual refresh
+            self._refresh_playlist_list()
+            
+        except Exception as e:
+            print(f"[DEBUG] Safe refresh error: {e}")
+    
+    def _setup_ui(self):
+        # Create the main layout for the dialog, but DO NOT assign it a parent yet.
+        main_layout = QVBoxLayout()
+        main_layout.setContentsMargins(0, 0, 0, 0) # Use a borderless layout for the splitter
+
+        
+        # Left panel - Playlist list
+        left_panel = QWidget()
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(0, 0, 8, 0)
+        
+        # Header
+        header_label = QLabel("Saved Playlists")
+        header_label.setFont(QFont("Arial", 14, QFont.Bold))
+        left_layout.addWidget(header_label)
+        
+        # Playlist list
+        self.playlist_list = QListWidget()
+        self.playlist_list.currentItemChanged.connect(self._on_playlist_selected)
+        self.playlist_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.playlist_list.customContextMenuRequested.connect(self._show_playlist_context_menu)
+
+        self.playlist_list.setAlternatingRowColors(True)
+        self.playlist_list.setStyleSheet("""
+            QListWidget {
+                background-color: #f0e7cf;
+                color: #4a2c2a;
+                border: 1px solid #c2a882;
+                border-radius: 4px;
+                alternate-background-color: #e9e0c8;
+            }
+            QListWidget::item {
+                padding: 8px 12px;
+                border-bottom: 1px solid #e5d5b8;
+                min-height: 40px;
+            }
+            QListWidget::item:selected {
+                background-color: #e76f51;
+                color: #f3ead3;
+            }
+            QListWidget::item:hover {
+                background-color: rgba(231, 111, 81, 0.1);
+            }
+        """)
+        left_layout.addWidget(self.playlist_list)
+        
+        # Quick actions
+        quick_actions = QHBoxLayout()
+        
+        self.new_btn = QPushButton("📁 New")
+        self.new_btn.setToolTip("Save current playlist as new")
+        self.new_btn.clicked.connect(self._save_current_playlist)
+        
+        self.import_btn = QPushButton("📂 Import")
+        self.import_btn.setToolTip("Import M3U playlist")
+        self.import_btn.clicked.connect(self._import_playlist)
+        
+        quick_actions.addWidget(self.new_btn)
+        quick_actions.addWidget(self.import_btn)
+        quick_actions.addStretch()
+        
+        left_layout.addLayout(quick_actions)
+        
+        # Right panel - Playlist details
+        right_panel = QWidget()
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(8, 0, 0, 0)
+        
+        # Details header
+        self.details_header = QLabel("Select a playlist to view details")
+        self.details_header.setFont(QFont("Arial", 14, QFont.Bold))
+        right_layout.addWidget(self.details_header)
+        
+        # Scrollable details area
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+
+        self.details_widget = QWidget()
+        self.details_layout = QVBoxLayout(self.details_widget)
+        scroll_area.setWidget(self.details_widget)
+        right_layout.addWidget(scroll_area, 1)
+        
+        # Load options
+        load_group = QGroupBox("Load Options")
+        load_layout = QFormLayout(load_group)
+        
+        self.load_mode_combo = QComboBox()
+        self.load_mode_combo.addItem("Replace current playlist", "replace")
+        self.load_mode_combo.addItem("Add to current playlist", "append")
+        self.load_mode_combo.addItem("Insert at current position", "insert")
+        load_layout.addRow("Mode:", self.load_mode_combo)
+        
+        self.auto_play_check = QCheckBox("Start playing after load")
+        self.auto_play_check.setChecked(True)
+        load_layout.addRow("", self.auto_play_check)
+        
+        right_layout.addWidget(load_group)
+        
+        # Action buttons
+        button_layout = QHBoxLayout()
+        
+        self.load_btn = QPushButton("📂 Load Playlist")
+        self.load_btn.setEnabled(False)
+        self.load_btn.clicked.connect(self.accept)
+        
+        self.export_btn = QPushButton("💾 Export M3U")
+        self.export_btn.setEnabled(False)
+        self.export_btn.clicked.connect(self._export_selected)
+        
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.reject)
+        
+        button_layout.addWidget(self.export_btn)
+        button_layout.addStretch()
+        button_layout.addWidget(close_btn)
+        button_layout.addWidget(self.load_btn)
+        
+        right_layout.addLayout(button_layout)
+        
+        # Add panels to splitter for resizable layout
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.addWidget(left_panel)
+        splitter.addWidget(right_panel)
+        splitter.setSizes([300, 600])  # 1:2 ratio
+        
+        main_layout = QVBoxLayout()
+        main_layout.addWidget(splitter)
+        self.setLayout(main_layout)
+    
+    def _refresh_playlist_list(self):
+        """Refresh the list of saved playlists - with improved safety checks"""
+        try:
+            print(f"[DEBUG] _refresh_playlist_list called")
+            
+            # Early exit if dialog is destroyed
+            if self._is_destroyed:
+                print("[DEBUG] Dialog destroyed, aborting refresh")
+                return
+                
+            # Validate playlist_list exists and is accessible
+            if not hasattr(self, 'playlist_list'):
+                print("[DEBUG] playlist_list attribute missing")
+                return
+                
+            # Test C++ object validity
+            try:
+                current_count = self.playlist_list.count()
+                print(f"[DEBUG] playlist_list is valid, current count: {current_count}")
+            except RuntimeError as e:
+                print(f"[DEBUG] playlist_list C++ object invalid: {e}")
+                return
+            except Exception as e:
+                print(f"[DEBUG] Unexpected error testing playlist_list: {e}")
+                return
+                
+            print(f"[DEBUG] saved_playlists type: {type(self.saved_playlists)}")
+            print(f"[DEBUG] saved_playlists content: {list(self.saved_playlists.keys()) if isinstance(self.saved_playlists, dict) else 'Not a dict'}")
+            
+            # Clear the list safely
+            self.playlist_list.clear()
+            print(f"[DEBUG] playlist_list cleared successfully")
+            
+            # Handle empty playlists case
+            if not self.saved_playlists:
+                print("[DEBUG] No saved playlists found")
+                item = QListWidgetItem("No saved playlists")
+                item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
+                item.setData(Qt.UserRole, None)
+                
+                # Check if we can still add items safely
+                if not self._is_destroyed:
+                    try:
+                        self.playlist_list.addItem(item)
+                        print(f"[DEBUG] Added placeholder item")
+                    except RuntimeError:
+                        print("[DEBUG] Failed to add placeholder - dialog destroyed")
+                return
+
+            print(f"[DEBUG] Processing {len(self.saved_playlists)} saved playlists")
+            
+            # Sort by creation date (newest first)
+            try:
+                sorted_playlists = sorted(
+                    self.saved_playlists.items(),
+                    key=lambda x: x[1].get('metadata', {}).get('created', ''),
+                    reverse=True
+                )
+            except Exception as e:
+                print(f"[DEBUG] Sorting failed: {e}, using unsorted")
+                sorted_playlists = list(self.saved_playlists.items())
+            
+            for i, (name, playlist_data) in enumerate(sorted_playlists):
+                # Check if dialog was destroyed during iteration
+                if self._is_destroyed:
+                    print(f"[DEBUG] Dialog destroyed during iteration at item {i}")
+                    break
+                    
+                print(f"[DEBUG] Processing playlist {i+1}: '{name}'")
+                
+                try:
+                    items = playlist_data.get('items', [])
+                    metadata = playlist_data.get('metadata', {})
+                    
+                    # Create display text
+                    item_count = len(items)
+                    created = metadata.get('created', '')
+                    if created:
+                        try:
+                            dt = datetime.fromisoformat(created)
+                            age = datetime.now() - dt
+                            if age.days == 0:
+                                age_str = "Today"
+                            elif age.days == 1:
+                                age_str = "Yesterday"
+                            elif age.days < 7:
+                                age_str = f"{age.days} days ago"
+                            else:
+                                age_str = dt.strftime("%Y-%m-%d")
+                        except:
+                            age_str = "Unknown date"
+                    else:
+                        age_str = "Unknown date"
+                    
+                    display_text = f"{name}\n{item_count} items • {age_str}"
+                    print(f"[DEBUG] Creating list item with text: '{display_text}'")
+                    
+                    list_item = QListWidgetItem(display_text)
+                    list_item.setData(Qt.UserRole, (name, playlist_data))
+                    
+                     # Add icon based on content
+                    icon_size = QSize(24, 24)
+                    icon_set = False
+
+                    if any(item.get('type') == 'youtube' for item in items):
+                        icon = load_svg_icon(str(APP_DIR / 'icons/youtube-fa7.svg'), icon_size)
+                        list_item.setIcon(icon)
+                        icon_set = True
+                    elif any(item.get('type') == 'bilibili' for item in items):
+                        icon = load_svg_icon(str(APP_DIR / 'icons/bilibili-fa7.svg'), icon_size)
+                        list_item.setIcon(icon)
+                        icon_set = True
+                    
+                    if not icon_set:
+                        # Fallback for playlists with only local files or other types
+                        list_item.setIcon(self._create_source_icon('local'))
+                    
+                    # Add item safely
+                    if not self._is_destroyed:
+                        try:
+                            self.playlist_list.addItem(list_item)
+                            print(f"[DEBUG] Added playlist item, list count now: {self.playlist_list.count()}")
+                        except RuntimeError:
+                            print(f"[DEBUG] Failed to add item {i} - dialog destroyed")
+                            break
+                    else:
+                        print(f"[DEBUG] Skipping item {i} - dialog destroyed")
+                        break
+                        
+                except Exception as e:
+                    print(f"[DEBUG] Error processing playlist {name}: {e}")
+                    continue
+            
+            print(f"[DEBUG] _refresh_playlist_list completed successfully")
+                
+        except Exception as e:
+            print(f"[DEBUG] _refresh_playlist_list error: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def _create_source_icon(self, source_type):
+        """Create a simple colored icon for source types"""
+        pixmap = QPixmap(16, 16)
+        pixmap.fill(Qt.transparent)
+        
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        colors = {
+            'youtube': QColor("#FF0000"),
+            'bilibili': QColor("#00A1D6"), 
+            'local': QColor("#8E44AD")
+        }
+        
+        color = colors.get(source_type, QColor("#7F8C8D"))
+        painter.setBrush(QBrush(color))
+        painter.setPen(Qt.NoPen)
+        painter.drawEllipse(2, 2, 12, 12)
+        painter.end()
+        
+        return QIcon(pixmap)
+    
+    def _show_playlist_context_menu(self, pos):
+        """Show context menu for the playlist list."""
+        item = self.playlist_list.itemAt(pos)
+        if not item or not item.data(Qt.UserRole):
+            return
+
+        menu = QMenu(self)
+        self._apply_menu_theme(menu)
+
+        menu.addAction("✏️ Rename", self._rename_selected_playlist)
+        menu.addAction("🗑️ Delete", self._delete_selected_playlist)
+        menu.addAction("📋 Duplicate", self._duplicate_selected_playlist)
+
+        menu.exec(self.playlist_list.mapToGlobal(pos))
+
+    def _rename_selected_playlist(self):
+        """Rename the currently selected playlist."""
+        current_item = self.playlist_list.currentItem()
+        if not current_item:
+            return
+
+        name, _ = current_item.data(Qt.UserRole)
+        new_name, ok = QInputDialog.getText(self, "Rename Playlist", "New name:", QLineEdit.Normal, name)
+
+        if ok and new_name and new_name.strip():
+            new_name = new_name.strip()
+            if new_name == name:
+                return
+            if new_name in self.saved_playlists:
+                QMessageBox.warning(self, "Error", "A playlist with this name already exists.")
+                return
+
+            self.saved_playlists[new_name] = self.saved_playlists.pop(name)
+            self._save_playlists()
+            self._safe_refresh_playlist_list()
+
+    def _delete_selected_playlist(self):
+        """Delete the currently selected playlist with confirmation."""
+        current_item = self.playlist_list.currentItem()
+        if not current_item:
+            return
+
+        name, data = current_item.data(Qt.UserRole)
+        item_count = len(data.get('items', []))
+
+        reply = QMessageBox.question(
+            self, "Delete Playlist",
+            f"Are you sure you want to delete '{name}' ({item_count} items)?\n\nThis action cannot be undone.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+
+        if reply == QMessageBox.Yes:
+            if name in self.saved_playlists:
+                del self.saved_playlists[name]
+                self._save_playlists()
+                self._safe_refresh_playlist_list()
+                # Clear details panel
+                self._on_playlist_selected(None, None)
+
+    def _duplicate_selected_playlist(self):
+        """Duplicate the currently selected playlist."""
+        current_item = self.playlist_list.currentItem()
+        if not current_item:
+            return
+
+        name, data = current_item.data(Qt.UserRole)
+        new_name_base = f"{name} Copy"
+        i = 1
+        new_name = new_name_base
+        while new_name in self.saved_playlists:
+            i += 1
+            new_name = f"{new_name_base} ({i})"
+        
+        # Create a deep copy
+        new_data = json.loads(json.dumps(data))
+        new_data['metadata']['created'] = datetime.now().isoformat()
+        new_data['metadata']['description'] = f"Copy of {name}"
+
+        self.saved_playlists[new_name] = new_data
+        self._save_playlists()
+        self._safe_refresh_playlist_list()
+
+    def _on_playlist_selected(self, current_item, previous_item):
+        """Handle selection change in the playlist list."""
+        if self._is_destroyed or not hasattr(self, 'details_layout'):
+            return
+
+        # Clear existing details
+        for i in reversed(range(self.details_layout.count())):
+            widget = self.details_layout.itemAt(i).widget()
+            if widget:
+                widget.setParent(None)
+
+        if not current_item or not current_item.data(Qt.UserRole):
+            self.details_header.setText("Select a playlist to view details")
+            self.load_btn.setEnabled(False)
+            self.export_btn.setEnabled(False)
+            self.selected_playlist_data = None
+            return
+
+        name, playlist_data = current_item.data(Qt.UserRole)
+        self.selected_playlist_data = playlist_data
+        
+        # Update header
+        self.details_header.setText(f"Details for '{name}'")
+        
+        # Add metadata widget
+        meta_data_with_name = {'name': name, **playlist_data}
+        metadata_widget = PlaylistMetadataWidget(meta_data_with_name)
+        self.details_layout.addWidget(metadata_widget)
+
+        # Add preview widget if items exist
+        items = playlist_data.get('items', [])
+        if items:
+            preview_widget = PlaylistPreviewWidget()
+            preview_widget.load_playlist_items(items)
+            
+            # SOLUTION 1: Make the preview widget expand to fill available space
+            preview_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            # Remove the fixed height constraint to let it grow
+            preview_widget.setMaximumHeight(16777215)  # Qt's QWIDGETSIZE_MAX
+            preview_widget.setMinimumHeight(300)  # Increase minimum height for better visibility
+            
+            self.details_layout.addWidget(preview_widget)
+
+        # SOLUTION 2: Only add stretch if there's NO content, or reduce the stretch
+        # Instead of always adding stretch, only add it when there's minimal content
+        if not items:
+            self.details_layout.addStretch()
+        else:
+            # Add a smaller spacer instead of full stretch when there is content
+            spacer = QSpacerItem(0, 10, QSizePolicy.Minimum, QSizePolicy.Minimum)
+            self.details_layout.addItem(spacer)
+
+        # Enable action buttons
+        self.load_btn.setEnabled(True)
+        self.export_btn.setEnabled(True)
+    
+    def get_selected_playlist(self):
+        """Return the data for the currently selected playlist."""
+        return self.selected_playlist_data
+
+    def get_load_mode(self):
+        """Return the selected load mode ('replace', 'append', 'insert')."""
+        return self.load_mode_combo.currentData()
+
+    def should_auto_play(self):
+        """Return whether to start playing after loading."""
+        return self.auto_play_check.isChecked()   
+    
+    def _save_current_playlist(self):
+        """Save the current playlist as a new entry."""
+        if not self.current_playlist:
+            QMessageBox.information(self, "Save Playlist", "The current playlist is empty.")
+            return
+
+        dialog = PlaylistSaveDialog(
+            self.current_playlist,
+            list(self.saved_playlists.keys()),
+            self
+        )
+        if dialog.exec() == QDialog.Accepted:
+            name = dialog.get_name()
+            description = dialog.get_description()
+
+            playlist_data = {
+                'items': [item.copy() for item in self.current_playlist],
+                'metadata': {
+                    'created': datetime.now().isoformat(),
+                    'description': description,
+                    'version': '2.0'
+                }
+            }
+            self.saved_playlists[name] = playlist_data
+            self._save_playlists()
+            self._safe_refresh_playlist_list()
+
+    def _import_playlist(self):
+        """Import an M3U playlist file."""
+        path, _ = QFileDialog.getOpenFileName(self, "Import M3U", "", "M3U Playlists (*.m3u *.m3u8)")
+        if not path:
+            return
+
+        items = []
+        try:
+            with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                for line in f:
+                    s = line.strip()
+                    if not s or s.startswith('#'):
+                        continue
+                    # Basic type guessing
+                    url_lower = s.lower()
+                    media_type = 'local'
+                    if 'youtube.com' in url_lower or 'youtu.be' in url_lower:
+                        media_type = 'youtube'
+                    elif 'bilibili.com' in url_lower:
+                        media_type = 'bilibili'
+                    
+                    items.append({'title': Path(s).name, 'url': s, 'type': media_type})
+        except Exception as e:
+            QMessageBox.warning(self, "Import Error", f"Failed to read playlist: {e}")
+            return
+
+        if not items:
+            QMessageBox.information(self, "Import", "No valid media URLs found in the file.")
+            return
+
+        name, ok = QInputDialog.getText(self, "Import Playlist", "Enter a name for the imported playlist:", QLineEdit.Normal, Path(path).stem)
+        if ok and name:
+            playlist_data = {
+                'items': items,
+                'metadata': {
+                    'created': datetime.now().isoformat(),
+                    'description': f"Imported from {Path(path).name}",
+                    'version': '2.0'
+                }
+            }
+            self.saved_playlists[name] = playlist_data
+            self._save_playlists()
+            self._safe_refresh_playlist_list()
+
+    def _export_selected(self):
+        """Export the selected playlist to an M3U file."""
+        if not self.selected_playlist_data:
+            return
+
+        current_item = self.playlist_list.currentItem()
+        if not current_item:
+            return
+            
+        name, _ = current_item.data(Qt.UserRole)
+        default_filename = f"{name}.m3u8"
+
+        path, _ = QFileDialog.getSaveFileName(self, "Export Playlist", default_filename, "M3U Playlists (*.m3u *.m3u8)")
+        if not path:
+            return
+
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write('#EXTM3U\n')
+                for item in self.selected_playlist_data.get('items', []):
+                    title = item.get('title', item.get('url', ''))
+                    url = item.get('url', '')
+                    f.write(f'#EXTINF:-1,{title}\n{url}\n')
+        except Exception as e:
+            QMessageBox.warning(self, "Export Error", f"Failed to save playlist: {e}")
+
+    def _save_playlists(self):
+        """Save the playlist data back to the JSON file."""
+        try:
+            config_file = Path(__file__).parent / 'playlists_v2.json'
+            config_file.parent.mkdir(exist_ok=True)
+            with open(config_file, 'w', encoding='utf-8') as f:
+                json.dump(self.saved_playlists, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            QMessageBox.warning(self, "Save Error", f"Could not save playlists: {e}")
+
+    def _apply_menu_theme(self, menu):
+        """Apply a basic theme to a context menu."""
+        # This is a simplified theme application. A more robust solution would
+        # inherit the theme from the main window.
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: #2a2a2a;
+                color: #f3f3f3;
+                border: 1px solid #4a4a4a;
+            }
+            QMenu::item {
+                padding: 6px 12px;
+            }
+            QMenu::item:selected {
+                background-color: #e76f51;
+            }
+        """)
+
+class EnhancedPlaylistManager:
+    """Enhanced playlist management functionality to replace the basic save/load system"""
+    
+    def __init__(self, media_player, app_dir):
+        self.player = media_player
+        self.saved_playlists = {}
+        self.config_file = Path(app_dir) / 'playlists_v2.json'
+        self._load_playlists()
+    
+    def _load_playlists(self):
+        """Load saved playlists from file - with debug output"""
+        try:
+            #p rint(f"[DEBUG] Loading playlists from: {self.config_file}")
+            # print(f"[DEBUG] Config file exists: {self.config_file.exists()}")
+            
+            if self.config_file.exists():
+                with open(self.config_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                # print(f"[DEBUG] Loaded data type: {type(data)}")
+                # print(f"[DEBUG] Loaded data keys: {list(data.keys()) if isinstance(data, dict) else 'Not a dict'}")
+                
+                # Handle migration from old format
+                if isinstance(data, dict):
+                    migrated = {}
+                    for name, playlist_items in data.items():
+                        if isinstance(playlist_items, list):
+                            # Old format - migrate
+                            print(f"[DEBUG] Migrating old format playlist: {name}")
+                            migrated[name] = {
+                                'items': playlist_items,
+                                'metadata': {
+                                    'created': datetime.now().isoformat(),
+                                    'total_items': len(playlist_items),
+                                    'description': 'Migrated from old format',
+                                    'version': '2.0'
+                                }
+                            }
+                        else:
+                            # New format
+                            print(f"[DEBUG] Found new format playlist: {name}")
+                            migrated[name] = playlist_items
+                    
+                    self.saved_playlists = migrated
+                    print(f"[DEBUG] Final saved_playlists: {list(self.saved_playlists.keys())}")
+                    self._save_playlists()  # Save migrated format
+            else:
+                # Try to migrate from old playlists.json
+                old_file = self.config_file.parent / 'playlists.json'
+                print(f"[DEBUG] Checking old file: {old_file} (exists: {old_file.exists()})")
+                if old_file.exists():
+                    self._migrate_from_old_format(old_file)
+            
+        except Exception as e:
+            print(f"Load playlists error: {e}")
+            import traceback
+            traceback.print_exc()
+            self.saved_playlists = {}
+    
+    def _migrate_from_old_format(self, old_file):
+        """Migrate playlists from old format"""
+        try:
+            with open(old_file, 'r', encoding='utf-8') as f:
+                old_data = json.load(f)
+            
+            migrated = {}
+            for name, items in old_data.items():
+                if isinstance(items, list):
+                    migrated[name] = {
+                        'items': items,
+                        'metadata': {
+                            'created': datetime.now().isoformat(),
+                            'total_items': len(items),
+                            'description': 'Migrated from v1',
+                            'version': '2.0'
+                        }
+                    }
+            
+            self.saved_playlists = migrated
+            self._save_playlists()
+            
+            # Backup old file
+            backup_file = old_file.parent / f'{old_file.stem}_backup.json'
+            old_file.rename(backup_file)
+            
+            print(f"Migrated {len(migrated)} playlists from old format")
+            
+        except Exception as e:
+            print(f"Migration error: {e}")
+    
+    def _save_playlists(self):
+        """Save playlists to file"""
+        try:
+            # Ensure directory exists
+            self.config_file.parent.mkdir(exist_ok=True)
+            
+            with open(self.config_file, 'w', encoding='utf-8') as f:
+                json.dump(self.saved_playlists, f, indent=2, ensure_ascii=False)
+                
+        except Exception as e:
+            print(f"Save playlists error: {e}")
+    
+    def save_current_playlist(self):
+        """Save current playlist with enhanced dialog"""
+        if not self.player.playlist:
+            QMessageBox.information(
+                self.player, "Save Playlist", 
+                "Current playlist is empty.\n\nAdd some media first!"
+            )
+            return False
+        
+        dialog = PlaylistSaveDialog(
+            self.player.playlist, 
+            list(self.saved_playlists.keys()),
+            self.player
+        )
+        
+        if dialog.exec() == QDialog.Accepted:
+            name = dialog.get_name()
+            description = dialog.get_description()
+            
+            # Calculate metadata
+            source_counts = {}
+            for item in self.player.playlist:
+                source_type = item.get('type', 'unknown')
+                source_counts[source_type] = source_counts.get(source_type, 0) + 1
+            
+            # Create enhanced playlist data
+            playlist_data = {
+                'items': [item.copy() for item in self.player.playlist],
+                'metadata': {
+                    'created': datetime.now().isoformat(),
+                    'modified': datetime.now().isoformat(),
+                    'total_items': len(self.player.playlist),
+                    'source_breakdown': source_counts,
+                    'description': description,
+                    'saved_from_index': self.player.current_index,
+                    'version': '2.0'
+                }
+            }
+            
+            # Handle overwrite
+            if name in self.saved_playlists and not dialog.should_overwrite():
+                return False
+            
+            self.saved_playlists[name] = playlist_data
+            self._save_playlists()
+            
+            self.player.status.showMessage(f"Saved playlist '{name}' ({len(self.player.playlist)} items)", 4000)
+            return True
+        
+        return False
+    
+    def load_playlist_dialog(self):
+        """Show enhanced playlist manager dialog with proper lifecycle management"""
+        if not self.saved_playlists:
+            reply = QMessageBox.question(
+                self.player, "No Saved Playlists",
+                "No saved playlists found.\n\nWould you like to save the current playlist?",
+                QMessageBox.Yes | QMessageBox.No
+            )
+            if reply == QMessageBox.Yes:
+                self.save_current_playlist()
+            return
+        
+        # CRITICAL FIX: Store dialog as instance variable to prevent garbage collection
+        self.dialog = PlaylistManagerDialog(
+            self.saved_playlists, 
+            self.player.playlist, 
+            self.player  
+        )
+        
+        # Show the dialog and handle result
+        result = self.dialog.exec()
+        
+        if result == QDialog.Accepted:
+            selected_data = self.dialog.get_selected_playlist()
+            load_mode = self.dialog.get_load_mode()
+            should_auto_play = self.dialog.should_auto_play()
+            
+            if not selected_data:
+                return
+
+            # ... rest of your existing load logic remains the same ...
+            items_to_load = selected_data.get('items', [])
+            if not items_to_load:
+                QMessageBox.warning(
+                    self.player, "Load Error", 
+                    "Selected playlist is empty."
+                )
+                return
+            
+            # Continue with existing load logic...
+        else:
+            # Dialog was cancelled, clear reference
+            pass
+
+    def get_playlist_names(self):
+        """Get list of saved playlist names"""
+        return list(self.saved_playlists.keys())
+    
+    def delete_playlist(self, name):
+        """Delete a saved playlist"""
+        if name in self.saved_playlists:
+            del self.saved_playlists[name]
+            self._save_playlists()
+            return True
+        return False
+    
+    def duplicate_playlist(self, name, new_name=None):
+        """Duplicate an existing playlist"""
+        if name not in self.saved_playlists:
+            return False
+        
+        if not new_name:
+            new_name = self._ensure_unique_name(f"{name} Copy")
+        else:
+            new_name = self._ensure_unique_name(new_name)
+        
+        # Deep copy the playlist data
+        original_data = self.saved_playlists[name]
+        new_data = {
+            'items': [item.copy() for item in original_data.get('items', [])],
+            'metadata': {
+                **original_data.get('metadata', {}),
+                'created': datetime.now().isoformat(),
+                'modified': datetime.now().isoformat(),
+                'description': f"Copy of {name}"
+            }
+        }
+        
+        self.saved_playlists[new_name] = new_data
+        self._save_playlists()
+        return new_name
+
+# Integration methods to add to MediaPlayer class
+def enhanced_save_playlist(self):
+    """Replace the old save_playlist method"""
+    return self._playlist_manager.save_current_playlist()
+
+def enhanced_load_playlist_dialog(self):
+    """Replace the old load_playlist_dialog method"""
+    return self._playlist_manager.load_playlist_dialog()
+
+def _undo_load_playlist(self, data):
+    """Undo a playlist load operation"""
+    try:
+        self.playlist = data['old_playlist']
+        self.current_index = data['old_current_index']
+        was_playing = data['was_playing']
+        
+        self._save_current_playlist()
+        self._refresh_playlist_widget()
+        self._recover_current_after_change(was_playing)
+        
+    except Exception as e:
+        print(f"[UNDO] Error restoring playlist load: {e}")
+
+def setup_enhanced_playlist_manager(player, app_dir):
+    """Setup the enhanced playlist manager on an existing MediaPlayer instance"""
+    
+    # Create the manager
+    player._playlist_manager = EnhancedPlaylistManager(player, app_dir)
+    
+    # Replace the button connections
+    if hasattr(player, 'save_btn'):
+        player.save_btn.clicked.disconnect()
+        player.save_btn.clicked.connect(player.enhanced_save_playlist)
+    
+    if hasattr(player, 'load_btn'):
+        player.load_btn.clicked.disconnect()
+        player.load_btn.clicked.connect(player.enhanced_load_playlist_dialog)
+    
+    # Add the new methods to the player
+    player.enhanced_save_playlist = enhanced_save_playlist.__get__(player)
+    player.enhanced_load_playlist_dialog = enhanced_load_playlist_dialog.__get__(player)
+    player._undo_load_playlist = _undo_load_playlist.__get__(player)
+    
+    # Update the undo system to handle playlist loads
+    original_perform_undo = player._perform_undo
+    
+    def enhanced_perform_undo(self):
+        try:
+            if not self._undo_stack:
+                self.status.showMessage("Nothing to undo", 2000)
+                return
+                
+            operation = self._undo_stack.pop()
+            op_type = operation['type']
+            op_data = operation['data']
+            
+            if op_type == 'load_playlist':
+                self._undo_load_playlist(op_data)
+            else:
+                # Call original undo logic for other operations
+                self._undo_stack.append(operation)  # Put it back
+                original_perform_undo()
+                return
+                
+            self.status.showMessage(f"Undid: {op_type.replace('_', ' ').title()}", 3000)
+            
+        except Exception as e:
+            print(f"[UNDO] Enhanced undo error: {e}")
+            self.status.showMessage(f"Undo failed: {e}", 3000)
+    
+    player._perform_undo = enhanced_perform_undo.__get__(player)
+    
+    # Add playlist management to context menus
+    def show_playlist_manager_menu(self):
+        """Show playlist management context menu"""
+        menu = QMenu(self)
+        self._apply_menu_theme(menu)
+        
+        menu.addAction("📂 Manage Playlists", self.enhanced_load_playlist_dialog)
+        menu.addAction("💾 Save Current Playlist", self.enhanced_save_playlist)
+        menu.addSeparator()
+        
+        # Quick load submenu
+        if self._playlist_manager.saved_playlists:
+            quick_load = menu.addMenu("⚡ Quick Load")
+            for name in sorted(self._playlist_manager.saved_playlists.keys()):
+                quick_load.addAction(name, lambda n=name: self._quick_load_playlist(n))
+        
+        return menu
+    
+    def _quick_load_playlist(self, name):
+        """Quick load a playlist by name (replace mode)"""
+        if name not in self._playlist_manager.saved_playlists:
+            return
+        
+        playlist_data = self._playlist_manager.saved_playlists[name]
+        items = playlist_data.get('items', [])
+        
+        if not items:
+            self.status.showMessage(f"Playlist '{name}' is empty", 3000)
+            return
+        
+        # Confirm replacement if current playlist exists
+        if self.playlist:
+            reply = QMessageBox.question(
+                self, "Quick Load",
+                f"Replace current playlist with '{name}' ({len(items)} items)?",
+                QMessageBox.Yes | QMessageBox.No
+            )
+            if reply != QMessageBox.Yes:
+                return
+        
+        # Store undo data
+        undo_data = {
+            'old_playlist': self.playlist.copy(),
+            'old_current_index': self.current_index,
+            'was_playing': self._is_playing(),
+            'load_mode': 'replace',
+            'items_loaded': len(items)
+        }
+        self._add_undo_operation('load_playlist', undo_data)
+        
+        # Load the playlist
+        self.playlist = [item.copy() for item in items]
+        self.current_index = 0
+        
+        self._save_current_playlist()
+        self._refresh_playlist_widget()
+        self.play_scope = None
+        self._update_scope_label()
+        self._update_up_next()
+        
+        # Auto-play
+        self.play_current()
+        
+        self.status.showMessage(f"Loaded '{name}' ({len(items)} items)", 4000)
+    
+    # Add these methods to the player
+    player.show_playlist_manager_menu = show_playlist_manager_menu.__get__(player)
+    player._quick_load_playlist = _quick_load_playlist.__get__(player)
+    
+    print("Enhanced playlist manager setup complete!")
 
 class SearchBar(QLineEdit):
     def __init__(self, parent=None):
@@ -170,10 +1557,12 @@ def _render_svg_tinted(svg_path, size: QSize, color: str) -> QPixmap:
         return QPixmap() # Return an empty pixmap on error
 
 def playlist_icon_for_type(item_type):
+    # Standardized to 28x28 for better visibility
+    icon_size = QSize(28, 28)
     if item_type == 'youtube':
-        return load_svg_icon('icons/youtube-fa7.svg', QSize(28, 28))
+        return load_svg_icon(str(APP_DIR / 'icons/youtube-fa7.svg'), icon_size)
     elif item_type == 'bilibili':
-        return load_svg_icon('icons/bilibili-fa7.svg', QSize(28, 28))
+        return load_svg_icon(str(APP_DIR / 'icons/bilibili-fa7.svg'), icon_size)
     elif item_type == 'local':
         return "🎬"
     else:
@@ -255,7 +1644,7 @@ try:
     QPushButton, QLabel, QSlider, QFileDialog, QMessageBox, QLineEdit,
     QTreeWidget, QTreeWidgetItem, QAbstractItemView, QStatusBar, QMenu,
     QSystemTrayIcon, QStyle, QDialog, QFormLayout, QDialogButtonBox, QComboBox,
-    QCheckBox, QSpinBox, QDoubleSpinBox, QTableWidget, QTableWidgetItem, QHeaderView, QProgressBar, QTabWidget, QToolTip, QGraphicsDropShadowEffect, QSpacerItem, QGridLayout, QSizePolicy, QTreeWidgetItemIterator
+    QCheckBox, QSpinBox, QDoubleSpinBox, QTableWidget, QTableWidgetItem, QHeaderView, QProgressBar, QTabWidget, QToolTip, QGraphicsDropShadowEffect, QSpacerItem, QGridLayout, QSizePolicy, QTreeWidgetItemIterator, QSizePolicy
     )
     from PySide6.QtCore import Qt, QTimer, QSize, QThread, Signal, QEvent, QPropertyAnimation, QEasingCurve, Property
     from PySide6.QtGui import QIcon, QPixmap, QKeySequence, QShortcut, QAction, QPainter, QColor, QPen, QBrush, QFont, QFontDatabase, QFontMetrics, QGuiApplication
@@ -308,6 +1697,7 @@ CFG_SETTINGS = APP_DIR / 'config.json'
 CFG_STATS = APP_DIR / 'stats.json'
 COOKIES_BILI = APP_DIR / 'cookies.txt'
 CFG_COMPLETED = APP_DIR / 'completed.json'
+CFG_SESSION = APP_DIR / 'session.json'
 
 
 # --- Monitors ---
@@ -1209,10 +2599,17 @@ class MediaPlayer(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        self.ytdl_manager = YtdlManager(self)
-        self.ytdl_manager.titleResolved.connect(self._on_title_resolved)
-        self.ytdl_manager.error.connect(lambda e: print(f"Title resolution error: {e}"))
-        self.ytdl_manager.start()
+        self._playlist_manager = None
+
+        # Create 4 parallel workers for faster title resolution
+        self.ytdl_workers = []
+        for i in range(4):
+            worker = YtdlManager(self)
+            worker.titleResolved.connect(self._on_title_resolved)
+            worker.error.connect(lambda e: print(f"Title resolution error: {e}"))
+            worker.start()
+            self.ytdl_workers.append(worker)
+        self._worker_index = 0
 
 
         self.setWindowTitle("Silence Suzuka Player")
@@ -1229,6 +2626,7 @@ class MediaPlayer(QMainWindow):
         self.log_level = 'INFO'
         self.theme = 'vinyl'
         self.show_up_next = True
+        self.restore_session = True
 
         # This list continues from your original file, ensure they are all here
         self.playback_positions = {}
@@ -1323,6 +2721,22 @@ class MediaPlayer(QMainWindow):
         self.requestTimerSignal.connect(self._start_timer_from_main_thread)
         self.statusMessageSignal.connect(self._show_status_message)
         self._build_ui()
+
+        # Override the playlist methods with enhanced versions
+        def enhanced_save():
+            if not self._playlist_manager:
+                self._playlist_manager = EnhancedPlaylistManager(self, APP_DIR)
+            return self._playlist_manager.save_current_playlist()
+        
+        def enhanced_load():
+            if not self._playlist_manager:
+                self._playlist_manager = EnhancedPlaylistManager(self, APP_DIR)
+            return self._playlist_manager.load_playlist_dialog()
+
+        # Override the methods
+        self.save_playlist = enhanced_save
+        self.load_playlist_dialog = enhanced_load
+
         self._setup_keyboard_shortcuts()
         self._init_mpv()
         self._load_files()
@@ -1356,6 +2770,12 @@ class MediaPlayer(QMainWindow):
             self.status.showMessage("All groups expanded", 2000)
         except Exception as e:
             logger.error(f"Failed to expand groups: {e}")    
+
+    def _resolve_title_parallel(self, url, kind):
+        """Distribute title resolution across multiple workers"""
+        worker = self.ytdl_workers[self._worker_index]
+        worker.resolve(url, kind)
+        self._worker_index = (self._worker_index + 1) % len(self.ytdl_workers)            
 
     def _handle_paste(self):
         """Handle Ctrl+V paste for media URLs"""
@@ -2123,6 +3543,8 @@ class MediaPlayer(QMainWindow):
 
     # UI
     def _build_ui(self):
+        self._playlist_manager = EnhancedPlaylistManager(self, APP_DIR)
+
         central = QWidget(); central.setObjectName('bgRoot'); self.setCentralWidget(central)
         root = QVBoxLayout(central); root.setContentsMargins(8, 8, 8, 8); root.setSpacing(8)
         icon_size = QSize(22, 22)
@@ -2244,7 +3666,7 @@ class MediaPlayer(QMainWindow):
         load_btn = QPushButton("📂")
         load_btn.setObjectName('miniBtn')
         load_btn.setToolTip("Load saved playlist")
-        load_btn.clicked.connect(self.load_playlist_dialog)
+        load_btn.clicked.connect(self.load_playlist_dialog) 
         load_btn.setFixedSize(36, 28)
 
         # New: icon-only Unwatched toggle (prefers icons/eye.svg + icons/eye-off.svg)
@@ -2397,7 +3819,7 @@ class MediaPlayer(QMainWindow):
         self.playlist_tree.setFont(self._font_serif_no_size(italic=True, bold=True))
 
         # --- ADD THESE LINES FOR ICON SIZE AND ROW HEIGHT ---
-        self.playlist_tree.setIconSize(QSize(28, 28))  # Make icon 28x28 (or adjust as needed)
+        self.playlist_tree.setIconSize(QSize(28, 28))  
 
         # Apply custom style ONLY for dark theme (let vinyl use system default)
         # We'll apply this properly after theme loads in _load_files()
@@ -2406,7 +3828,7 @@ class MediaPlayer(QMainWindow):
         self.playlist_stack.addWidget(self.playlist_tree)
 
          # --- ADD THESE LINES FOR ICON SIZE AND ROW HEIGHT ---
-        self.playlist_tree.setIconSize(QSize(28, 28))  # Make icon 28x28 (or adjust as needed)
+        self.playlist_tree.setIconSize(QSize(28, 28))  
 
         self.playing_delegate = PlayingItemDelegate(self)
         self.playlist_tree.setItemDelegate(self.playing_delegate)
@@ -2766,6 +4188,105 @@ class MediaPlayer(QMainWindow):
         except Exception as e:
             print(f"Play selected group error: {e}")
             self.status.showMessage(f"Play group failed: {e}", 3000)    
+
+    def _navigate_to_top(self):
+        """Navigate to the top of the playlist tree and select the first item"""
+        try:
+            if not self.playlist:
+                self.status.showMessage("Playlist is empty", 2000)
+                return
+                
+            # Get the first item in the tree
+            first_item = None
+            
+            # Check if we have any top-level items
+            if self.playlist_tree.topLevelItemCount() > 0:
+                top_item = self.playlist_tree.topLevelItem(0)
+                
+                # If it's a group, try to get its first child
+                if top_item.childCount() > 0:
+                    first_item = top_item.child(0)
+                    # Expand the group to show the first item
+                    top_item.setExpanded(True)
+                else:
+                    # It's a single item at the top level
+                    first_item = top_item
+            
+            if first_item:
+                # Clear current selection and select the first item
+                self.playlist_tree.clearSelection()
+                first_item.setSelected(True)
+                self.playlist_tree.setCurrentItem(first_item)
+                
+                # Scroll to the top
+                self.playlist_tree.scrollToTop()
+                
+                # Extract the playlist index if this is a playable item
+                data = first_item.data(0, Qt.UserRole)
+                if isinstance(data, tuple) and data[0] == 'current':
+                    playlist_index = data[1]
+                    title = self.playlist[playlist_index].get('title', 'Unknown')
+                    self.status.showMessage(f"Top: {title}", 2000)
+                else:
+                    self.status.showMessage("Navigated to top of playlist", 2000)
+            else:
+                self.status.showMessage("No items found in playlist", 2000)
+                
+        except Exception as e:
+            print(f"Navigate to top error: {e}")
+            self.status.showMessage(f"Navigate to top failed: {e}", 3000)
+
+    def _navigate_to_bottom(self):
+        """Navigate to the bottom of the playlist tree and select the last item"""
+        try:
+            if not self.playlist:
+                self.status.showMessage("Playlist is empty", 2000)
+                return
+                
+            # Find the last playable item in the tree
+            last_item = None
+            
+            # Start from the bottom and work our way up
+            for i in range(self.playlist_tree.topLevelItemCount() - 1, -1, -1):
+                top_item = self.playlist_tree.topLevelItem(i)
+                if not top_item:
+                    continue
+                    
+                # If it's a group with children, get the last child
+                if top_item.childCount() > 0:
+                    last_child = top_item.child(top_item.childCount() - 1)
+                    last_item = last_child
+                    # Expand the group to show the last item
+                    top_item.setExpanded(True)
+                    break
+                else:
+                    # It's a single item at the top level
+                    last_item = top_item
+                    break
+            
+            if last_item:
+                # Clear current selection and select the last item
+                self.playlist_tree.clearSelection()
+                last_item.setSelected(True)
+                self.playlist_tree.setCurrentItem(last_item)
+                
+                # Scroll to the bottom
+                self.playlist_tree.scrollToBottom()
+                
+                # Extract the playlist index if this is a playable item
+                data = last_item.data(0, Qt.UserRole)
+                if isinstance(data, tuple) and data[0] == 'current':
+                    playlist_index = data[1]
+                    title = self.playlist[playlist_index].get('title', 'Unknown')
+                    self.status.showMessage(f"Bottom: {title}", 2000)
+                else:
+                    self.status.showMessage("Navigated to bottom of playlist", 2000)
+            else:
+                self.status.showMessage("No items found in playlist", 2000)
+                
+        except Exception as e:
+            print(f"Navigate to bottom error: {e}")
+            self.status.showMessage(f"Navigate to bottom failed: {e}", 3000)        
             
     def _update_unwatched_btn_visual(self, checked: bool):
         """Swap icon/text and styling so ON vs OFF is obvious — icon + color only, no filled pill or border.
@@ -2829,6 +4350,8 @@ class MediaPlayer(QMainWindow):
 
         except Exception:
             pass            
+
+
     
     def _install_themed_tooltip(self, widget, text: str, duration: int = 3500):
         """Install a small themed tooltip for a single widget (shows on hover).
@@ -4219,57 +5742,214 @@ class MediaPlayer(QMainWindow):
             else:
                 self._show_player()
 
-    # COPY AND PASTE THIS ENTIRE FUNCTION
     def _setup_button_animations(self):
-        """Setup kinetic animations for all buttons."""
+        """Setup enhanced kinetic animations for all buttons with multiple effects."""
         try:
-            buttons = [
-                (self.play_pause_btn, 50, 12),  # (button, normal_size, shrink_amount)
-                (self.prev_btn, 22, 6),
-                (self.next_btn, 22, 6),
-                (self.shuffle_btn, 22, 6),
-                (self.repeat_btn, 22, 6)
+            # Configuration for different button types
+            button_configs = [
+                # (button, normal_icon_size, press_shrink, has_scale_glow, base_size_px)
+                (self.play_pause_btn, QSize(50, 50), 8, True, 60),   # Main play button gets the most dramatic effect
+                (self.prev_btn, QSize(22, 22), 4, True, 40),
+                (self.next_btn, QSize(22, 22), 4, True, 40), 
+                (self.shuffle_btn, QSize(22, 22), 4, True, 40),
+                (self.repeat_btn, QSize(22, 22), 4, True, 40)
             ]
 
-            for btn, size, shrink in buttons:
-                original_size = QSize(size, size)
-                pressed_size = QSize(size - shrink, size - shrink)
+            for btn, icon_size, shrink, has_glow, base_size in button_configs:
+                # Store original properties
+                btn._original_icon_size = icon_size
+                btn._pressed_icon_size = QSize(icon_size.width() - shrink, icon_size.height() - shrink)
+                btn._base_widget_size = base_size
                 
-                # Store animations on the button object
-                if not hasattr(btn, 'press_animation'):
-                    btn.press_animation = QPropertyAnimation(btn, b"iconSize")
-                    btn.release_animation = QPropertyAnimation(btn, b"iconSize")
-
-                btn.press_animation.setDuration(90)
-                btn.press_animation.setEasingCurve(QEasingCurve.OutCubic)
-                
-                btn.release_animation.setDuration(300)  # Less aggressive
-                btn.release_animation.setEasingCurve(QEasingCurve.OutBack)
-                btn.release_animation.setEndValue(original_size)
-
-                def on_press(button=btn, p_size=pressed_size):
-                    if button.release_animation.state() == QPropertyAnimation.Running:
-                        button.release_animation.stop()
-                    button.press_animation.setStartValue(button.iconSize())
-                    button.press_animation.setEndValue(p_size)
-                    button.press_animation.start()
-
-                def on_release(button=btn, o_size=original_size):
-                    button.release_animation.setStartValue(button.iconSize())
-                    button.release_animation.setEndValue(o_size)
-                    button.release_animation.start()
-
-                try:
-                    btn.pressed.disconnect()
-                    btn.released.disconnect()
-                except RuntimeError:
-                    pass
+                # Create multiple animation properties
+                if not hasattr(btn, 'press_anim_group'):
+                    from PySide6.QtCore import QParallelAnimationGroup, QSequentialAnimationGroup
                     
-                btn.pressed.connect(on_press)
-                btn.released.connect(on_release)
+                    # === PRESS ANIMATION GROUP (Simultaneous effects) ===
+                    btn.press_anim_group = QParallelAnimationGroup(btn)
+                    
+                    # 1. Icon size shrink
+                    btn.icon_shrink_anim = QPropertyAnimation(btn, b"iconSize")
+                    btn.icon_shrink_anim.setDuration(80)
+                    btn.icon_shrink_anim.setEasingCurve(QEasingCurve.OutCubic)
+                    btn.press_anim_group.addAnimation(btn.icon_shrink_anim)
+                    
+                    # 2. Widget size shrink (for the main play button)
+                    if btn == self.play_pause_btn:
+                        btn.widget_shrink_anim = QPropertyAnimation(btn, b"size")
+                        btn.widget_shrink_anim.setDuration(80)
+                        btn.widget_shrink_anim.setEasingCurve(QEasingCurve.OutCubic)
+                        btn.press_anim_group.addAnimation(btn.widget_shrink_anim)
+                    
+                    # === RELEASE ANIMATION SEQUENCE (Bounce back with overshoot) ===
+                    btn.release_anim_group = QSequentialAnimationGroup(btn)
+                    
+                    # First: Quick bounce to slightly larger than normal
+                    btn.bounce_out_anim = QParallelAnimationGroup(btn)
+                    
+                    btn.icon_bounce_out = QPropertyAnimation(btn, b"iconSize")
+                    btn.icon_bounce_out.setDuration(120)
+                    btn.icon_bounce_out.setEasingCurve(QEasingCurve.OutBack)
+                    # Overshoot by 10% for satisfying bounce
+                    overshoot_size = QSize(
+                        int(icon_size.width() * 1.15), 
+                        int(icon_size.height() * 1.15)
+                    )
+                    btn.bounce_out_anim.addAnimation(btn.icon_bounce_out)
+                    
+                    if btn == self.play_pause_btn:
+                        btn.widget_bounce_out = QPropertyAnimation(btn, b"size")
+                        btn.widget_bounce_out.setDuration(120)
+                        btn.widget_bounce_out.setEasingCurve(QEasingCurve.OutBack)
+                        btn.bounce_out_anim.addAnimation(btn.widget_bounce_out)
+                    
+                    # Second: Settle back to normal size
+                    btn.settle_anim = QParallelAnimationGroup(btn)
+                    
+                    btn.icon_settle = QPropertyAnimation(btn, b"iconSize")
+                    btn.icon_settle.setDuration(200)
+                    btn.icon_settle.setEasingCurve(QEasingCurve.OutCubic)
+                    btn.settle_anim.addAnimation(btn.icon_settle)
+                    
+                    if btn == self.play_pause_btn:
+                        btn.widget_settle = QPropertyAnimation(btn, b"size")
+                        btn.widget_settle.setDuration(200)
+                        btn.widget_settle.setEasingCurve(QEasingCurve.OutCubic)
+                        btn.settle_anim.addAnimation(btn.widget_settle)
+                    
+                    # Add both phases to the release sequence
+                    btn.release_anim_group.addAnimation(btn.bounce_out_anim)
+                    btn.release_anim_group.addAnimation(btn.settle_anim)
+
+                # === ENHANCED PRESS/RELEASE HANDLERS ===
+                def create_press_handler(button, pressed_icon_size, pressed_widget_size=None, overshoot_icon_size=None, normal_widget_size=None):
+                    def on_press():
+                        try:
+                            # Stop any running release animation
+                            if button.release_anim_group.state() == QPropertyAnimation.Running:
+                                button.release_anim_group.stop()
+                            
+                            # Setup press animation values
+                            button.icon_shrink_anim.setStartValue(button.iconSize())
+                            button.icon_shrink_anim.setEndValue(pressed_icon_size)
+                            
+                            if hasattr(button, 'widget_shrink_anim') and pressed_widget_size:
+                                current_size = button.size()
+                                pressed_size = QSize(
+                                    int(current_size.width() * 0.9),
+                                    int(current_size.height() * 0.9)
+                                )
+                                button.widget_shrink_anim.setStartValue(current_size)
+                                button.widget_shrink_anim.setEndValue(pressed_size)
+                            
+                            # Add haptic-style color flash for extra feedback
+                            if button == self.play_pause_btn:
+                                self._flash_button_color(button, "#ff6b47", duration=100)
+                            else:
+                                self._flash_button_color(button, "#e76f51", duration=80)
+                            
+                            button.press_anim_group.start()
+                            
+                        except Exception as e:
+                            print(f"Press animation error: {e}")
+                    
+                    return on_press
+
+                def create_release_handler(button, normal_icon_size, overshoot_icon_size, normal_widget_size=None):
+                    def on_release():
+                        try:
+                            # Setup bounce-out phase
+                            button.icon_bounce_out.setStartValue(button.iconSize())
+                            button.icon_bounce_out.setEndValue(overshoot_icon_size)
+                            
+                            if hasattr(button, 'widget_bounce_out') and normal_widget_size:
+                                overshoot_widget_size = QSize(
+                                    int(normal_widget_size.width() * 1.05),
+                                    int(normal_widget_size.height() * 1.05)
+                                )
+                                button.widget_bounce_out.setStartValue(button.size())
+                                button.widget_bounce_out.setEndValue(overshoot_widget_size)
+                            
+                            # Setup settle phase
+                            button.icon_settle.setStartValue(overshoot_icon_size)
+                            button.icon_settle.setEndValue(normal_icon_size)
+                            
+                            if hasattr(button, 'widget_settle') and normal_widget_size:
+                                button.widget_settle.setStartValue(
+                                    QSize(int(normal_widget_size.width() * 1.05), 
+                                        int(normal_widget_size.height() * 1.05))
+                                )
+                                button.widget_settle.setEndValue(normal_widget_size)
+                            
+                            button.release_anim_group.start()
+                            
+                        except Exception as e:
+                            print(f"Release animation error: {e}")
+                    
+                    return on_release
+
+                # Calculate sizes for this button
+                overshoot_icon = QSize(
+                    int(icon_size.width() * 1.15), 
+                    int(icon_size.height() * 1.15)
+                )
+                normal_widget_size = QSize(base_size, base_size) if btn == self.play_pause_btn else None
+                pressed_widget_size = QSize(int(base_size * 0.9), int(base_size * 0.9)) if btn == self.play_pause_btn else None
                 
+                # Connect enhanced handlers
+                press_handler = create_press_handler(btn, btn._pressed_icon_size, pressed_widget_size, overshoot_icon, normal_widget_size)
+                release_handler = create_release_handler(btn, btn._original_icon_size, overshoot_icon, normal_widget_size)
+                
+                # Store handlers to prevent garbage collection
+                btn._press_handler = press_handler
+                btn._release_handler = release_handler
+                
+                # Connect to button events
+                btn.pressed.connect(press_handler)
+                btn.released.connect(release_handler)
+
         except Exception as e:
-            logger.error(f"Failed to setup button animations: {e}")
+            print(f"Enhanced button animation setup error: {e}")
+
+    def _flash_button_press(self, button):
+        """Enhanced color flash using QGraphicsColorizeEffect"""
+        try:
+            from PySide6.QtWidgets import QGraphicsColorizeEffect
+            
+            # Create or reuse colorize effect
+            if not hasattr(button, '_flash_effect'):
+                button._flash_effect = QGraphicsColorizeEffect()
+                button._flash_effect.setStrength(0.0)
+                
+                # Set flash color based on button type
+                if button == self.play_pause_btn:
+                    button._flash_effect.setColor(QColor("#ff4444"))  # Bright red
+                else:
+                    button._flash_effect.setColor(QColor("#ff8566"))  # Orange
+            
+            # Apply effect and animate
+            button.setGraphicsEffect(button._flash_effect)
+            
+            if not hasattr(button, '_flash_anim'):
+                button._flash_anim = QPropertyAnimation(button._flash_effect, b"strength")
+                button._flash_anim.setDuration(150)
+            
+            # Animate: invisible -> strong -> invisible
+            button._flash_anim.finished.connect(lambda: button.setGraphicsEffect(None))
+            button._flash_anim.setKeyValueAt(0.0, 0.0)    # Start
+            button._flash_anim.setKeyValueAt(0.4, 0.8)    # Peak flash
+            button._flash_anim.setKeyValueAt(1.0, 0.0)    # Fade out
+            button._flash_anim.start()
+            
+        except Exception as e:
+            print(f"Button flash error: {e}")
+
+    def _restore_button_style(self, button):
+        """Remove graphics effect to restore normal appearance"""
+        try:
+            button.setGraphicsEffect(None)
+        except Exception:
+            pass
 
     def _show_player(self):
             # Restore the window intelligently
@@ -4307,6 +5987,7 @@ class MediaPlayer(QMainWindow):
         except Exception:
             pass
         try:
+            self._save_session()
             self._save_settings()
         except Exception:
             pass
@@ -4350,6 +6031,7 @@ class MediaPlayer(QMainWindow):
                 self.skip_completed = bool(s.get('skip_completed', self.skip_completed))
                 self.unwatched_only = bool(s.get('unwatched_only', self.unwatched_only))
                 self.show_up_next = bool(s.get('show_up_next', self.show_up_next))  
+                self.restore_session = bool(s.get('restore_session', True))
                 self.log_level = s.get('log_level', self.log_level)
                 self.show_today_badge = bool(s.get('show_today_badge', True))
                 self.group_singles = bool(s.get('group_singles', False))
@@ -4512,6 +6194,8 @@ class MediaPlayer(QMainWindow):
         except Exception:
             pass
 
+        self._load_session()
+        
     def _save_settings(self):
         s = {
             'auto_play_enabled': self.auto_play_enabled,
@@ -4538,6 +6222,7 @@ class MediaPlayer(QMainWindow):
             'minimize_to_tray': self.minimize_to_tray,
             'show_today_badge': self.show_today_badge,
             'group_singles': bool(getattr(self, 'group_singles', False)),
+            'restore_session': bool(getattr(self, 'restore_session', True)),
             'window': {
                 'x': int(self.geometry().x()),
                 'y': int(self.geometry().y()),
@@ -4575,6 +6260,101 @@ class MediaPlayer(QMainWindow):
             json.dump(sorted(list(self.completed_urls)), open(CFG_COMPLETED, 'w', encoding='utf-8'))
         except Exception:
             pass
+
+    def _save_session(self):
+        """Saves the current application state to session.json."""
+        if not getattr(self, 'restore_session', True):
+            # If the setting is off, ensure no session file exists
+            if CFG_SESSION.exists():
+                try:
+                    CFG_SESSION.unlink()
+                except Exception as e:
+                    logger.error(f"Could not remove session file: {e}")
+            return
+
+        try:
+            current_pos_ms = 0
+            # Get the most up-to-date position if playing
+            if self._is_playing() and 0 <= self.current_index < len(self.playlist):
+                current_pos_ms = int(getattr(self, '_last_play_pos_ms', 0))
+
+            session_data = {
+                'playlist': self.playlist,
+                'current_index': self.current_index,
+                'last_position_ms': current_pos_ms,
+                'play_scope': self.play_scope,
+                'expansion_state': self._get_tree_expansion_state(),
+                'version': 1.0
+            }
+            with open(CFG_SESSION, 'w', encoding='utf-8') as f:
+                json.dump(session_data, f, indent=2)
+            logger.info("Session state saved.")
+        except Exception as e:
+            logger.error(f"Failed to save session state: {e}")
+
+    def _load_session(self):
+            """Loads the last saved session if the setting is enabled."""
+            if not getattr(self, 'restore_session', True):
+                logger.info("Session restore is disabled in settings.")
+                return
+            if not CFG_SESSION.exists():
+                logger.info("No session file found to restore.")
+                return
+
+            try:
+                logger.info("Attempting to restore previous session...")
+                with open(CFG_SESSION, 'r', encoding='utf-8') as f:
+                    session_data = json.load(f)
+
+                # --- Data Validation ---
+                if not isinstance(session_data, dict): raise ValueError("Session data is not a valid dictionary.")
+                playlist = session_data.get('playlist');
+                if not isinstance(playlist, list): raise ValueError("Playlist in session data is not a valid list.")
+                current_index = session_data.get('current_index', -1)
+                if not isinstance(current_index, int): current_index = -1
+                expansion_state = session_data.get('expansion_state', {});
+                if not isinstance(expansion_state, dict): expansion_state = {}
+
+                # --- Apply State ---
+                self.playlist = playlist
+                self.current_index = current_index
+                self.play_scope = session_data.get('play_scope')
+
+                # --- Restore UI ---
+                self._refresh_playlist_widget(expansion_state=expansion_state)
+                self._update_scope_label()
+
+                # --- Load the last track but don't play it yet ---
+                if 0 <= self.current_index < len(self.playlist):
+                    pos_ms = session_data.get('last_position_ms', 0)
+                    try: pos_ms = int(pos_ms or 0)
+                    except (ValueError, TypeError): pos_ms = 0
+                    
+                    # --- Call the new unified method to prepare the track ---
+                    self._prepare_and_load_track(self.current_index, start_pos_ms=pos_ms, should_play=False)
+
+                    # --- Update UI specific to restoring a session ---
+                    self.play_pause_btn.setIcon(self._play_icon_normal)
+                    QTimer.singleShot(500, self._update_restored_duration)
+
+                self.status.showMessage("Restored last session. Press Play to resume.", 5000)
+
+            except Exception as e:
+                import traceback
+                logger.error(f"Failed to load session state: {e}\n{traceback.format_exc()}")
+                self.status.showMessage("Could not restore session: file may be corrupt.", 5000)
+                if CFG_SESSION.exists():
+                    try: CFG_SESSION.unlink()
+                    except Exception as e_del: logger.error(f"Failed to delete corrupt session file: {e_del}")
+
+    def _update_restored_duration(self):
+        """Safely update duration label after a session restore."""
+        try:
+            duration_ms = int((self.mpv.duration or 0) * 1000)
+            if duration_ms > 0:
+                self.dur_label.setText(format_time(duration_ms))
+        except Exception:
+            pass # Ignore if mpv is not ready
 
     # UI data binding
     def _refresh_playlist_widget(self, expansion_state=None, incremental_update=False):
@@ -4758,6 +6538,109 @@ class MediaPlayer(QMainWindow):
                 )
         except Exception:
             pass
+
+    def _apply_dialog_theme(self, dialog: QDialog):
+        """Applies a consistent dark or vinyl theme to any dialog."""
+        try:
+            is_dark = getattr(self, 'theme', 'dark') == 'dark'
+            
+            if is_dark:
+                dialog.setStyleSheet("""
+                    QDialog {
+                        background-color: #2a2a2a; color: #f3f3f3;
+                    }
+                    QLabel, QCheckBox, QGroupBox::title {
+                        color: #f3f3f3;
+                    }
+                    QLineEdit, QTextEdit, QListWidget, QTreeWidget, QScrollArea {
+                        background-color: #1e1e1e; color: #f3f3f3; border: 1px solid #4a4a4a;
+                        selection-background-color: #e76f51;
+                    }
+                    QGroupBox {
+                        border: 1px solid #4a4a4a; margin-top: 6px; padding: 10px 5px 5px 5px;
+                    }
+                    QGroupBox::title {
+                        subcontrol-origin: margin; left: 10px; padding: 0 3px 0 3px;
+                    }
+                    QComboBox {
+                        background-color: #1e1e1e; border: 1px solid #4a4a4a; padding: 4px; color: #f3f3f3;
+                    }
+                    QComboBox QAbstractItemView {
+                        background-color: #1e1e1e; border: 1px solid #4a4a4a;
+                        selection-background-color: #e76f51; color: #f3f3f3; selection-color: #ffffff;
+                    }
+                    /* --- FINAL FIX for Header --- */
+                    QHeaderView::section {
+                        background-color: #2a2a2a; color: #f3f3f3; padding: 4px;
+                        border-top: 0px; border-right: 0px; border-left: 1px solid #4a4a4a; border-bottom: 1px solid #4a4a4a;
+                    }
+                    /* --- FINAL FIX for Scrollbars --- */
+                    QScrollBar:vertical {
+                        background: #2a2a2a; width: 12px; margin: 0px; border-left: 1px solid #4a4a4a;
+                    }
+                    QScrollBar::handle:vertical {
+                        background: #4a4a4a; min-height: 24px; border-radius: 6px;
+                    }
+                    QScrollBar::handle:vertical:hover { background: #5a5a5a; }
+                    QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+                    
+                    QPushButton {
+                        background-color: #3a3a3a; color: #f3f3f3; border: 1px solid #5a5a5a;
+                        padding: 6px 12px; border-radius: 4px;
+                    }
+                    QPushButton:hover { background-color: #4a4a4a; }
+                    QPushButton:pressed { background-color: #5a5a5a; }
+                """)
+            else: # Vinyl theme
+                dialog.setStyleSheet("""
+                    QDialog {
+                        background-color: #faf3e0; color: #4a2c2a;
+                    }
+                    /* --- FIX: Style the content widget inside the scroll area --- */
+                    QScrollArea QWidget {
+                        background-color: #faf3e0;
+                    }
+                    QLabel, QCheckBox, QGroupBox::title {
+                        color: #4a2c2a;
+                    }
+                    QLineEdit, QTextEdit, QListWidget, QTreeWidget {
+                        background-color: #fff6d9; color: #4a2c2a; border: 1px solid #c2a882;
+                        selection-background-color: #e76f51;
+                    }
+                    QGroupBox {
+                        border: 1px solid #c2a882; margin-top: 6px; padding: 10px 5px 5px 5px;
+                    }
+                    QGroupBox::title {
+                        subcontrol-origin: margin; left: 10px; padding: 0 3px 0 3px;
+                    }
+                    QComboBox {
+                        background-color: #fff6d9; border: 1px solid #c2a882; padding: 4px; color: #4a2c2a;
+                    }
+                    QComboBox QAbstractItemView {
+                        background-color: #fff6d9; border: 1px solid #c2a882;
+                        selection-background-color: #e76f51; color: #4a2c2a; selection-color: #ffffff;
+                    }
+                    QHeaderView::section {
+                        background-color: #f0e7cf; color: #4a2c2a; padding: 4px; border: 1px solid #c2a882;
+                    }
+                    QScrollBar:vertical {
+                        background: #faf3e0; width: 12px; margin: 0px; border-left: 1px solid #c2a882;
+                    }
+                    QScrollBar::handle:vertical {
+                        background: #c2a882; min-height: 24px; border-radius: 6px;
+                    }
+                    QScrollBar::handle:vertical:hover { background: #b6916d; }
+                    QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+                    
+                    QPushButton {
+                        background-color: #f0e7cf; color: #4a2c2a; border: 1px solid #c2a882;
+                        padding: 6px 12px; border-radius: 4px;
+                    }
+                    QPushButton:hover { background-color: #e9e0c8; }
+                    QPushButton:pressed { background-color: #e0d9bf; }
+                """)
+        except Exception as e:
+            print(f"Failed to apply dialog theme: {e}")
 
     def _is_completed_url(self, url):
         try:
@@ -5029,20 +6912,18 @@ class MediaPlayer(QMainWindow):
     def _highlight_current_row(self):
         """Highlight the currently playing item with icon and bold text"""
         try:
-            # print(f"\n[HIGHLIGHT DEBUG] Starting highlight_current_row")
-            
             # Get fonts
             default_font = self._font_serif_no_size(italic=True, bold=True)
             playing_font = self._font_serif_no_size(italic=True, bold=True)
             playing_font.setWeight(QFont.ExtraBold)
-            
-            # Process all current items
+
             iterator = QTreeWidgetItemIterator(self.playlist_tree)
-            
+            item_to_scroll_to = None
+
             while iterator.value():
                 item = iterator.value()
                 data = item.data(0, Qt.UserRole)
-                
+
                 if isinstance(data, tuple) and data[0] == 'current':
                     idx = data[1]
                     
@@ -5050,35 +6931,36 @@ class MediaPlayer(QMainWindow):
                     original_text = item.text(0)
                     if original_text.startswith('▶ '):
                         original_text = original_text[2:]
-                    
+
                     if idx == self.current_index:
-                        # print(f"[HIGHLIGHT DEBUG] *** MATCH FOUND! Setting highlight for idx={idx}")
-                        
-                        # Add play icon and extra bold font
+                        # --- THIS IS THE FIX ---
+                        # ALWAYS add the '▶' symbol to the current item,
+                        # regardless of whether the player is paused or active.
+                        # This ensures the session restore state is visually correct.
                         item.setText(0, f"▶ {original_text}")
                         item.setFont(0, playing_font)
-                        
-                        # Apply text color
-                        if self.theme == 'dark':
-                            text_color = QColor("#e76f51")
-                        else:
-                            text_color = QColor("#e76f51")
+
+                        # Set the theme-appropriate highlight color
+                        text_color = QColor("#e76f51") # Same for both themes
                         item.setForeground(0, text_color)
                         
+                        # Mark this item to scroll to it later
+                        item_to_scroll_to = item
+
                     else:
-                        # Not playing - restore normal appearance
+                        # Not the current item - restore normal appearance
                         item.setText(0, original_text)
                         item.setFont(0, default_font)
-                        item.setForeground(0, QColor())
-                
+                        item.setForeground(0, QBrush()) # Resets to default color
+
                 iterator += 1
-            
-            # Force the delegate to repaint
-            self.playlist_tree.viewport().update()
-            
+
+            # Scroll to the highlighted item after all styling is applied
+            if item_to_scroll_to:
+                self.playlist_tree.scrollToItem(item_to_scroll_to, QAbstractItemView.PositionAtCenter)
+
         except Exception as e:
-            pass
-            # print(f"[HIGHLIGHT DEBUG] ERROR: {e}")
+            logger.error(f"Highlight row failed: {e}")
         
     def _on_title_resolved(self, url: str, title: str):
         try:
@@ -5954,10 +7836,15 @@ class MediaPlayer(QMainWindow):
                 media_type = 'local'
 
             # Check if this is a playlist URL
-            is_playlist = (
-                media_type in ('youtube', 'bilibili') and
-                ('list=' in url or '/playlist' in url_lower or '/series' in url_lower)
-            )
+            if media_type == 'youtube':
+                is_playlist = ('list=' in url or '/playlist' in url_lower)
+            elif media_type == 'bilibili':
+                is_playlist = (
+                    'list=' in url or '/playlist' in url_lower or '/series' in url_lower or
+                    'space.bilibili.com' in url_lower  # Add support for Bilibili space URLs
+                )
+            else:
+                is_playlist = False
 
             if is_playlist:
                 # Handle playlist loading in the background
@@ -6104,12 +7991,15 @@ class MediaPlayer(QMainWindow):
         if ok and url:
             t = 'youtube' if ('youtube.com' in url or 'youtu.be' in url) else ('bilibili' if 'bilibili.com' in url else 'local')
             # Try to detect if this is a playlist and load entries in background
+        if t == 'youtube':
+            will_try_playlist = ('list=' in url or '/playlist' in url.lower())
+        elif t == 'bilibili':
             will_try_playlist = (
-                t in ('youtube', 'bilibili') and (
-                    'list=' in url or 'playlist' in url or 'series' in url or 'watchlater' in url or
-                    ('space.bilibili.com' in url)
-                )
+                'list=' in url or '/playlist' in url.lower() or '/series' in url.lower() or
+                'space.bilibili.com' in url.lower()
             )
+        else:
+            will_try_playlist = False
             if will_try_playlist:
                 self._show_loading("Loading playlist entries...")
                 loader = PlaylistLoaderThread(url, t)
@@ -6154,37 +8044,27 @@ class MediaPlayer(QMainWindow):
         self._save_current_playlist(); self._refresh_playlist_widget()
 
     def save_playlist(self):
-        from PySide6.QtWidgets import QInputDialog
-        name, ok = QInputDialog.getText(self, "Save Playlist", "Enter name:")
-        if ok and name:
-            name = self._unique_playlist_name(name)
-            self.saved_playlists[name] = list(self.playlist)
-            self._save_playlists_file()
-            self.status.showMessage(f"Saved playlist '{name}'", 4000)
+        """Enhanced save playlist - replaces the old method"""
+        if not hasattr(self, '_playlist_manager'):
+            self._playlist_manager = EnhancedPlaylistManager(self, APP_DIR)
+        
+        return self._playlist_manager.save_current_playlist()
 
     def load_playlist_dialog(self):
-        if not self.saved_playlists:
-            QMessageBox.information(self, "No Playlists", "No saved playlists found.")
-            return
-        from PySide6.QtWidgets import QInputDialog
-        names = list(self.saved_playlists.keys())
-        name, ok = QInputDialog.getItem(self, "Load Playlist", "Select:", names, 0, False)
-        if ok and name:
-            self.playlist = list(self.saved_playlists.get(name, []))
-            self.current_index = 0 if self.playlist else -1
-            self._save_current_playlist(); self._refresh_playlist_widget()
-            self.status.showMessage(f"Loaded playlist '{name}'", 4000)
-            if self.playlist:
-                self.play_current()
-
-    def _unique_playlist_name(self, base):
-        base = (base or 'Playlist').strip()
-        if base not in self.saved_playlists:
-            return base
-        i = 2
-        while f"{base} ({i})" in self.saved_playlists:
-            i += 1
-        return f"{base} ({i})"
+        print("DEBUG: load_playlist_dialog called - which version?")
+        """Enhanced load playlist - replaces the old method"""
+        if not hasattr(self, '_playlist_manager'):
+            self._playlist_manager = EnhancedPlaylistManager(self, APP_DIR)
+        
+        return self._playlist_manager.load_playlist_dialog()
+        def _unique_playlist_name(self, base):
+            base = (base or 'Playlist').strip()
+            if base not in self.saved_playlists:
+                return base
+            i = 2
+            while f"{base} ({i})" in self.saved_playlists:
+                i += 1
+            return f"{base} ({i})"
 
     def on_tree_item_double_clicked(self, item, column):
 
@@ -6659,21 +8539,33 @@ class MediaPlayer(QMainWindow):
             print(f"[UNDO] Error adding operation: {e}")
 
     def _perform_undo(self):
-        """Perform the last undo operation"""
-        print("🎯 CTRL+Z PRESSED! Undo method called!")
+        """Enhanced undo method that handles playlist manager operations"""
         try:
             if not self._undo_stack:
                 self.status.showMessage("Nothing to undo", 2000)
                 return
                 
-            # --- FIX: Use a consistent variable name ---
-            operation = self._undo_stack.pop()  # Get and remove last operation
+            operation = self._undo_stack.pop()
             op_type = operation['type']
             op_data = operation['data']
             
             print(f"[UNDO] Performing undo: {op_type}")
             
-            if op_type == 'delete_items':
+            if op_type == 'load_playlist':
+                # Handle playlist load undo
+                try:
+                    self.playlist = op_data['old_playlist']
+                    self.current_index = op_data['old_current_index']
+                    was_playing = op_data['was_playing']
+                    
+                    self._save_current_playlist()
+                    self._refresh_playlist_widget()
+                    self._recover_current_after_change(was_playing)
+                    
+                except Exception as e:
+                    print(f"[UNDO] Error restoring playlist load: {e}")
+                    
+            elif op_type == 'delete_items':
                 self._undo_delete_items(op_data)
             elif op_type == 'delete_group':
                 self._undo_delete_group(op_data)
@@ -6683,7 +8575,7 @@ class MediaPlayer(QMainWindow):
                 self._undo_move_items(op_data)
             else:
                 self.status.showMessage(f"Cannot undo operation: {op_type}", 3000)
-                # If we can't handle it, put it back on the stack
+                # Put it back if we can't handle it
                 self._undo_stack.append(operation)
                 return
                 
@@ -6811,67 +8703,47 @@ class MediaPlayer(QMainWindow):
             self.status.showMessage(f"Cleared {count} videos (Ctrl+Z to undo)", 4000)
 
     def _play_all_library(self):
-        # Only use current playlist; do not include saved items
-        seen = set()
-        combined = []
-        for it in self.playlist:
-            u = it.get('url')
-            if not u or u in seen:
-                continue
-            seen.add(u)
-            combined.append({'title': it.get('title', u), 'url': u, 'type': it.get('type', 'local'), 'playlist': it.get('playlist')})
-        if not combined:
-            QMessageBox.information(self, "No Media", "No media found in current playlist.")
-            return
-        self.playlist = combined
-        self.current_index = 0
-        self._save_current_playlist(); self._refresh_playlist_widget()
-        self.play_current()
-
-    # Playback
-    def play_current(self):
-        try:
-            # print(f"[play_current] idx={self.current_index} len={len(self.playlist)} scope={self.play_scope}")
-            pass
-        except Exception:
-            pass
-        if not (0 <= self.current_index < len(self.playlist)):
-            return
-        # Skip items previously completed (>=95% watched) and move to next available
-        if getattr(self, '_force_play_ignore_completed', False):
-            # One-off bypass used by context action
-            self._force_play_ignore_completed = False
-        elif getattr(self, 'skip_completed', False):
-            # ADDED: Logging to help diagnose the intermittent bug.
-            logger.info(f"'skip_completed' is True. Checking current track (index {self.current_index}) for completion.")
-            guard = 0
-            while 0 <= self.current_index < len(self.playlist):
-                url_try = self.playlist[self.current_index].get('url')
-                key_try = self._canonical_url_key(url_try) if url_try else None
-                if (not url_try) or ((key_try not in self.completed_urls) and (url_try not in self.completed_urls)):
-                    break
-                logger.info(f"Skipping completed track: {url_try}")
-                self.current_index += 1
-                guard += 1
-                if guard > len(self.playlist):
-                    break
-            if self.current_index >= len(self.playlist):
-                self.status.showMessage("All items in the playlist are completed", 5000)
+            """Plays the entire library from the beginning."""
+            # This section de-duplicates your playlist, which seems intentional.
+            seen = set()
+            combined = []
+            for it in self.playlist:
+                u = it.get('url')
+                if not u or u in seen:
+                    continue
+                seen.add(u)
+                combined.append({'title': it.get('title', u), 'url': u, 'type': it.get('type'), 'playlist': it.get('playlist')})
+            
+            if not combined:
+                QMessageBox.information(self, "No Media", "No media found in current playlist.")
                 return
-        self._end_session()
-        it = self.playlist[self.current_index]
-        url = it.get('url', '')
 
-        # Set keep-open to 'yes' to prevent the player from terminating
-        # at the end of a track. This allows our _eof observer to reliably
-        # trigger the next track.
-        self.mpv['keep-open'] = 'yes'
+            # --- THIS IS THE FIX ---
+            # Explicitly clear the playback scope. This tells the 'Next' button
+            # to use the entire library, not the last group you played.
+            self.play_scope = None
+            self.status.showMessage("Playing all media in library...", 3000)
+            self._update_scope_label()
+            # --- END FIX ---
 
-        # Site-specific options
+            self.playlist = combined
+            self.current_index = 0
+            self._save_current_playlist()
+            self._refresh_playlist_widget()
+            self.play_current()
+            
+    def _prepare_and_load_track(self, index, start_pos_ms=0, should_play=False):
+        """A unified method to load a track into mpv, set options, and optionally play it."""
+        if not (0 <= index < len(self.playlist)):
+            return
+
+        item = self.playlist[index]
+        url = item.get('url', '')
+
+        # --- Set site-specific options (from play_current) ---
         try:
-            if it.get('type') == 'bilibili':
-                # Bilibili often requires referer + cookies + headers
-                self.mpv['referrer'] = it.get('url') or 'https://www.bilibili.com'
+            if item.get('type') == 'bilibili':
+                self.mpv['referrer'] = item.get('url') or 'https://www.bilibili.com'
                 self.mpv['http-header-fields'] = 'Referer: https://www.bilibili.com,Origin: https://www.bilibili.com,User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36'
                 self.mpv['ytdl-raw-options'] = f"cookies={str(COOKIES_BILI)},add-header=Referer: https://www.bilibili.com,add-header=User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
                 self.mpv['ytdl-format'] = 'bv*[vcodec^=avc1][height<=720]+ba/best[height<=720]/best'
@@ -6880,52 +8752,81 @@ class MediaPlayer(QMainWindow):
                 self.mpv['http-header-fields'] = ''
                 self.mpv['ytdl-raw-options'] = ''
                 self.mpv['ytdl-format'] = 'best[height<=720]/bv*[height<=720]+ba/best'
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"Error setting mpv options: {e}")
 
-        self._set_track_title(it.get('title', 'Unknown'))
-        self._highlight_current_row()
-        self._update_up_next()
-        # Seamless resume: load with start option to avoid 0:00 flash
-        _url = it.get('url')
-        # print(f"[DEBUG] Context menu - extracted URL: {repr(url)} from item: {repr(it)}")
-        _key = self._canonical_url_key(_url) if _url else None
-        _resume_ms = int(self.playback_positions.get(_key, self.playback_positions.get(_url, 0))) if _url else 0
-        _resume_sec = max(0.0, float(_resume_ms) / 1000.0)
+        # --- Load the file with start position ---
+        start_pos_sec = max(0.0, float(start_pos_ms) / 1000.0)
+        logger.info(f"Loading track '{item.get('title')}': url={url}, start_sec={start_pos_sec}, play={should_play}")
+        
         try:
-            # print(f"[play_current] loading title={it.get('title')} url={_url} resume_ms={_resume_ms}")
-            pass
-        except Exception:
-            pass
-        # Set enforcement window to protect target from early regressions
-        self._resume_target_ms = _resume_ms
-        self._resume_enforce_until = time.time() + 20.0
-        try:
-            if _resume_sec > 0:
-                self.mpv.command('loadfile', _url, 'replace', f'start={_resume_sec}')
+            if start_pos_sec > 0:
+                self.mpv.command('loadfile', url, 'replace', f'start={start_pos_sec}')
             else:
-                self.mpv.command('loadfile', _url, 'replace')
-        except Exception:
-            self.mpv.play(_url)
-        self.mpv.pause = False
-        self._reset_silence_counter()
-        self.status.showMessage("Loading...", 3000)
-        # In case backend ignores start, issue robust resume attempts
-        if _resume_ms > 0:
-            self._restore_saved_position_attempt(_url, _resume_ms, 1)
+                self.mpv.command('loadfile', url, 'replace')
+        except Exception as e:
+            logger.error(f"mpv loadfile command failed: {e}")
+            self.mpv.play(url) # Fallback
+
+        # --- Set playback state ---
+        self.mpv.pause = not should_play
+        
+        # --- Handle resume enforcement ---
+        if start_pos_ms > 0:
+            self._resume_target_ms = start_pos_ms
+            self._resume_enforce_until = time.time() + 20.0
+            self._restore_saved_position_attempt(url, start_pos_ms, 1)
             self.requestTimerSignal.emit(350, lambda: self._maybe_reapply_resume('start'))
-        # set pause icon (we are now playing)
-        try:
+
+        # --- Update UI ---
+        self._set_track_title(item.get('title', 'Unknown'))
+        self._update_up_next()
+        self.progress.setValue(start_pos_ms)
+        self.time_label.setText(format_time(start_pos_ms))
+        
+        # --- Defer highlight to ensure UI is ready ---
+        QTimer.singleShot(100, self._highlight_current_row)    
+
+    # Playback
+    def play_current(self):
+            if not (0 <= self.current_index < len(self.playlist)):
+                return
+            
+            # --- Handle skipping completed videos ---
+            if getattr(self, '_force_play_ignore_completed', False):
+                self._force_play_ignore_completed = False
+            elif getattr(self, 'skip_completed', False):
+                logger.info(f"'skip_completed' is True. Checking current track (index {self.current_index}) for completion.")
+                guard = 0
+                while 0 <= self.current_index < len(self.playlist):
+                    url_try = self.playlist[self.current_index].get('url')
+                    if not self._is_completed_url(url_try):
+                        break
+                    logger.info(f"Skipping completed track: {url_try}")
+                    self.current_index += 1
+                    guard += 1
+                    if guard > len(self.playlist) * 2: # Prevent infinite loops
+                        self.status.showMessage("All items are completed.", 3000)
+                        return
+                if self.current_index >= len(self.playlist):
+                    self.status.showMessage("All items in scope are completed.", 5000)
+                    return
+            
+            self._end_session()
+            
+            # --- Determine resume position ---
+            item = self.playlist[self.current_index]
+            url = item.get('url')
+            key = self._canonical_url_key(url) if url else None
+            resume_ms = int(self.playback_positions.get(key, self.playback_positions.get(url, 0))) if url else 0
+
+            # --- Call the new unified method to do the heavy lifting ---
+            self._prepare_and_load_track(self.current_index, start_pos_ms=resume_ms, should_play=True)
+
+            # --- Update UI specific to starting playback ---
             self.play_pause_btn.setIcon(self._pause_icon_normal)
-            self._play_pause_shows_play = False
-        except Exception:
-            try:
-                self.play_pause_btn.setIcon(self.pause_icon)
-                self._play_pause_shows_play = False
-            except Exception:
-                pass
-        self._start_session()
-        self._update_tray()
+            self._start_session()
+            self._update_tray()
 
     def next_track(self):
         if not self.playlist:
@@ -6953,30 +8854,32 @@ class MediaPlayer(QMainWindow):
         self.play_current()
 
     def previous_track(self):
-        if not self.playlist:
-            return
-        # Save current track position before switching
-        self._save_current_position()
-        # Use scoped playback behavior
-        indices = self._scope_indices()
-        if indices:
-            try:
-                pos = indices.index(self.current_index) if self.current_index in indices else -1
-                if self.shuffle_mode:
-                    import random
-                    self.current_index = random.choice(indices)
-                else:
-                    self.current_index = indices[(pos + 1) % len(indices)]
-                self.play_current(); return
-            except Exception:
-                pass
-        if self.shuffle_mode:
-            import random
-            self.current_index = random.randint(0, len(self.playlist)-1)
-        else:
-            self.current_index = (self.current_index - 1 + len(self.playlist)) % len(self.playlist)
-        self.play_current()
-
+            if not self.playlist:
+                return
+            # Save current track position before switching
+            self._save_current_position()
+            # Use scoped playback behavior
+            indices = self._scope_indices()
+            if indices:
+                try:
+                    pos = indices.index(self.current_index) if self.current_index in indices else -1
+                    if self.shuffle_mode:
+                        import random
+                        self.current_index = random.choice(indices)
+                    else:
+                        # Correctly calculate the previous index within the scope
+                        self.current_index = indices[(pos - 1 + len(indices)) % len(indices)] # <-- THE FIX
+                    self.play_current(); return
+                except Exception:
+                    pass
+            # This non-scoped part was already correct
+            if self.shuffle_mode:
+                import random
+                self.current_index = random.randint(0, len(self.playlist)-1)
+            else:
+                self.current_index = (self.current_index - 1 + len(self.playlist)) % len(self.playlist)
+            self.play_current()
+        
     def toggle_play_pause(self):
         if self._is_playing():
             # print("[DEBUG] Attempting to pause...")
@@ -7288,6 +9191,11 @@ class MediaPlayer(QMainWindow):
 
             # UI & Panels tab
             w_ui = QWidget(); f_ui = QFormLayout(w_ui)
+            chk_restore_session = QCheckBox("Restore last session on startup")
+            chk_restore_session.setChecked(bool(getattr(self, 'restore_session', True)))
+            chk_restore_session.setToolTip("Automatically save and load your playlist and position between sessions.")
+            f_ui.addRow(chk_restore_session)
+
             chk_show_up_next = QCheckBox("Show 'Up Next' panel")
             chk_show_up_next.setChecked(bool(getattr(self, 'show_up_next', True)))
             chk_show_up_next.setToolTip("Show or hide the 'Up Next' panel below the video player.")
@@ -7369,6 +9277,7 @@ class MediaPlayer(QMainWindow):
                 
                 # UI & Panels
                 try:
+                    self.restore_session = bool(chk_restore_session.isChecked())
                     self.show_up_next = bool(chk_show_up_next.isChecked())
                     if hasattr(self, 'up_next_container'): self.up_next_container.setVisible(self.show_up_next)
                 except Exception: pass
@@ -7648,12 +9557,8 @@ class MediaPlayer(QMainWindow):
             # 7. Resolve titles in the background for items that need it
             items_needing_titles = [it for it in new_items if not it.get('title') or it['title'] == it.get('url')]
             if items_needing_titles:
-                media_type = items_needing_titles[0].get('type', 'local')
-                worker = TitleResolveWorker(items_needing_titles, media_type)
-                self._title_workers.append(worker)
-                worker.titleResolved.connect(self._on_title_resolved)
-                worker.finished.connect(lambda w=worker: self._cleanup_title_worker(w))
-                worker.start()
+                for item in items_needing_titles:
+                    self._resolve_title_parallel(item.get('url'), item.get('type', 'local'))
             
     def _restart_audio_monitor(self):
         """Restart the audio monitor with new settings"""
@@ -8134,6 +10039,10 @@ class MediaPlayer(QMainWindow):
 
             QShortcut(QKeySequence(Qt.CTRL | Qt.Key_Z), self, self._perform_undo)
             QShortcut(QKeySequence(Qt.CTRL | Qt.Key_V), self, self._handle_paste)
+
+            # Playlist navigation
+            QShortcut(QKeySequence(Qt.Key_Home), self, self._navigate_to_top)
+            QShortcut(QKeySequence(Qt.Key_End), self, self._navigate_to_bottom)
             
     def _toggle_mute(self):
         """Toggles the player's mute status."""
@@ -8367,24 +10276,31 @@ class MediaPlayer(QMainWindow):
         # Always call the superclass method for other events.
         super().changeEvent(event)
     def closeEvent(self, event):
-        try:
-            if hasattr(self, 'audio_monitor') and self.audio_monitor is not None:
-                self.audio_monitor.stop()
-                self.audio_monitor.wait()
-            if hasattr(self, 'afk_monitor') and self.afk_monitor is not None:
-                self.afk_monitor.stop()
-                self.afk_monitor.wait()
-            if hasattr(self, 'ytdl_manager'):
-                self.ytdl_manager.stop()
-                self.ytdl_manager.wait(2000) # Wait for it to finish
-        except Exception:
-            pass
-        # Persist window/setting state on close
-        try:
-            self._save_settings()
-        except Exception:
-            pass
-        event.accept()
+            """Gracefully stop monitors, save state, and close."""
+            # Save state first
+            try:
+                logger.info("Saving session and settings on exit...")
+                self._save_session()
+                self._save_settings()
+            except Exception as e:
+                logger.error(f"Failed to save state on close: {e}")
+
+            # Stop background threads
+            try:
+                if getattr(self, 'audio_monitor', None):
+                    self.audio_monitor.stop()
+                    self.audio_monitor.wait(1000)
+                if getattr(self, 'afk_monitor', None):
+                    self.afk_monitor.stop()
+                    self.afk_monitor.wait(1000)
+                if getattr(self, 'ytdl_manager', None):
+                    self.ytdl_manager.stop()
+                    self.ytdl_manager.wait(1000)
+            except Exception as e:
+                logger.error(f"Error stopping background threads: {e}")
+            
+            # Call the base class method to ensure proper window closure
+            super().closeEvent(event)
 
 def main():
     app = QApplication(sys.argv)

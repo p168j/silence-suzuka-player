@@ -23,6 +23,8 @@ build/
 *_completed.json
 *_current.json
 *_playlists.json
+*_playlists_v2.json
+*_session.json
 save/
 logs/
 backup/
@@ -33,6 +35,8 @@ completed.json
 current.json
 config.json
 playlists.json
+playlists_v2.json
+session.json
 
 
 
