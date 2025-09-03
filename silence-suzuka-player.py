@@ -44,7 +44,7 @@ from PySide6.QtWidgets import QProxyStyle, QStyle, QStyledItemDelegate
 from PySide6.QtGui import QPainter, QColor, QPolygon
 from PySide6.QtCore import QPoint
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QPen, QBrush, QFont, QFontDatabase, QFontMetrics, QPalette
-from PySide6.QtCore import QTimer, QEvent
+from PySide6.QtCore import QTimer, QEvent, QObject
 from PySide6.QtGui import QInputMethodEvent
 from PySide6.QtWidgets import QLineEdit
 from datetime import datetime, timedelta
@@ -2669,6 +2669,68 @@ class ScrollingTreeWidget(QTreeWidget):
         if current_item and current_item.parent() is None:  # Only for top-level items
             self._start_scrolling(current_item)
 
+class UpNextEventFilter(QObject):
+    """Event filter for handling Up Next scrolling events cleanly"""
+    
+    def __init__(self, player):
+        super().__init__()
+        self.player = player
+    
+    def eventFilter(self, obj, event):
+        """Filter mouse events for Up Next widget"""
+        if obj != self.player.up_next:
+            return False
+        
+        if event.type() == QEvent.MouseMove:
+            self._handle_mouse_move(event)
+        elif event.type() == QEvent.Leave:
+            self._handle_mouse_leave(event)
+            
+        return False  # Allow normal processing to continue
+    
+    def _handle_mouse_move(self, event):
+        """Handle mouse move events with proper debouncing"""
+        # Get item under mouse
+        try:
+            pos = event.position().toPoint()
+        except AttributeError:
+            pos = event.pos()
+        
+        item = self.player.up_next.itemAt(pos)
+        
+        # Use debounce to prevent rapid switching
+        self.player._pending_item = item
+        
+        # Stop existing debounce timer
+        if self.player._mouse_debounce_timer.isActive():
+            self.player._mouse_debounce_timer.stop()
+        
+        # Safely disconnect previous connections
+        try:
+            self.player._mouse_debounce_timer.timeout.disconnect()
+        except (RuntimeError, TypeError):
+            pass
+        
+        # Connect to handler and start debounce timer
+        self.player._mouse_debounce_timer.timeout.connect(
+            lambda: self.player._handle_item_change(item)
+        )
+        self.player._mouse_debounce_timer.start(150)  # 150ms debounce
+    
+    def _handle_mouse_leave(self, event):
+        """Handle mouse leave events"""
+        # Stop debounce timer and clear state
+        if self.player._mouse_debounce_timer.isActive():
+            self.player._mouse_debounce_timer.stop()
+        
+        try:
+            self.player._mouse_debounce_timer.timeout.disconnect()
+        except (RuntimeError, TypeError):
+            pass
+        
+        self.player._pending_item = None
+        self.player._stop_scrolling()
+
 # --- Player ---
 class MediaPlayer(QMainWindow):
     requestTimerSignal = Signal(int, object)
@@ -3391,124 +3453,81 @@ class MediaPlayer(QMainWindow):
             self._loading_overlay.move(x, y)        
 
     def _setup_up_next_scrolling(self):
-        """Setup mouse tracking and scrolling for Up Next"""
+        """Setup mouse tracking and scrolling for Up Next using event filter approach"""
         if not hasattr(self, 'up_next'):
             return
         
-        # print("[DEBUG] Setting up Up Next scrolling")
+        # Initialize scroll state - ensure clean state
+        self._cleanup_scrolling_state()
         
-        # Enable mouse tracking
-        self.up_next.setMouseTracking(True)
-        
-        # Initialize scroll state
+        # Initialize scroll timers and state
         self._scroll_timer = QTimer(self)
+        self._scroll_timer.setSingleShot(False)
         self._scroll_item = None
         self._scroll_pos = 0
         self._original_text = ""
+        
+        # Initialize debounce timer for mouse events
         self._mouse_debounce_timer = QTimer(self)
         self._mouse_debounce_timer.setSingleShot(True)
         self._pending_item = None
         
-        # Store original mouse event handlers
-        self._original_mouse_move = self.up_next.mouseMoveEvent
-        self._original_leave_event = self.up_next.leaveEvent
+        # Enable mouse tracking
+        self.up_next.setMouseTracking(True)
         
-        # --- FIX: Define the handlers and ACTUALLY assign them ---
-    def on_mouse_move(event):
-        # Call original handler first
-        self._original_mouse_move(event)
+        # Install event filter instead of replacing handlers
+        if not hasattr(self, '_up_next_event_filter'):
+            self._up_next_event_filter = UpNextEventFilter(self)
+            self.up_next.installEventFilter(self._up_next_event_filter)
+    
+    def _cleanup_scrolling_state(self):
+        """Clean up any existing scrolling state and timers"""
+        # Stop and clean up scroll timer
+        if hasattr(self, '_scroll_timer') and self._scroll_timer:
+            if self._scroll_timer.isActive():
+                self._scroll_timer.stop()
+            try:
+                self._scroll_timer.timeout.disconnect()
+            except (RuntimeError, TypeError):
+                pass
         
-        # Get item under mouse
-        try:
-            pos = event.position().toPoint()
-        except AttributeError:
-            pos = event.pos()
+        # Stop and clean up debounce timer  
+        if hasattr(self, '_mouse_debounce_timer') and self._mouse_debounce_timer:
+            if self._mouse_debounce_timer.isActive():
+                self._mouse_debounce_timer.stop()
+            try:
+                self._mouse_debounce_timer.timeout.disconnect()
+            except (RuntimeError, TypeError):
+                pass
         
-        item = self.up_next.itemAt(pos)
+        # Restore any scrolled text
+        if hasattr(self, '_scroll_item') and self._scroll_item and hasattr(self, '_original_text') and self._original_text:
+            try:
+                self._scroll_item.setText(0, self._original_text)
+            except Exception:
+                pass
         
-        # Use debounce to prevent rapid switching
-        self._pending_item = item
-        self._mouse_debounce_timer.stop()
-        
-        # Safely disconnect previous connections
-        try:
-            self._mouse_debounce_timer.timeout.disconnect()
-        except (RuntimeError, TypeError):
-            pass
-        
-        self._mouse_debounce_timer.timeout.connect(lambda: self._handle_item_change(item))
-        self._mouse_debounce_timer.start(150)  # 150ms debounce
-                
-    def on_leave(event):
-        # Call original handler first
-        self._original_leave_event(event)
-        # Stop debounce timer and clear state
-        self._mouse_debounce_timer.stop()
-        try:
-            self._mouse_debounce_timer.timeout.disconnect()
-        except (RuntimeError, TypeError):
-            pass
+        # Clear state variables
+        self._scroll_item = None
+        self._scroll_pos = 0
+        self._original_text = ""
         self._pending_item = None
-        self._stop_scrolling()
-            
-        # --- FIX: Actually assign the new handlers ---
-        self.up_next.mouseMoveEvent = on_mouse_move
-        self.up_next.leaveEvent = on_leave
-        
-    def on_mouse_move(event):
-        # Call original handler first
-        self._original_mouse_move(event)
-        
-        # Get item under mouse
-        try:
-            pos = event.position().toPoint()
-        except AttributeError:
-            pos = event.pos()
-        
-        item = self.up_next.itemAt(pos)
-        
-        # Use longer debounce to prevent rapid switching
-        self._pending_item = item
-        self._mouse_debounce_timer.stop()
-        self._mouse_debounce_timer.timeout.disconnect()
-        self._mouse_debounce_timer.timeout.connect(lambda: self._handle_item_change(item))
-        self._mouse_debounce_timer.start(200)  # INCREASED from 100ms to 200ms
-            
-        def on_leave(event):
-            # Call original handler first
-            self._original_leave_event(event)
-            self._stop_scrolling()
-            print("[DEBUG] Mouse left Up Next")
-        
-        # Replace event handlers
-        self.up_next.mouseMoveEvent = on_mouse_move
-        self.up_next.leaveEvent = on_leave
 
     def _handle_item_change(self, item):
-        """Handle item change with better debouncing"""
+        """Handle item change with proper debouncing and cleanup"""
         # Only process if this is genuinely a different item
         if item == self._scroll_item:
             return
             
         # Always stop current scrolling first
-        if self._scroll_item:
-            self._stop_scrolling()
+        self._stop_scrolling()
         
-        # Use debounce to prevent rapid switching
-        self._pending_item = item
-        self._mouse_debounce_timer.stop()
+        # Clear pending item since we're now processing
+        self._pending_item = None
         
-        # Safely disconnect previous connections
-        try:
-            self._mouse_debounce_timer.timeout.disconnect()
-        except (RuntimeError, TypeError):
-            # No connections to disconnect, that's fine
-            pass
-        
-        # Only connect and start if we have a valid item
+        # Start scrolling for new item if valid
         if item:
-            self._mouse_debounce_timer.timeout.connect(lambda: self._start_scrolling(item))
-            self._mouse_debounce_timer.start(150)  # 150ms debounce
+            self._start_scrolling(item)
 
     def _start_scrolling(self, item):
         """Start scrolling for an item"""
@@ -3579,26 +3598,27 @@ class MediaPlayer(QMainWindow):
             item.setText(0, text)
 
     def _stop_scrolling(self):
-        """Stop scrolling and restore text"""
-        # print("[DEBUG] _stop_scrolling called")
-        
-        if self._scroll_timer.isActive():
-            self._scroll_timer.stop()
-            # print("[DEBUG] Timer stopped")
-        
-        if self._scroll_item and self._original_text:
+        """Stop scrolling and restore text with proper cleanup"""
+        # Stop and disconnect scroll timer
+        if hasattr(self, '_scroll_timer') and self._scroll_timer:
+            if self._scroll_timer.isActive():
+                self._scroll_timer.stop()
             try:
-                # Immediately restore text
+                self._scroll_timer.timeout.disconnect()
+            except (RuntimeError, TypeError):
+                pass
+        
+        # Restore original text if available
+        if hasattr(self, '_scroll_item') and self._scroll_item and hasattr(self, '_original_text') and self._original_text:
+            try:
                 self._scroll_item.setText(0, self._original_text)
-                # print(f"[DEBUG] Restored text immediately: {self._original_text}")
             except Exception as e:
                 print(f"[DEBUG] Error restoring text: {e}")
         
-        # Clear state
+        # Clear all state
         self._scroll_item = None
         self._original_text = ""
         self._scroll_pos = 0
-        # print("[DEBUG] Scroll state cleared")
 
     def _reset_silence_counter(self):
         """Reset the silence detection timer - call when app starts playing."""
