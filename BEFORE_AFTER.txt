@@ -1,0 +1,26 @@
+
+BEFORE (Original Dialog):                    AFTER (Enhanced Dialog):
+─────────────────────────                   ─────────────────────────
+
+┌─ Saved Playlists ─────────┐               ┌─ Saved Playlists ─────────┐
+│                           │               │ ┌─ Search & Filter ───────┐ │
+│ 📃 Small Playlist         │               │ │ 🔍 [rock            ]  │ │
+│    1 item • Today         │               │ │ Items: [0] to [10000]   │ │
+│ 📃 Bilibili Mix           │               │ │ Sort: [📅 Date] [⬇️]     │ │
+│    4 items • Yesterday    │               │ │ [🗑️ Clear Filters]      │ │
+│ 📃 Japanese Music         │               │ │ 1 of 5 playlists        │ │
+│    2 items • 2 days ago   │               │ └─────────────────────────┘ │
+│ 📃 Rock Classics          │     ====>     │                           │
+│    3 items • 5 days ago   │               │ 📃 Rock Classics          │
+│ 📃 My Local Collection    │               │    3 items • 5 days ago   │
+│    5 items • 10 days ago  │               │                           │
+│                           │               │                           │
+│ [📁 New] [📂 Import]      │               │ [📁 New] [📂 Import]      │
+└───────────────────────────┘               └───────────────────────────┘
+
+IMPROVEMENTS:
+• Can quickly find "Rock Classics" by typing "rock"
+• Can filter to show only playlists with 3+ items  
+• Can sort alphabetically or by item count
+• Results counter shows filtering effectiveness
+• One-click to clear all filters and return to full view
