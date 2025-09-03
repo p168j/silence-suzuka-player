@@ -60,6 +60,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer, Signal, QThread, QSize
 from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter, QColor, QBrush
 from PySide6.QtWidgets import QGraphicsColorizeEffect
+from PySide6.QtWidgets import QStyleOptionViewItem, QStyle
+from PySide6.QtCore import QRect
 
 
 class PlaylistMetadataWidget(QWidget):
@@ -147,10 +149,10 @@ class PlaylistMetadataWidget(QWidget):
 
 class PlaylistPreviewWidget(QTreeWidget):
     """Widget to preview playlist contents"""
-    
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setHeaderLabels(["Title", "Source", "Duration"])
+        self.setColumnCount(3)  # Ensure columns are defined, even without headers
         self.setAlternatingRowColors(True)
         self.setRootIsDecorated(False)
         self.header().setSectionResizeMode(0, QHeaderView.Stretch)
@@ -158,6 +160,9 @@ class PlaylistPreviewWidget(QTreeWidget):
         self.header().setSectionResizeMode(2, QHeaderView.ResizeToContents)
         self.setMaximumHeight(200)
         self.setIconSize(QSize(28, 28))
+
+        # Debugging: Hide the header after widget construction
+        QTimer.singleShot(0, lambda: self.header().hide())
 
         self.setStyleSheet("""
             QTreeWidget::item {
@@ -1879,25 +1884,66 @@ class SearchBar(QLineEdit):
         # print(f"Applying search filter: {search_text}")
         # Add your filtering logic or signal emission here
 
-# REPLACE your existing PlayingItemDelegate class with this one
 class PlayingItemDelegate(QStyledItemDelegate):
     def __init__(self, player, parent=None):
         super().__init__(parent)
         self.player = player
-    
+
     def paint(self, painter, option, index):
-        # First, let Qt draw the normal item
-        super().paint(painter, option, index)
-        
-        # Then check if this is the currently playing item to draw the background
-        item = self.player.playlist_tree.itemFromIndex(index)
+        # Get a direct reference to the tree widget
+        tree_widget = self.player.playlist_tree
+
+        # --- Step 1: Draw the item's background (for selection, hover, etc.) ---
+        # We prevent the default painter from drawing text by clearing it from a copy of the options.
+        init_opt = QStyleOptionViewItem(option)
+        init_opt.text = ""
+        tree_widget.style().drawControl(QStyle.CE_ItemViewItem, init_opt, painter, tree_widget)
+
+        # --- Step 2: Get the item's text and icon ---
+        text = index.model().data(index, Qt.DisplayRole)
+        icon = index.model().data(index, Qt.DecorationRole)
+
+        # --- Step 3: Get the TRUE rectangle for the first column ---
+        # This is the key to fixing the width issue.
+        cell_rect = tree_widget.visualRect(index)
+
+        # Define margins and icon size based on your UI
+        icon_size = QSize(24, 24)
+        left_padding = 8
+        icon_text_spacing = 8
+        right_padding = 12
+
+        # --- Step 4: Manually draw the icon ---
+        icon_space_used = 0
+        if isinstance(icon, QIcon) and not icon.isNull():
+            icon_y_pos = cell_rect.top() + (cell_rect.height() - icon_size.height()) // 2
+            icon_rect = QRect(cell_rect.left() + left_padding, icon_y_pos, icon_size.width(), icon_size.height())
+            icon.paint(painter, icon_rect)
+            icon_space_used = left_padding + icon_size.width() + icon_text_spacing
+        # If the icon is an emoji (a string), it's part of the text, so we only need left padding.
+        elif isinstance(icon, str):
+            icon_space_used = left_padding
+
+        # --- Step 5: Calculate the final rectangle available for the text ---
+        text_rect = cell_rect.adjusted(icon_space_used, 0, -right_padding, 0)
+
+        # --- Step 6: Elide the text to fit our calculated rectangle ---
+        fm = QFontMetrics(option.font)
+        elided_text = fm.elidedText(text, Qt.ElideRight, text_rect.width())
+
+        # --- Step 7: Draw our perfectly elided text ---
+        painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, elided_text)
+
+        # --- Step 8: Draw the 'now playing' background overlay if needed ---
+        item = tree_widget.itemFromIndex(index)
         if item:
             data = item.data(0, Qt.UserRole)
             if isinstance(data, tuple) and data[0] == 'current':
                 idx = data[1]
                 if idx == self.player.current_index:
-                    bg_color = QColor(231, 111, 81, 40) # Subtle orange tint
+                    bg_color = QColor(231, 111, 81, 40)
                     painter.save()
+                    # Use `option.rect` here because it covers the FULL row width for the tint
                     painter.fillRect(option.rect, bg_color)
                     painter.restore()
 
@@ -2866,16 +2912,34 @@ class PlaylistTree(QTreeWidget):
         self.player = player
         # Enable headers and set column labels
         self.setHeaderLabels(["Title", "Duration"])
-        self.setHeaderHidden(False)
+        self.setHeaderHidden(True)
+        # === FIX: Title stretches full row; Duration stays narrow on the far right ===
+        header = self.header()
+        header.setStretchLastSection(False)  # Do NOT auto-stretch the last column
+        header.setSectionResizeMode(0, QHeaderView.Stretch)       # Title column fills remaining width
+        header.setSectionResizeMode(1, QHeaderView.Fixed)         # Duration column is fixed
+        self.setColumnWidth(1, 70)                                # Duration width (tweak if you like)
+        # If you prefer auto width for duration, use this instead of Fixed + setColumnWidth:
+        # header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        
         # Configure column sizing
-        self.header().setSectionResizeMode(0, QHeaderView.Stretch)  # Title stretches
-        self.header().setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Duration fits content
+        self.header().setSectionResizeMode(0, QHeaderView.Stretch)  # Title stretches dynamically
+        self.header().setSectionResizeMode(1, QHeaderView.Fixed)    # Duration has fixed width
+        self.setColumnWidth(1, 70)  # Set fixed width for duration column (adjust as needed)
+
+        # Other configurations
         self.setObjectName('playlistTree')
         self.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.setDragEnabled(True)
         self.setAcceptDrops(True)
         self.setDropIndicatorShown(True)
         self.setDragDropMode(QAbstractItemView.InternalMove)
+        self.setWordWrap(False)
+        self.setTextElideMode(Qt.ElideRight)
+
+        # Debugging: Print column widths after configuration
+        print("Column 0 width (Title):", self.columnWidth(0))
+        print("Column 1 width (Duration):", self.columnWidth(1))
 
     def dropEvent(self, event):
             # --- KEPT FROM ORIGINAL: Confirmation logic for mass moves ---
@@ -3079,7 +3143,7 @@ class MediaPlayer(QMainWindow):
 
 
         self.setWindowTitle("Silence Suzuka Player")
-        self.setGeometry(100, 100, 1180, 760)
+        self.setGeometry(100, 100, 1000, 760) 
 
         # --- 1. Define All State Variables First ---
         self._was_maximized = False
@@ -4467,9 +4531,7 @@ class MediaPlayer(QMainWindow):
         self.playlist_tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.playlist_tree.customContextMenuRequested.connect(self._show_playlist_context_menu)
         self.playlist_tree.mousePressEvent = self._create_mouse_press_handler()
-        
-        # Set text elide mode for single-line with ellipsis
-        self.playlist_tree.setTextElideMode(Qt.ElideRight)
+    
 
         # Set playlist font: Lora, italic, bold (size set dynamically)
         self.playlist_tree.setFont(self._font_serif_no_size(italic=True, bold=True))
@@ -5248,19 +5310,15 @@ class MediaPlayer(QMainWindow):
             if hasattr(self, '_track_title_full'):
                 self.track_label.setText(self._track_title_full)
 
+    # === FIX: Enforce column sizing on resize to keep title full-width ===
     def resizeEvent(self, event):
-        """Handle window resize to update elided text and loading overlay position"""
         super().resizeEvent(event)
         try:
-            self._update_track_label_elide()
-            # Reposition loading overlay if visible
-            if hasattr(self, '_loading_overlay') and self._loading_overlay.isVisible():
-                self._position_loading_overlay()
-            # Scale video to 40% of window width
-            video_widget = self.video_frame.parent() if hasattr(self, 'video_frame') else None
-            if video_widget:
-                new_width = min(600, int(self.width() * 0.4))
-                video_widget.setMaximumWidth(new_width)
+            header = self.header()
+            header.setStretchLastSection(False)
+            header.setSectionResizeMode(0, QHeaderView.Stretch)
+            header.setSectionResizeMode(1, QHeaderView.Fixed)
+            self.setColumnWidth(1, 70)
         except Exception:
             pass
 
@@ -7098,6 +7156,18 @@ class MediaPlayer(QMainWindow):
         """Full playlist refresh - your existing logic"""
         if expansion_state is None:
             expansion_state = {}
+            
+        # === FIX: Make sure columns keep the correct sizing before populating ===
+        try:
+            header = self.playlist_tree.header()
+            header.setStretchLastSection(False)
+            header.setSectionResizeMode(0, QHeaderView.Stretch)   # Title fills
+            header.setSectionResizeMode(1, QHeaderView.Fixed)     # Duration fixed
+            self.playlist_tree.setColumnWidth(1, 70)              # <- note the widget
+            # If you prefer auto width per value, use:
+            # header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        except Exception:
+            pass    
 
         self.playlist_tree.clear()
         # Update the header
@@ -7143,6 +7213,7 @@ class MediaPlayer(QMainWindow):
                 icon = playlist_icon_for_type(it.get('type'))
                 duration_str = format_duration_from_seconds(it.get('duration', 0))
                 node = QTreeWidgetItem([it.get('title', 'Unknown'), duration_str])
+                node.setTextAlignment(1, Qt.AlignRight | Qt.AlignVCenter)
                 if isinstance(icon, QIcon):
                     node.setIcon(0, icon)
                 else:
@@ -7166,6 +7237,7 @@ class MediaPlayer(QMainWindow):
                     icon = playlist_icon_for_type(it.get('type'))
                     duration_str = format_duration_from_seconds(it.get('duration', 0))
                     node = QTreeWidgetItem([it.get('title', 'Unknown'), duration_str])
+                    node.setTextAlignment(1, Qt.AlignRight | Qt.AlignVCenter)
                     if isinstance(icon, QIcon):
                         node.setIcon(0, icon)
                     else:

@@ -25,6 +25,7 @@ build/
 *_playlists.json
 *_playlists_v2.json
 *_session.json
+*_metadata_cache.json
 save/
 logs/
 backup/
@@ -37,7 +38,7 @@ config.json
 playlists.json
 playlists_v2.json
 session.json
-
+metadata_cache.json
 
 
 # Ignore IDE/editor/project files
