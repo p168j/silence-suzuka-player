@@ -51,3 +51,9 @@ Thumbs.db
 
 # Ignore other junk
 *.workspace
+
+# Docs: ignore drafts/scratch notes (safe patterns)
+docs/_drafts/
+docs-scratch/
+notes/
+*.scratch.md
