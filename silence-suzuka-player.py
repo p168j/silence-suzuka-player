@@ -60,6 +60,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer, Signal, QThread, QSize
 from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter, QColor, QBrush
 
+
 class PlaylistMetadataWidget(QWidget):
     """Widget to display playlist metadata in a card-like format"""
     
@@ -1245,7 +1246,42 @@ class EnhancedPlaylistManager:
                 )
                 return
             
-            # Continue with existing load logic...
+            # Store undo data
+            undo_data = {
+                'old_playlist': self.player.playlist.copy(),
+                'old_current_index': self.player.current_index,
+                'was_playing': self.player._is_playing(),
+                'load_mode': load_mode,
+                'items_loaded': len(items_to_load)
+            }
+            self.player._add_undo_operation('load_playlist', undo_data)
+
+            # Apply the load mode
+            if load_mode == 'replace':
+                self.player.playlist = [item.copy() for item in items_to_load]
+                self.player.current_index = 0
+            elif load_mode == 'append':
+                self.player.playlist.extend([item.copy() for item in items_to_load])
+            elif load_mode == 'insert':
+                insert_pos = max(0, self.player.current_index + 1)
+                for i, item in enumerate(items_to_load):
+                    self.player.playlist.insert(insert_pos + i, item.copy())
+
+            # Save and refresh
+            self.player._save_current_playlist()
+            self.player._refresh_playlist_widget()
+            self.player.play_scope = None
+            self.player._update_scope_label()
+            self.player._update_up_next()
+
+            # Auto-play if requested
+            if should_auto_play and self.player.playlist:
+                if load_mode == 'replace':
+                    self.player.current_index = 0
+                self.player.play_current()
+
+            self.player.status.showMessage(f"Loaded playlist ({len(items_to_load)} items)", 4000)
+
         else:
             # Dialog was cancelled, clear reference
             pass
@@ -2078,6 +2114,47 @@ class YtdlManager(QThread):
         
         logger.info("[YtdlManager] Background thread finished.")
 
+class DurationFetcher(QThread):
+    progressUpdated = Signal(int, int)  # current, total
+    durationReady = Signal(int, int)    # index, duration
+    
+    def __init__(self, items_to_fetch, parent=None):
+        super().__init__(parent)
+        self.items_to_fetch = items_to_fetch  # List of (index, item) tuples
+        self._should_stop = False
+    
+    def stop(self):
+        self._should_stop = True
+    
+    def run(self):
+        import yt_dlp
+        
+        for i, (playlist_index, item) in enumerate(self.items_to_fetch):
+            if self._should_stop:
+                break
+                
+            try:
+                opts = {
+                    'quiet': True,
+                    'no_warnings': True,
+                    'skip_download': True,
+                    'extract_flat': False,
+                }
+                
+                if item.get('type') == 'bilibili':
+                    opts['cookiefile'] = str(COOKIES_BILI)
+                
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    info = ydl.extract_info(item.get('url'), download=False)
+                    duration = int(info.get('duration', 0)) if info else 0
+                    self.durationReady.emit(playlist_index, duration)
+                    
+            except Exception as e:
+                print(f"Duration fetch error for {item.get('url')}: {e}")
+                self.durationReady.emit(playlist_index, 0)
+            
+            self.progressUpdated.emit(i + 1, len(self.items_to_fetch))       
+
 # --- Stats heatmap widget ---
 class StatsHeatmapWidget(QWidget):
     daySelected = Signal(object)  # 'YYYY-MM-DD' or None
@@ -2754,6 +2831,7 @@ class MediaPlayer(QMainWindow):
 
         self._undo_stack = []  # Stack of undo operations
         self._max_undo_operations = 10  # Limit undo history
+        
 
     def _collapse_all_groups(self):
         """Collapses all top-level group items in the playlist tree."""
@@ -2791,6 +2869,67 @@ class MediaPlayer(QMainWindow):
                     
         except Exception as e:
             self.status.showMessage(f"Paste failed: {e}", 3000)
+
+    def dragEnterEvent(self, event):
+        """Handle drag enter events"""
+        if event.mimeData().hasUrls() or event.mimeData().hasText():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        """Handle drop events for files and URLs"""
+        try:
+            mime_data = event.mimeData()
+            
+            if mime_data.hasUrls():
+                # Handle file drops
+                for url in mime_data.urls():
+                    file_path = url.toLocalFile()
+                    if file_path:
+                        # Local file
+                        self.playlist.append({
+                            'title': Path(file_path).name,
+                            'url': file_path,
+                            'type': 'local'
+                        })
+                    else:
+                        # Web URL
+                        self._add_url_to_playlist(url.toString())
+                
+            elif mime_data.hasText():
+                # Handle text drops (URLs copied as text)
+                text = mime_data.text().strip()
+                if text.startswith(('http://', 'https://')):
+                    self._add_url_to_playlist(text)
+            
+            # Refresh UI after adding items
+            self._save_current_playlist()
+            # Save expansion state before refresh
+            expansion_state = self._get_tree_expansion_state()
+            self._refresh_playlist_widget(expansion_state=expansion_state)
+            event.acceptProposedAction()
+            
+        except Exception as e:
+            print(f"Drop event error: {e}")
+            event.ignore()
+
+    def _flash_button_color(self, button, color, duration=100):
+        """Flash button with a color tint - safer version"""
+        try:
+            # Create a fresh effect each time instead of reusing
+            effect = QGraphicsColorizeEffect()
+            effect.setColor(QColor(color))
+            effect.setStrength(0.7)  # More noticeable
+            button.setGraphicsEffect(effect)
+            
+            # Remove effect after duration
+            QTimer.singleShot(duration, lambda: (
+                button.setGraphicsEffect(None) if button else None
+            ))
+            
+        except Exception as e:
+            print(f"Flash button color error: {e}")
 
     def _show_library_header_context_menu(self, pos):
         """Show context menu for the library header"""
@@ -3231,51 +3370,113 @@ class MediaPlayer(QMainWindow):
     def _setup_up_next_scrolling(self):
         """Setup mouse tracking and scrolling for Up Next"""
         if not hasattr(self, 'up_next'):
-            # print("[DEBUG] No up_next widget found")
             return
         
-        # print("[DEBUG] Setting up Up Next scrolling")
+        print("[DEBUG] Setting up Up Next scrolling")
         
         # Enable mouse tracking
         self.up_next.setMouseTracking(True)
         
         # Initialize scroll state
-        self._scroll_timer = QTimer(self)  # <-- FIX: Pass parent to avoid threading issues
+        self._scroll_timer = QTimer(self)
         self._scroll_item = None
         self._scroll_pos = 0
         self._original_text = ""
+        self._mouse_debounce_timer = QTimer(self)
+        self._mouse_debounce_timer.setSingleShot(True)
+        self._pending_item = None
         
         # Store original mouse event handlers
         self._original_mouse_move = self.up_next.mouseMoveEvent
         self._original_leave_event = self.up_next.leaveEvent
         
+        # --- FIX: Define the handlers and ACTUALLY assign them ---
         def on_mouse_move(event):
             # Call original handler first
             self._original_mouse_move(event)
             
-            # Get item under mouse - FIX: Use position() instead of pos()
+            # Get item under mouse
             try:
                 pos = event.position().toPoint()
             except AttributeError:
-                pos = event.pos()  # Fallback for older Qt versions
+                pos = event.pos()
             
             item = self.up_next.itemAt(pos)
             
-            if item != self._scroll_item:
-                self._stop_scrolling()
-                if item:
-                    # print(f"[DEBUG] Starting scroll for: {item.text(0)}")
-                    self._start_scrolling(item)
+            # Use debounce to prevent rapid switching
+            self._pending_item = item
+            self._mouse_debounce_timer.stop()
+            # --- FIX: Properly disconnect previous connections ---
+            try:
+                self._mouse_debounce_timer.timeout.disconnect()
+            except:
+                pass
+            self._mouse_debounce_timer.timeout.connect(lambda: self._handle_item_change(item))
+            self._mouse_debounce_timer.start(150)  # 150ms debounce
+                
+        def on_leave(event):
+            # Call original handler first
+            self._original_leave_event(event)
+            print("[DEBUG] Mouse left Up Next")
+            # --- FIX: Stop debounce timer and clear state ---
+            self._mouse_debounce_timer.stop()
+            try:
+                self._mouse_debounce_timer.timeout.disconnect()
+            except:
+                pass
+            self._pending_item = None
+            self._stop_scrolling()
         
+        # --- FIX: Actually assign the new handlers ---
+        self.up_next.mouseMoveEvent = on_mouse_move
+        self.up_next.leaveEvent = on_leave
+        
+    def on_mouse_move(event):
+        # Call original handler first
+        self._original_mouse_move(event)
+        
+        # Get item under mouse
+        try:
+            pos = event.position().toPoint()
+        except AttributeError:
+            pos = event.pos()
+        
+        item = self.up_next.itemAt(pos)
+        
+        # Use longer debounce to prevent rapid switching
+        self._pending_item = item
+        self._mouse_debounce_timer.stop()
+        self._mouse_debounce_timer.timeout.disconnect()
+        self._mouse_debounce_timer.timeout.connect(lambda: self._handle_item_change(item))
+        self._mouse_debounce_timer.start(200)  # INCREASED from 100ms to 200ms
+            
         def on_leave(event):
             # Call original handler first
             self._original_leave_event(event)
             self._stop_scrolling()
-            # print("[DEBUG] Mouse left Up Next")
+            print("[DEBUG] Mouse left Up Next")
         
         # Replace event handlers
         self.up_next.mouseMoveEvent = on_mouse_move
         self.up_next.leaveEvent = on_leave
+
+    def _handle_item_change(self, item):
+        """Handle item change with better debouncing"""
+        # Only process if this is genuinely a different item
+        if item == self._scroll_item:
+            return
+            
+        print(f"[DEBUG] Item change: {item.text(0) if item else 'None'} (was: {self._scroll_item.text(0) if self._scroll_item else 'None'})")
+        
+        # Always stop current scrolling first
+        if self._scroll_item:
+            print(f"[DEBUG] Stopping scroll for: {self._scroll_item.text(0)}")
+            self._stop_scrolling()
+        
+        # Only start new scrolling if we have a valid item
+        if item:
+            print(f"[DEBUG] Starting scroll for: {item.text(0)}")
+            self._start_scrolling(item)
 
     def _start_scrolling(self, item):
         """Start scrolling for an item"""
@@ -3283,53 +3484,62 @@ class MediaPlayer(QMainWindow):
             return
         
         text = item.text(0)
-        # print(f"[DEBUG] Checking if '{text}' needs scrolling")
+        original_text = text
+        
+        # Remove emoji prefixes for width calculation
+        clean_text = text
+        if text.startswith(("🔴 ", "🐟 ", "🎬 ")):
+            clean_text = text[2:]
+        
+        print(f"[DEBUG] Checking scroll for: '{text}' (clean: '{clean_text}')")
         
         # Check if text needs scrolling
         font_metrics = self.up_next.fontMetrics()
-        text_width = font_metrics.horizontalAdvance(text)
-        available_width = self.up_next.columnWidth(0) - 30
+        text_width = font_metrics.horizontalAdvance(clean_text)
+        available_width = self.up_next.columnWidth(0) - 60  # Conservative margin
         
-        # print(f"[DEBUG] Text width: {text_width}, Available: {available_width}")
+        print(f"[DEBUG] Text width: {text_width}, Available: {available_width}")
         
         if text_width <= available_width:
-            print("[DEBUG] Text fits, no scrolling")
+            print("[DEBUG] Text fits, no scrolling needed")
             return
         
-        # Stop any existing timer
+        # Stop any existing timer and disconnect ALL connections
         if self._scroll_timer.isActive():
             self._scroll_timer.stop()
-            # Disconnect previous connections
-            self._scroll_timer.timeout.disconnect()
+            # --- FIX: Disconnect ALL previous connections ---
+            self._scroll_timer.disconnect()
         
         # Start scrolling
         self._scroll_item = item
-        self._original_text = text
+        self._original_text = original_text
         self._scroll_pos = 0
         
         def scroll_step():
-            if not self._scroll_item:
+            if not self._scroll_item or self._scroll_item != item:
+                print("[DEBUG] Scroll step - item mismatch, stopping")
                 return
             
             pos = self._scroll_pos
-            text = self._original_text
+            text_to_scroll = self._original_text
             
-            # Create scrolled text with smoother transition
-            if len(text) > 20:  # Only scroll longer text
-                if pos < len(text):
-                    scrolled = text[pos:] + "   " + text[:pos]
-                else:
-                    self._scroll_pos = 0
-                    scrolled = text
+            # Create scrolled text with proper spacing
+            scrolled = text_to_scroll[pos:] + "   " + text_to_scroll[:pos]
+            
+            # Update text safely
+            try:
+                if self._scroll_item and self._scroll_item == item:
+                    self._scroll_item.setText(0, scrolled)
+            except:
+                print("[DEBUG] Failed to update scroll text")
+                return
                 
-                # Use QTimer.singleShot to update in main thread
-                QTimer.singleShot(0, lambda: self._update_item_text(self._scroll_item, scrolled))
-                self._scroll_pos = (pos + 1) % (len(text) + 3)
+            self._scroll_pos = (pos + 1) % (len(text_to_scroll) + 3)
         
-        # Connect the timer in the main thread
+        # Connect and start timer
         self._scroll_timer.timeout.connect(scroll_step)
-        self._scroll_timer.start(150)  # Slightly slower for better readability
-        # print(f"[DEBUG] Scrolling started for: {text}")
+        self._scroll_timer.start(180)
+        print(f"[DEBUG] Started scrolling for: {original_text}")
 
     def _update_item_text(self, item, text):
         """Safely update item text in main thread"""
@@ -3338,17 +3548,25 @@ class MediaPlayer(QMainWindow):
 
     def _stop_scrolling(self):
         """Stop scrolling and restore text"""
+        print("[DEBUG] _stop_scrolling called")
+        
         if self._scroll_timer.isActive():
             self._scroll_timer.stop()
+            print("[DEBUG] Timer stopped")
         
         if self._scroll_item and self._original_text:
-            # Use QTimer.singleShot to update in main thread
-            QTimer.singleShot(0, lambda: self._update_item_text(self._scroll_item, self._original_text))
-            # print(f"[DEBUG] Stopped scrolling, restored: {self._original_text}")
+            try:
+                # Immediately restore text
+                self._scroll_item.setText(0, self._original_text)
+                print(f"[DEBUG] Restored text immediately: {self._original_text}")
+            except Exception as e:
+                print(f"[DEBUG] Error restoring text: {e}")
         
+        # Clear state
         self._scroll_item = None
         self._original_text = ""
         self._scroll_pos = 0
+        print("[DEBUG] Scroll state cleared")
 
     def _reset_silence_counter(self):
         """Reset the silence detection timer - call when app starts playing."""
@@ -3577,12 +3795,18 @@ class MediaPlayer(QMainWindow):
         self.silence_indicator = QLabel("🔇"); self.silence_indicator.setObjectName('silenceIndicator'); self.silence_indicator.setToolTip("System silence indicator — shows when no system audio is detected (configurable in Settings → Audio Monitor)")
         top.addWidget(self.silence_indicator)
         
-        stats_btn = QPushButton("📊"); stats_btn.setObjectName('settingsBtn'); stats_btn.setToolTip("Listening Statistics"); stats_btn.clicked.connect(self.open_stats)
-        top.addWidget(stats_btn)
+        self.stats_btn = QPushButton("📊")
+        self.stats_btn.setObjectName('settingsBtn')
+        self.stats_btn.setToolTip("Listening Statistics")
+        self.stats_btn.clicked.connect(self.open_stats)
         
-        settings_btn = QPushButton("⚙"); settings_btn.setObjectName('settingsBtn'); settings_btn.setToolTip("Settings")
-        settings_btn.clicked.connect(self.open_settings_tabs)
-        top.addWidget(settings_btn)
+        self.settings_btn = QPushButton("⚙")
+        self.settings_btn.setObjectName('settingsBtn')
+        self.settings_btn.setToolTip("Settings")
+        self.settings_btn.clicked.connect(self.open_settings_tabs)
+    
+        top.addWidget(self.stats_btn)
+        top.addWidget(self.settings_btn)
         
         self.theme_btn = QPushButton("🎨"); self.theme_btn.setObjectName('settingsBtn'); self.theme_btn.setToolTip("Toggle Theme")
         self.theme_btn.clicked.connect(self.toggle_theme)
@@ -3617,15 +3841,15 @@ class MediaPlayer(QMainWindow):
         add_media_layout.setSpacing(0)
 
         # Main button (most of the width)
-        add_media_main = QPushButton("Add Media")
-        add_media_main.setObjectName("addMediaMain")
-        add_media_main.setFixedHeight(44)
-        add_media_main.clicked.connect(self._on_add_media_clicked)  # Default action
+        self.add_media_main = QPushButton("Add Media")
+        self.add_media_main.setObjectName("addMediaMain")
+        self.add_media_main.setFixedHeight(44)
+        self.add_media_main.clicked.connect(self._on_add_media_clicked)
 
         # Dropdown button (small arrow)
-        add_media_dropdown = QPushButton("▼")
-        add_media_dropdown.setObjectName("addMediaDropdown")
-        add_media_dropdown.setFixedSize(32, 44)
+        self.add_media_dropdown = QPushButton("▼")
+        self.add_media_dropdown.setObjectName("addMediaDropdown")
+        self.add_media_dropdown.setFixedSize(32, 44)
 
         # Create the menu
         menu = QMenu(self)
@@ -3636,18 +3860,19 @@ class MediaPlayer(QMainWindow):
             try:
                 self._apply_menu_theme(menu)
                 # Position menu below the dropdown button
-                pos = add_media_dropdown.mapToGlobal(add_media_dropdown.rect().bottomRight())
+                pos = self.add_media_dropdown.mapToGlobal(self.add_media_dropdown.rect().bottomRight())
                 pos.setX(pos.x() - menu.sizeHint().width())  # Right-align the menu
                 menu.exec(pos)
             except Exception:
                 # Fallback positioning
-                menu.exec(add_media_dropdown.mapToGlobal(add_media_dropdown.rect().bottomLeft()))
+                menu.exec(self.add_media_dropdown.mapToGlobal(self.add_media_dropdown.rect().bottomLeft()))
 
-        add_media_dropdown.clicked.connect(show_add_media_menu)
+        # Connect the dropdown button OUTSIDE the function definition
+        self.add_media_dropdown.clicked.connect(show_add_media_menu)
 
         # Add to layout
-        add_media_layout.addWidget(add_media_main, 1)  # Takes remaining space
-        add_media_layout.addWidget(add_media_dropdown, 0)  # Fixed size
+        add_media_layout.addWidget(self.add_media_main, 1)
+        add_media_layout.addWidget(self.add_media_dropdown, 0)
 
         side_layout.addWidget(add_media_container)
         # ---- end Split Add Media Button ----
@@ -3658,16 +3883,22 @@ class MediaPlayer(QMainWindow):
 
         # Playlist controls (save/load) — Unwatched toggle with icon swap (eye / eye-off)
         controls = QHBoxLayout()
-        save_btn = QPushButton("💾")
-        save_btn.setObjectName('miniBtn')
-        save_btn.setToolTip("Save current playlist")
-        save_btn.clicked.connect(self.save_playlist)
-        save_btn.setFixedSize(36, 28)
-        load_btn = QPushButton("📂")
-        load_btn.setObjectName('miniBtn')
-        load_btn.setToolTip("Load saved playlist")
-        load_btn.clicked.connect(self.load_playlist_dialog) 
-        load_btn.setFixedSize(36, 28)
+        self.save_btn = QPushButton("💾")
+        self.save_btn.setObjectName('miniBtn')
+        self.save_btn.setToolTip("Save current playlist")
+        self.save_btn.clicked.connect(self.save_playlist)
+        self.save_btn.setFixedSize(36, 28)
+        self.load_btn = QPushButton("📂")
+        self.load_btn.setObjectName('miniBtn')
+        self.load_btn.setToolTip("Load saved playlist")
+        self.load_btn.clicked.connect(self.load_playlist_dialog) 
+        self.load_btn.setFixedSize(36, 28)
+
+        self.duration_btn = QPushButton("⏱️")
+        self.duration_btn.setObjectName('miniBtn')
+        self.duration_btn.setToolTip("Fetch all durations")
+        self.duration_btn.clicked.connect(self._fetch_all_durations)
+        self.duration_btn.setFixedSize(36, 28)
 
         # New: icon-only Unwatched toggle (prefers icons/eye.svg + icons/eye-off.svg)
         self.unwatched_btn = QPushButton()
@@ -3710,6 +3941,9 @@ class MediaPlayer(QMainWindow):
         # Update visuals (icon/text and styling)
         self.unwatched_btn.toggled.connect(self._update_unwatched_btn_visual)
 
+        # Enable drag and drop
+        self.setAcceptDrops(True)
+
         # initialize state from persisted flag (set in _load_files)
         try:
             self.unwatched_btn.setChecked(bool(getattr(self, 'unwatched_only', False)))
@@ -3728,8 +3962,9 @@ class MediaPlayer(QMainWindow):
             pass   
 
         # Layout: Save | Load | Unwatched-icon | spacer | Group
-        controls.addWidget(save_btn)
-        controls.addWidget(load_btn)
+        controls.addWidget(self.save_btn)
+        controls.addWidget(self.load_btn)
+        controls.addWidget(self.duration_btn)
         controls.addWidget(self.unwatched_btn)
         controls.addStretch()
         side_layout.addLayout(controls)
@@ -3878,6 +4113,31 @@ class MediaPlayer(QMainWindow):
             letter-spacing: 0.5px;
         """)
         self._track_title_full = "No track playing"  # Store full text for eliding
+
+        # Initialize track title scrolling components
+        self._track_scroll_timer = None
+        self._track_scroll_pos = 0
+        self._track_original_text = ""
+
+        # FIXED: Proper event handler setup
+        def track_enter_handler(event):
+            print("[TRACK DEBUG] Mouse entered track label")
+            self._start_track_title_scrolling()
+
+        def track_leave_handler(event):
+            print("[TRACK DEBUG] Mouse left track label")
+            self._stop_track_title_scrolling()
+
+        # Enable mouse tracking and set event handlers
+        self.track_label.setMouseTracking(True)
+        self.track_label.enterEvent = track_enter_handler
+        self.track_label.leaveEvent = track_leave_handler
+
+        # Add mouse tracking for track title scrolling
+        self.track_label.setMouseTracking(True)
+        self.track_label.enterEvent = self._on_track_title_enter
+        self.track_label.leaveEvent = self._on_track_title_leave
+
         now_playing_layout.addWidget(self.track_label)
 
         # Progress Bar and Time Labels
@@ -3968,6 +4228,29 @@ class MediaPlayer(QMainWindow):
         self.play_pause_btn.setObjectName('playPauseBtn')
         self.play_pause_btn.setToolTip("Play/Pause (Space)")
         self.play_pause_btn.clicked.connect(self.toggle_play_pause)
+
+        # Add this test:
+        def simple_test():
+            print("Play button was clicked!")
+            try:
+                current_size = self.play_pause_btn.iconSize()
+                print(f"Current icon size: {current_size.width()}x{current_size.height()}")
+                # Test if we can change icon size
+                self.play_pause_btn.setIconSize(QSize(45, 45))
+                QTimer.singleShot(200, lambda: self.play_pause_btn.setIconSize(QSize(50, 50)))
+            except Exception as e:
+                print(f"Size test failed: {e}")
+
+        self.play_pause_btn.clicked.connect(simple_test)
+
+        # Test simple press feedback
+        def test_press():
+            print("Button pressed - animation should trigger")
+        def test_release():
+            print("Button released - animation should trigger")
+        self.play_pause_btn.pressed.connect(test_press)
+        self.play_pause_btn.released.connect(test_release)
+
         self.play_pause_btn.setFixedSize(60, 60)
         
         # Next button
@@ -4427,6 +4710,88 @@ class MediaPlayer(QMainWindow):
                 pass
 
             return super().eventFilter(obj, event)
+    
+    def _set_track_title(self, text):
+        """Set track title with eliding support and scrolling"""
+        self._track_title_full = text or ""
+        self._update_track_label_elide()
+
+    def _on_track_title_enter(self, event):
+        """Handle mouse enter on track title"""
+        self._start_track_title_scrolling()
+
+    def _on_track_title_leave(self, event):
+        """Handle mouse leave on track title"""
+        self._stop_track_title_scrolling()
+
+    def _start_track_title_scrolling(self):
+        """Start scrolling the track title if it's too long"""
+        if not hasattr(self, '_track_title_full') or not self._track_title_full:
+            return
+            
+        # Check if text needs scrolling
+        font_metrics = self.track_label.fontMetrics()
+        text_width = font_metrics.horizontalAdvance(self._track_title_full)
+        available_width = self.track_label.width() - 40  # Conservative margin
+        
+        print(f"[TRACK DEBUG] Title width: {text_width}, Available: {available_width}")
+        
+        if text_width <= available_width:
+            print("[TRACK DEBUG] Title fits, no scrolling needed")
+            return
+        
+        # Stop any existing timer safely
+        if hasattr(self, '_track_scroll_timer') and self._track_scroll_timer:
+            self._track_scroll_timer.stop()
+            self._track_scroll_timer = None
+        
+        # Initialize scrolling
+        self._track_scroll_timer = QTimer(self)
+        self._track_scroll_pos = 0
+        self._track_original_text = self._track_title_full
+        
+        def scroll_step():
+            if not self._track_original_text:
+                return
+                
+            text = self._track_original_text
+            pos = self._track_scroll_pos
+            
+            # Create scrolled text
+            scrolled = text[pos:] + "   " + text[:pos]
+            self.track_label.setText(scrolled)
+            
+            self._track_scroll_pos = (pos + 1) % (len(text) + 3)
+        
+        self._track_scroll_timer.timeout.connect(scroll_step)
+        self._track_scroll_timer.start(200)
+        print(f"[TRACK DEBUG] Started scrolling: {self._track_title_full}")
+
+    def _stop_track_title_scrolling(self):
+        """Stop scrolling and restore original text"""
+        print("[TRACK DEBUG] _stop_track_title_scrolling called")
+        
+        # Check timer state
+        if hasattr(self, '_track_scroll_timer'):
+            print(f"[TRACK DEBUG] _track_scroll_timer exists: {self._track_scroll_timer}")
+            if self._track_scroll_timer:
+                print("[TRACK DEBUG] Stopping timer...")
+                self._track_scroll_timer.stop()
+                print(f"[TRACK DEBUG] Timer active after stop: {self._track_scroll_timer.isActive()}")
+                self._track_scroll_timer = None
+                print("[TRACK DEBUG] Timer set to None")
+            else:
+                print("[TRACK DEBUG] Timer was None")
+        else:
+            print("[TRACK DEBUG] _track_scroll_timer attribute doesn't exist")
+            
+        if hasattr(self, '_track_title_full') and self._track_title_full:
+            print(f"[TRACK DEBUG] Restoring text: {self._track_title_full}")
+            self.track_label.setText(self._track_title_full)
+            self._update_track_label_elide()
+            print("[TRACK DEBUG] Text restored")
+        else:
+            print("[TRACK DEBUG] No title to restore")
     
     def _set_track_title(self, text):
         """Set track title with eliding support"""
@@ -5743,174 +6108,70 @@ class MediaPlayer(QMainWindow):
                 self._show_player()
 
     def _setup_button_animations(self):
-        """Setup enhanced kinetic animations for all buttons with multiple effects."""
+        """Button feedback with proper circular glow"""
         try:
-            # Configuration for different button types
-            button_configs = [
-                # (button, normal_icon_size, press_shrink, has_scale_glow, base_size_px)
-                (self.play_pause_btn, QSize(50, 50), 8, True, 60),   # Main play button gets the most dramatic effect
-                (self.prev_btn, QSize(22, 22), 4, True, 40),
-                (self.next_btn, QSize(22, 22), 4, True, 40), 
-                (self.shuffle_btn, QSize(22, 22), 4, True, 40),
-                (self.repeat_btn, QSize(22, 22), 4, True, 40)
+            buttons = [
+                # Main controls
+                (self.play_pause_btn, QSize(50, 50)),
+                (self.prev_btn, QSize(22, 22)),
+                (self.next_btn, QSize(22, 22)),
+                (self.shuffle_btn, QSize(22, 22)),
+                (self.repeat_btn, QSize(22, 22)),
+                
+                # Top bar buttons
+                (self.stats_btn, QSize(18, 18)),
+                (self.settings_btn, QSize(18, 18)),
+                (self.theme_btn, QSize(18, 18)),  # Remove the duplicate
+                
+                # Playlist controls
+                (self.save_btn, QSize(16, 16)),
+                (self.load_btn, QSize(16, 16)),
+                (self.duration_btn, QSize(16, 16)),
+                (self.unwatched_btn, QSize(16, 16)),
+                (self.duration_btn, QSize(16, 16)),
             ]
-
-            for btn, icon_size, shrink, has_glow, base_size in button_configs:
-                # Store original properties
-                btn._original_icon_size = icon_size
-                btn._pressed_icon_size = QSize(icon_size.width() - shrink, icon_size.height() - shrink)
-                btn._base_widget_size = base_size
-                
-                # Create multiple animation properties
-                if not hasattr(btn, 'press_anim_group'):
-                    from PySide6.QtCore import QParallelAnimationGroup, QSequentialAnimationGroup
-                    
-                    # === PRESS ANIMATION GROUP (Simultaneous effects) ===
-                    btn.press_anim_group = QParallelAnimationGroup(btn)
-                    
-                    # 1. Icon size shrink
-                    btn.icon_shrink_anim = QPropertyAnimation(btn, b"iconSize")
-                    btn.icon_shrink_anim.setDuration(80)
-                    btn.icon_shrink_anim.setEasingCurve(QEasingCurve.OutCubic)
-                    btn.press_anim_group.addAnimation(btn.icon_shrink_anim)
-                    
-                    # 2. Widget size shrink (for the main play button)
-                    if btn == self.play_pause_btn:
-                        btn.widget_shrink_anim = QPropertyAnimation(btn, b"size")
-                        btn.widget_shrink_anim.setDuration(80)
-                        btn.widget_shrink_anim.setEasingCurve(QEasingCurve.OutCubic)
-                        btn.press_anim_group.addAnimation(btn.widget_shrink_anim)
-                    
-                    # === RELEASE ANIMATION SEQUENCE (Bounce back with overshoot) ===
-                    btn.release_anim_group = QSequentialAnimationGroup(btn)
-                    
-                    # First: Quick bounce to slightly larger than normal
-                    btn.bounce_out_anim = QParallelAnimationGroup(btn)
-                    
-                    btn.icon_bounce_out = QPropertyAnimation(btn, b"iconSize")
-                    btn.icon_bounce_out.setDuration(120)
-                    btn.icon_bounce_out.setEasingCurve(QEasingCurve.OutBack)
-                    # Overshoot by 10% for satisfying bounce
-                    overshoot_size = QSize(
-                        int(icon_size.width() * 1.15), 
-                        int(icon_size.height() * 1.15)
-                    )
-                    btn.bounce_out_anim.addAnimation(btn.icon_bounce_out)
-                    
-                    if btn == self.play_pause_btn:
-                        btn.widget_bounce_out = QPropertyAnimation(btn, b"size")
-                        btn.widget_bounce_out.setDuration(120)
-                        btn.widget_bounce_out.setEasingCurve(QEasingCurve.OutBack)
-                        btn.bounce_out_anim.addAnimation(btn.widget_bounce_out)
-                    
-                    # Second: Settle back to normal size
-                    btn.settle_anim = QParallelAnimationGroup(btn)
-                    
-                    btn.icon_settle = QPropertyAnimation(btn, b"iconSize")
-                    btn.icon_settle.setDuration(200)
-                    btn.icon_settle.setEasingCurve(QEasingCurve.OutCubic)
-                    btn.settle_anim.addAnimation(btn.icon_settle)
-                    
-                    if btn == self.play_pause_btn:
-                        btn.widget_settle = QPropertyAnimation(btn, b"size")
-                        btn.widget_settle.setDuration(200)
-                        btn.widget_settle.setEasingCurve(QEasingCurve.OutCubic)
-                        btn.settle_anim.addAnimation(btn.widget_settle)
-                    
-                    # Add both phases to the release sequence
-                    btn.release_anim_group.addAnimation(btn.bounce_out_anim)
-                    btn.release_anim_group.addAnimation(btn.settle_anim)
-
-                # === ENHANCED PRESS/RELEASE HANDLERS ===
-                def create_press_handler(button, pressed_icon_size, pressed_widget_size=None, overshoot_icon_size=None, normal_widget_size=None):
+            
+            # Icon button animations
+            for btn, normal_size in buttons:
+                def make_press_handler(button, n_size):
                     def on_press():
-                        try:
-                            # Stop any running release animation
-                            if button.release_anim_group.state() == QPropertyAnimation.Running:
-                                button.release_anim_group.stop()
-                            
-                            # Setup press animation values
-                            button.icon_shrink_anim.setStartValue(button.iconSize())
-                            button.icon_shrink_anim.setEndValue(pressed_icon_size)
-                            
-                            if hasattr(button, 'widget_shrink_anim') and pressed_widget_size:
-                                current_size = button.size()
-                                pressed_size = QSize(
-                                    int(current_size.width() * 0.9),
-                                    int(current_size.height() * 0.9)
-                                )
-                                button.widget_shrink_anim.setStartValue(current_size)
-                                button.widget_shrink_anim.setEndValue(pressed_size)
-                            
-                            # Add haptic-style color flash for extra feedback
-                            if button == self.play_pause_btn:
-                                self._flash_button_color(button, "#ff6b47", duration=100)
-                            else:
-                                self._flash_button_color(button, "#e76f51", duration=80)
-                            
-                            button.press_anim_group.start()
-                            
-                        except Exception as e:
-                            print(f"Press animation error: {e}")
-                    
+                        shrink_size = QSize(int(n_size.width() * 0.85), int(n_size.height() * 0.85))
+                        button.setIconSize(shrink_size)
+                        
+                        btn_size = min(button.width(), button.height())
+                        radius = btn_size // 2
+                        
+                        if self.theme == 'dark':
+                            button.setStyleSheet(f"background-color: rgba(231, 111, 81, 0.4); border-radius: {radius}px;")
+                        else:
+                            button.setStyleSheet(f"background-color: rgba(231, 111, 81, 0.3); border-radius: {radius}px;")
                     return on_press
-
-                def create_release_handler(button, normal_icon_size, overshoot_icon_size, normal_widget_size=None):
+                
+                def make_release_handler(button, n_size):
                     def on_release():
-                        try:
-                            # Setup bounce-out phase
-                            button.icon_bounce_out.setStartValue(button.iconSize())
-                            button.icon_bounce_out.setEndValue(overshoot_icon_size)
-                            
-                            if hasattr(button, 'widget_bounce_out') and normal_widget_size:
-                                overshoot_widget_size = QSize(
-                                    int(normal_widget_size.width() * 1.05),
-                                    int(normal_widget_size.height() * 1.05)
-                                )
-                                button.widget_bounce_out.setStartValue(button.size())
-                                button.widget_bounce_out.setEndValue(overshoot_widget_size)
-                            
-                            # Setup settle phase
-                            button.icon_settle.setStartValue(overshoot_icon_size)
-                            button.icon_settle.setEndValue(normal_icon_size)
-                            
-                            if hasattr(button, 'widget_settle') and normal_widget_size:
-                                button.widget_settle.setStartValue(
-                                    QSize(int(normal_widget_size.width() * 1.05), 
-                                        int(normal_widget_size.height() * 1.05))
-                                )
-                                button.widget_settle.setEndValue(normal_widget_size)
-                            
-                            button.release_anim_group.start()
-                            
-                        except Exception as e:
-                            print(f"Release animation error: {e}")
-                    
+                        bounce_size = QSize(int(n_size.width() * 1.1), int(n_size.height() * 1.1))
+                        button.setIconSize(bounce_size)
+                        button.setStyleSheet("")
+                        QTimer.singleShot(80, lambda: button.setIconSize(n_size))
                     return on_release
-
-                # Calculate sizes for this button
-                overshoot_icon = QSize(
-                    int(icon_size.width() * 1.15), 
-                    int(icon_size.height() * 1.15)
-                )
-                normal_widget_size = QSize(base_size, base_size) if btn == self.play_pause_btn else None
-                pressed_widget_size = QSize(int(base_size * 0.9), int(base_size * 0.9)) if btn == self.play_pause_btn else None
                 
-                # Connect enhanced handlers
-                press_handler = create_press_handler(btn, btn._pressed_icon_size, pressed_widget_size, overshoot_icon, normal_widget_size)
-                release_handler = create_release_handler(btn, btn._original_icon_size, overshoot_icon, normal_widget_size)
+                btn.pressed.connect(make_press_handler(btn, normal_size))
+                btn.released.connect(make_release_handler(btn, normal_size))
+            
+            # Text button animations (Add Media buttons)
+            text_buttons = [self.add_media_main, self.add_media_dropdown, self.duration_btn]
+            
+            for btn in text_buttons:
+                def make_text_press_handler(button):
+                    def on_press():
+                        self._flash_button_color(button, "#ff6b47", 150)
+                    return on_press
                 
-                # Store handlers to prevent garbage collection
-                btn._press_handler = press_handler
-                btn._release_handler = release_handler
+                btn.pressed.connect(make_text_press_handler(btn))
                 
-                # Connect to button events
-                btn.pressed.connect(press_handler)
-                btn.released.connect(release_handler)
-
         except Exception as e:
-            print(f"Enhanced button animation setup error: {e}")
-
+            print(f"Button animation error: {e}")
+            
     def _flash_button_press(self, button):
         """Enhanced color flash using QGraphicsColorizeEffect"""
         try:
@@ -6806,10 +7067,15 @@ class MediaPlayer(QMainWindow):
                         if isinstance(icon, QIcon):
                             node.setText(0, title)
                             node.setIcon(0, icon)
+                            print(f"[DEBUG] Up Next item with icon: '{title}'")
                         else:
+                            # For emoji icons, store the title separately for better scrolling
                             node.setText(0, f"{icon} {title}")
+                            print(f"[DEBUG] Up Next item with emoji: '{icon} {title}'")
 
                         node.setData(0, Qt.UserRole, ('next', i))
+                        # Store clean title for scrolling calculations
+                        node.setData(0, Qt.UserRole + 1, title)
                         self.up_next.addTopLevelItem(node)
             except Exception:
                 pass
@@ -7875,11 +8141,76 @@ class MediaPlayer(QMainWindow):
                 self._add_single_item_to_tree(new_index, item)
                 self._schedule_save_current_playlist()
 
-                # --- Trigger title resolution ---
-                self.ytdl_manager.resolve(url, media_type)  # This resolves and updates the title
+                # Use parallel workers
+                worker = self.ytdl_workers[self._worker_index]
+                worker.resolve(url, media_type)
+                self._worker_index = (self._worker_index + 1) % len(self.ytdl_workers)
 
         except Exception as e:
             self.status.showMessage(f"Failed to add media: {e}", 4000)
+
+    def _fetch_all_durations(self):
+        """Fetch durations for all items in playlist with cancel support"""
+        if not self.playlist:
+            return
+        
+        # Count items that need duration fetching
+        items_needing_duration = [(i, item) for i, item in enumerate(self.playlist) 
+                                if item.get('type') in ('youtube', 'bilibili') 
+                                and not item.get('duration')]
+        
+        if not items_needing_duration:
+            self.status.showMessage("All items already have duration info", 3000)
+            return
+        
+        reply = QMessageBox.question(
+            self, "Fetch Durations",
+            f"Fetch durations for {len(items_needing_duration)} videos?\n\nThis may take several minutes.",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            # Create duration fetcher with cancel support
+            self._duration_fetcher = DurationFetcher(items_needing_duration, self)
+            self._duration_fetcher.progressUpdated.connect(self._on_duration_progress)
+            self._duration_fetcher.durationReady.connect(self._on_duration_ready)
+            self._duration_fetcher.finished.connect(self._on_duration_fetch_complete)
+            
+            # Show cancellable progress dialog
+            self._show_duration_progress(len(items_needing_duration))
+            self._duration_fetcher.start()
+
+    def _show_duration_progress(self, total):
+        """Show cancellable progress dialog for duration fetching"""
+        from PySide6.QtWidgets import QProgressDialog
+        self._duration_progress = QProgressDialog("Fetching durations...", "Cancel", 0, total, self)
+        self._duration_progress.setWindowModality(Qt.WindowModal)
+        self._duration_progress.canceled.connect(self._cancel_duration_fetch)
+        self._duration_progress.show()
+
+    def _cancel_duration_fetch(self):
+        """Cancel the duration fetching operation"""
+        if hasattr(self, '_duration_fetcher'):
+            self._duration_fetcher.stop()
+
+    def _on_duration_progress(self, current, total):
+        """Update progress dialog"""
+        if hasattr(self, '_duration_progress'):
+            self._duration_progress.setValue(current)
+            self._duration_progress.setLabelText(f"Fetching durations... ({current}/{total})")
+
+    def _on_duration_ready(self, index, duration):
+        """Store duration when it's fetched"""
+        if 0 <= index < len(self.playlist):
+            self.playlist[index]['duration'] = duration
+            # Save to persistence
+            self._save_current_playlist()
+
+    def _on_duration_fetch_complete(self):
+        """Clean up after duration fetching"""
+        if hasattr(self, '_duration_progress'):
+            self._duration_progress.close()
+        self.status.showMessage("Duration fetching complete", 3000)
 
     def _schedule_save_current_playlist(self):
         """Schedule saving the current playlist with debounce."""
