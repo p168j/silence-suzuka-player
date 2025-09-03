@@ -3552,7 +3552,7 @@ class MediaPlayer(QMainWindow):
         # print(f"[DEBUG] Text width: {text_width}, Available: {available_width}")
         
         if text_width <= available_width:
-            print("[DEBUG] Text fits, no scrolling needed")
+            # print("[DEBUG] Text fits, no scrolling needed")
             return
         
         # Stop any existing timer and disconnect ALL connections
@@ -3569,6 +3569,8 @@ class MediaPlayer(QMainWindow):
         def scroll_step():
             if not self._scroll_item or self._scroll_item != item:
                 # print("[DEBUG] Scroll step - item mismatch, stopping")
+                if self._scroll_timer.isActive():
+                    self._scroll_timer.stop()
                 return
             
             pos = self._scroll_pos
@@ -3583,6 +3585,8 @@ class MediaPlayer(QMainWindow):
                     self._scroll_item.setText(0, scrolled)
             except:
                 print("[DEBUG] Failed to update scroll text")
+                if self._scroll_timer.isActive():
+                    self._scroll_timer.stop()
                 return
                 
             self._scroll_pos = (pos + 1) % (len(text_to_scroll) + 3)
