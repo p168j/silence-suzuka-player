@@ -2,7 +2,7 @@
 
 🤖 This app was written almost entirely by AI 🤖
 
-A smart media player that automatically plays your content when it detects system-wide silence, and pauses when you're away from your computer.
+A media player that automatically plays your content when it detects system-wide silence, and pauses when you're away from your computer.
 
 
 
@@ -58,6 +58,25 @@ To run the application, open your terminal in the project folder and run:
 python silence-suzuka-player.py
 ```
 You can then add media via the "Add Media" button, copy-paste or drag-and-drop files/links, or load a saved playlist.
+
+## ⚠️ Important Notes & Troubleshooting
+* "mpv not found" Error: This application requires the official mpv player library to be installed on your system.
+
+   * Solution: Install the official mpv player for your OS. On Windows, ensure the folder containing mpv-2.dll is in your system's PATH.
+
+* Online Videos Suddenly Stop Working: YouTube and other sites frequently change their websites, which can break video downloading.
+
+   * Solution: This is almost always fixed by updating yt-dlp. Run this command: pip install --upgrade yt-dlp.
+
+* Audio Monitor Doesn't Work on First Run: The silence detection will not work out of the box.
+
+   * Solution: You must follow the setup instructions to install and configure VoiceMeeter, then select the correct "VoiceMeeter Output" device in this app's Settings > Audio Monitor tab.
+
+* Manual Duration Fetching: Durations for local files are fetched automatically. For online videos (YouTube/Bilibili), you must manually trigger the process to avoid lag by clicking the "Fetch all durations" button (⏱️).
+
+* Bilibili Login & Cookies: To access members-only Bilibili content, you need a cookies.txt file in the app's folder. Be aware that this file contains sensitive login information.
+
+* Platform Support: This application and its audio monitoring features were developed and tested on Windows. Core functionality may work on macOS and Linux, but system-level features like audio and AFK monitoring will likely not work without changes.
 
 ## Known Limitations & Design Choices
 This application was designed to be a fast, responsive personal tool. Some features were intentionally implemented in a manual way to prioritize performance over full automation.
