@@ -1725,19 +1725,34 @@ def enhanced_load_playlist_dialog(self):
 def _undo_load_playlist(self, data):
     """Undo a playlist load operation"""
     try:
+        if not isinstance(data, dict):
+            raise ValueError("Invalid undo data format")
+            
         # Preserve expansion state
         expansion_state = self._get_tree_expansion_state()
 
-        self.playlist = data['old_playlist']
-        self.current_index = data['old_current_index']
-        was_playing = data['was_playing']
+        old_playlist = data.get('old_playlist', [])
+        if not isinstance(old_playlist, list):
+            raise ValueError("Invalid old playlist data")
+            
+        # Create deep copy to avoid reference issues
+        self.playlist = [item.copy() for item in old_playlist]
+        self.current_index = data.get('old_current_index', -1)
+        was_playing = data.get('was_playing', False)
+        
+        # Validate current_index
+        if self.current_index >= len(self.playlist):
+            self.current_index = -1
         
         self._save_current_playlist()
         self._refresh_playlist_widget(expansion_state=expansion_state)
         self._recover_current_after_change(was_playing)
         
+        return True
+        
     except Exception as e:
         print(f"[UNDO] Error restoring playlist load: {e}")
+        return False
 
 def setup_enhanced_playlist_manager(player, app_dir):
     """Setup the enhanced playlist manager on an existing MediaPlayer instance"""
@@ -7532,42 +7547,47 @@ class MediaPlayer(QMainWindow):
 
 
     def _get_tree_expansion_state(self):
-        """Saves the expansion state of all group items in the playlist tree."""
+        """Saves the expansion state of all group items in the playlist tree with improved error handling."""
         state = {}
         try:
+            # Ensure playlist_tree exists and is accessible
+            if not hasattr(self, 'playlist_tree') or not self.playlist_tree:
+                logger.warning("playlist_tree not available for expansion state")
+                return state
+                
+            # Check if the tree widget is in a valid state
+            try:
+                _ = self.playlist_tree.topLevelItemCount()
+            except RuntimeError:
+                logger.warning("playlist_tree C++ object deleted, cannot get expansion state")
+                return state
+            
             iterator = QTreeWidgetItemIterator(self.playlist_tree)
             while iterator.value():
                 item = iterator.value()
-                data = item.data(0, Qt.UserRole)
-                if isinstance(data, tuple) and data[0] == 'group':
-                    # Use the same effective key logic as context menus
-                    raw_key = data[1] if len(data) > 1 else None
-                    key = self._group_effective_key(raw_key, item)
-                    if key:
-                        state[key] = item.isExpanded()
+                try:
+                    data = item.data(0, Qt.UserRole)
+                    if isinstance(data, tuple) and len(data) >= 1 and data[0] == 'group':
+                        # Use the same effective key logic as context menus
+                        raw_key = data[1] if len(data) > 1 else None
+                        key = self._group_effective_key(raw_key, item)
+                        if key:
+                            # Safely check expansion state
+                            try:
+                                is_expanded = item.isExpanded()
+                                state[key] = is_expanded
+                            except (RuntimeError, AttributeError) as e:
+                                logger.warning(f"Could not get expansion state for key '{key}': {e}")
+                                # Use default collapsed state
+                                state[key] = False
+                except (RuntimeError, AttributeError) as e:
+                    logger.warning(f"Error processing tree item: {e}")
+                    # Continue with next item
+                    pass
                 iterator += 1
         except Exception as e:
             logger.error(f"Failed to get tree expansion state: {e}")
-        return state 
-
-
-    def _get_tree_expansion_state(self):
-        """Saves the expansion state of all group items in the playlist tree."""
-        state = {}
-        try:
-            iterator = QTreeWidgetItemIterator(self.playlist_tree)
-            while iterator.value():
-                item = iterator.value()
-                data = item.data(0, Qt.UserRole)
-                if isinstance(data, tuple) and data[0] == 'group':
-                    # Use the same effective key logic as context menus
-                    raw_key = data[1] if len(data) > 1 else None
-                    key = self._group_effective_key(raw_key, item)
-                    if key:
-                        state[key] = item.isExpanded()
-                iterator += 1
-        except Exception as e:
-            logger.error(f"Failed to get tree expansion state: {e}")
+            # Return partial state if available
         return state            
 
     def _display_text(self, item):
@@ -8301,28 +8321,54 @@ class MediaPlayer(QMainWindow):
                 print(f"[ScopeLabel] Error updating scope label: {e}")   
 
     def _group_effective_key(self, raw_key, item=None):
+        """Get effective group key with improved error handling and edge case management."""
         try:
             # Prefer normalized key stashed on the item
             if item is not None:
                 try:
-                    stored = item.data(0, Qt.UserRole + 1)
-                    if stored:
-                        return stored
-                except Exception:
+                    # Check if item is still valid (Qt object not deleted)
+                    if hasattr(item, 'data'):
+                        stored = item.data(0, Qt.UserRole + 1)
+                        if stored and isinstance(stored, str) and stored.strip():
+                            return stored.strip()
+                except (RuntimeError, AttributeError):
+                    # Item's C++ object was deleted or invalid
                     pass
-            if raw_key in (None, False, '') and item is not None:
-                txt = item.text(0) if hasattr(item, 'text') else ''
-                if txt:
-                    s = txt.strip()
-                    if s.startswith('📃'):
-                        s = s[1:].strip()
-                    if s.endswith(')') and '(' in s:
-                        s = s[:s.rfind('(')].strip()
-                    if s:
-                        return s
-            return raw_key
-        except Exception:
-            return raw_key
+                except Exception as e:
+                    logger.warning(f"Error accessing stored group key: {e}")
+            
+            # If raw_key is valid, use it
+            if raw_key is not None and raw_key not in (False, '') and isinstance(raw_key, str):
+                return raw_key.strip()
+            
+            # Fallback: extract from item text if available
+            if item is not None:
+                try:
+                    if hasattr(item, 'text'):
+                        txt = item.text(0)
+                        if txt and isinstance(txt, str):
+                            s = txt.strip()
+                            # Remove emoji prefix if present
+                            if s.startswith('📃'):
+                                s = s[1:].strip()
+                            # Remove count suffix in parentheses if present
+                            if s.endswith(')') and '(' in s:
+                                s = s[:s.rfind('(')].strip()
+                            if s:
+                                return s
+                except (RuntimeError, AttributeError):
+                    # Item's C++ object was deleted
+                    pass
+                except Exception as e:
+                    logger.warning(f"Error extracting group key from item text: {e}")
+            
+            # Final fallback: return raw_key even if it's None/empty
+            return raw_key if raw_key is not None else ""
+            
+        except Exception as e:
+            logger.error(f"Unexpected error in _group_effective_key: {e}")
+            # Return something safe
+            return raw_key if isinstance(raw_key, str) else ""
 
     def _first_index_of_group(self, key):
         try:
@@ -9844,86 +9890,151 @@ class MediaPlayer(QMainWindow):
             print(f"[UNDO] Error adding operation: {e}")
 
     def _perform_undo(self):
-        """Enhanced undo method that handles playlist manager operations"""
+        """Enhanced undo method that handles playlist manager operations with improved consistency"""
+        operation = None
         try:
             if not self._undo_stack:
                 self.status.showMessage("Nothing to undo", 2000)
                 return
 
+            # Pop operation before processing to prevent duplicate operations
             operation = self._undo_stack.pop()
-            op_type = operation['type']
-            op_data = operation['data']
+            op_type = operation.get('type')
+            op_data = operation.get('data', {})
 
+            if not op_type:
+                raise ValueError("Invalid undo operation: missing type")
+                
             print(f"[UNDO] Performing undo: {op_type}")
 
+            # Store current state before undo for potential rollback
+            current_playlist_backup = [item.copy() for item in self.playlist] if self.playlist else []
+            current_index_backup = self.current_index
+            current_playing_backup = self._is_playing()
+
+            # Perform the undo operation
+            success = False
             if op_type == 'load_playlist':
-                self._undo_load_playlist(op_data)
+                success = self._undo_load_playlist(op_data)
             elif op_type == 'add_items':
-                self._undo_add_items(op_data)
+                success = self._undo_add_items(op_data)
             elif op_type == 'delete_items':
-                self._undo_delete_items(op_data)
+                success = self._undo_delete_items(op_data)
             elif op_type == 'delete_group':
-                self._undo_delete_group(op_data)
+                success = self._undo_delete_group(op_data)
             elif op_type == 'clear_playlist':
-                self._undo_clear_playlist(op_data)
+                success = self._undo_clear_playlist(op_data)
             elif op_type == 'move_items':
-                self._undo_move_items(op_data)
+                success = self._undo_move_items(op_data)
             else:
                 self.status.showMessage(f"Cannot undo operation: {op_type}", 3000)
-                # Put it back if we can't handle it
+                # Put it back since we can't handle it
                 self._undo_stack.append(operation)
                 return
 
-            self.status.showMessage(f"Undid: {op_type.replace('_', ' ').title()}", 3000)
+            if success:
+                self.status.showMessage(f"Undid: {op_type.replace('_', ' ').title()}", 3000)
+            else:
+                # Rollback to previous state if undo failed
+                self.playlist = current_playlist_backup
+                self.current_index = current_index_backup
+                self._save_current_playlist()
+                self._refresh_playlist_widget()
+                if current_playing_backup:
+                    self.play_current()
+                
+                self.status.showMessage(f"Undo failed for: {op_type}, state restored", 4000)
+                # Don't put operation back on stack since it's problematic
 
         except Exception as e:
             print(f"[UNDO] Error performing undo: {e}")
             self.status.showMessage(f"Undo failed: {e}", 3000)
+            
+            # If we have the operation and it was popped, put it back
+            if operation is not None:
+                try:
+                    self._undo_stack.append(operation)
+                except Exception:
+                    pass  # Don't let this cause additional issues
 
     def _undo_delete_items(self, data):
         """Restore deleted individual items while preserving expansion state"""
         try:
-            expansion_state = self._get_tree_expansion_state()
-
-            items_data = data['items']
-            was_playing = data['was_playing']
-            old_current_index = data['old_current_index']
+            # Validate input data
+            if not isinstance(data, dict):
+                raise ValueError("Invalid undo data format")
+                
+            items_data = data.get('items', [])
+            if not items_data:
+                raise ValueError("No items to restore")
+                
+            was_playing = data.get('was_playing', False)
+            old_current_index = data.get('old_current_index', -1)
             
+            # Get expansion state before making changes
+            expansion_state = self._get_tree_expansion_state()
+            
+            # Restore items in reverse order to maintain indices
             for item_info in reversed(items_data):
+                if not isinstance(item_info, dict) or 'index' not in item_info or 'item' not in item_info:
+                    continue
+                    
                 index = item_info['index']
                 item = item_info['item']
+                
+                # Validate index bounds
+                if index < 0:
+                    continue
+                    
                 if index <= len(self.playlist):
-                    self.playlist.insert(index, item)
+                    self.playlist.insert(index, item.copy())  # Use copy to avoid reference issues
                 else:
-                    self.playlist.append(item)
+                    self.playlist.append(item.copy())
             
-            if old_current_index >= 0:
+            # Restore current index if valid
+            if 0 <= old_current_index < len(self.playlist):
                 self.current_index = old_current_index
                 
             self._save_current_playlist()
             self._refresh_playlist_widget(expansion_state=expansion_state)
             self._recover_current_after_change(was_playing)
             
+            return True
+            
         except Exception as e:
             print(f"[UNDO] Error restoring items: {e}")
+            return False
 
     def _undo_add_items(self, data):
         """Undo an add by removing the just-added items; preserve expansion state."""
         try:
+            if not isinstance(data, dict):
+                raise ValueError("Invalid undo data format")
+                
             expansion_state = self._get_tree_expansion_state()
 
             items_data = data.get('items', [])
             was_playing = data.get('was_playing', False)
             old_current_index = data.get('old_current_index', -1)
 
+            if not items_data:
+                return True  # Nothing to undo, consider success
+
+            # Validate and collect indices to remove
+            indices_to_remove = []
+            for item_info in items_data:
+                if isinstance(item_info, dict) and 'index' in item_info:
+                    idx = item_info['index']
+                    if 0 <= idx < len(self.playlist):
+                        indices_to_remove.append(idx)
+
             # Remove in reverse index order to avoid shifting
-            for idx in sorted([it['index'] for it in items_data if 'index' in it], reverse=True):
-                if 0 <= idx < len(self.playlist):
-                    del self.playlist[idx]
-                    if self.current_index == idx:
-                        self.current_index = -1
-                    elif idx < self.current_index:
-                        self.current_index -= 1
+            for idx in sorted(indices_to_remove, reverse=True):
+                del self.playlist[idx]
+                if self.current_index == idx:
+                    self.current_index = -1
+                elif idx < self.current_index:
+                    self.current_index -= 1
 
             # After removal, try to restore previous current index if still valid
             if 0 <= old_current_index < len(self.playlist):
@@ -9932,59 +10043,118 @@ class MediaPlayer(QMainWindow):
             self._save_current_playlist()
             self._refresh_playlist_widget(expansion_state=expansion_state)
             self._recover_current_after_change(was_playing)
+            
+            return True
 
         except Exception as e:
-            print(f"[UNDO] Error undoing add: {e}")        
+            print(f"[UNDO] Error undoing add: {e}")
+            return False        
 
     def _undo_delete_group(self, data):
         """Restore deleted group while preserving expansion state"""
         try:
+            if not isinstance(data, dict):
+                raise ValueError("Invalid undo data format")
+                
             expansion_state = self._get_tree_expansion_state()
 
-            group_data = data['items']
-            was_playing = data['was_playing']
-            old_current_index = data['old_current_index']
+            group_data = data.get('items', [])
+            if not group_data:
+                raise ValueError("No group items to restore")
+                
+            was_playing = data.get('was_playing', False)
+            old_current_index = data.get('old_current_index', -1)
             
+            # Restore items in reverse order to maintain indices
             for item_info in reversed(group_data):
+                if not isinstance(item_info, dict) or 'index' not in item_info or 'item' not in item_info:
+                    continue
+                    
                 index = item_info['index']
                 item = item_info['item']
+                
+                if index < 0:
+                    continue
+                    
                 if index <= len(self.playlist):
-                    self.playlist.insert(index, item)
+                    self.playlist.insert(index, item.copy())
                 else:
-                    self.playlist.append(item)
+                    self.playlist.append(item.copy())
             
-            if old_current_index >= 0:
+            if 0 <= old_current_index < len(self.playlist):
                 self.current_index = old_current_index
                 
             self._save_current_playlist()
             self._refresh_playlist_widget(expansion_state=expansion_state)
             self._recover_current_after_change(was_playing)
             
+            return True
+            
         except Exception as e:
             print(f"[UNDO] Error restoring group: {e}")
+            return False
 
     def _undo_clear_playlist(self, data):
         """Restore cleared playlist while preserving expansion state"""
         try:
+            if not isinstance(data, dict):
+                raise ValueError("Invalid undo data format")
+                
             expansion_state = self._get_tree_expansion_state()
 
-            self.playlist = data['playlist'].copy()
-            self.current_index = data['current_index']
-            was_playing = data['was_playing']
+            restored_playlist = data.get('playlist', [])
+            if not isinstance(restored_playlist, list):
+                raise ValueError("Invalid playlist data")
+                
+            # Create deep copy to avoid reference issues
+            self.playlist = [item.copy() for item in restored_playlist]
+            self.current_index = data.get('current_index', -1)
+            was_playing = data.get('was_playing', False)
+            
+            # Validate current_index
+            if self.current_index >= len(self.playlist):
+                self.current_index = -1
             
             self._save_current_playlist()
             self._refresh_playlist_widget(expansion_state=expansion_state)
             self._recover_current_after_change(was_playing)
             
+            return True
+            
         except Exception as e:
             print(f"[UNDO] Error restoring playlist: {e}")
+            return False
 
     def _undo_move_items(self, data):
         """Restore playlist after a move/reorder operation while preserving expansion state"""
         try:
+            if not isinstance(data, dict):
+                raise ValueError("Invalid undo data format")
+                
             expansion_state = self._get_tree_expansion_state()
 
-            self.playlist = data.get('playlist', [])
+            restored_playlist = data.get('playlist', [])
+            if not isinstance(restored_playlist, list):
+                raise ValueError("Invalid playlist data")
+                
+            # Create deep copy to avoid reference issues  
+            self.playlist = [item.copy() for item in restored_playlist]
+            self.current_index = data.get('current_index', -1)
+            was_playing = data.get('was_playing', False)
+            
+            # Validate current_index
+            if self.current_index >= len(self.playlist):
+                self.current_index = -1
+            
+            self._save_current_playlist()
+            self._refresh_playlist_widget(expansion_state=expansion_state)
+            self._recover_current_after_change(was_playing)
+            
+            return True
+            
+        except Exception as e:
+            print(f"[UNDO] Error restoring move: {e}")
+            return False
             self.current_index = data.get('current_index', -1)
             was_playing = data.get('was_playing', False)
 
@@ -11610,48 +11780,117 @@ class MediaPlayer(QMainWindow):
         # Always call the superclass method for other events.
         super().changeEvent(event)
     def closeEvent(self, event):
-            """Gracefully stop monitors, save state, and close."""
-            # Save state first
-            try:
-                logger.info("Saving session and settings on exit...")
-                self._save_session()
-                self._save_settings()
-            except Exception as e:
-                logger.error(f"Failed to save state on close: {e}")
+        """Gracefully stop monitors, save state, and close with enhanced cleanup."""
+        print("[SHUTDOWN] Starting application shutdown sequence...")
+        
+        # Save state first before any cleanup to ensure data isn't lost
+        try:
+            logger.info("Saving session and settings on exit...")
+            self._save_session()
+            self._save_settings()
+            print("[SHUTDOWN] ✓ State and settings saved")
+        except Exception as e:
+            logger.error(f"Failed to save state on close: {e}")
+            print(f"[SHUTDOWN] ⚠ Failed to save state: {e}")
 
-            # Stop background threads
-            try:
-                if getattr(self, 'audio_monitor', None):
-                    self.audio_monitor.stop()
-                    self.audio_monitor.wait(1000)
-                if getattr(self, 'afk_monitor', None):
-                    self.afk_monitor.stop()
-                    self.afk_monitor.wait(1000)
-                if getattr(self, 'ytdl_manager', None):
-                    self.ytdl_manager.stop()
-                    self.ytdl_manager.wait(1000)
-            except Exception as e:
-                logger.error(f"Error stopping background threads: {e}")
+        # Stop playback to release media resources
+        try:
+            if hasattr(self, 'mpv') and self.mpv:
+                self.mpv.pause = True
+                print("[SHUTDOWN] ✓ Playback stopped")
+        except Exception as e:
+            logger.error(f"Error stopping playback: {e}")
 
-            # Stop local duration worker
+        # Stop background threads with timeout handling
+        shutdown_timeout = 3000  # 3 seconds per thread
+        
+        threads_to_stop = []
+        if getattr(self, 'audio_monitor', None):
+            threads_to_stop.append(('audio_monitor', self.audio_monitor))
+        if getattr(self, 'afk_monitor', None):
+            threads_to_stop.append(('afk_monitor', self.afk_monitor))
+        if getattr(self, 'ytdl_manager', None):
+            threads_to_stop.append(('ytdl_manager', self.ytdl_manager))
+        
+        for thread_name, thread_obj in threads_to_stop:
             try:
-                if hasattr(self, '_local_dur') and self._local_dur:
-                    self._local_dur.stop()
+                print(f"[SHUTDOWN] Stopping {thread_name}...")
+                thread_obj.stop()
+                if thread_obj.wait(shutdown_timeout):
+                    print(f"[SHUTDOWN] ✓ {thread_name} stopped gracefully")
+                else:
+                    print(f"[SHUTDOWN] ⚠ {thread_name} did not stop within timeout, terminating...")
+                    thread_obj.terminate()
+                    thread_obj.wait(1000)  # Give it 1 more second after terminate
+            except Exception as e:
+                logger.error(f"Error stopping {thread_name}: {e}")
+                print(f"[SHUTDOWN] ⚠ Error stopping {thread_name}: {e}")
+
+        # Stop local duration worker with timeout
+        try:
+            if hasattr(self, '_local_dur') and self._local_dur:
+                print("[SHUTDOWN] Stopping local duration worker...")
+                self._local_dur.stop()
+                if self._local_dur.wait(shutdown_timeout):
+                    print("[SHUTDOWN] ✓ Local duration worker stopped")
+                else:
+                    print("[SHUTDOWN] ⚠ Local duration worker timeout, terminating...")
+                    self._local_dur.terminate()
                     self._local_dur.wait(1000)
-            except Exception:
-                pass    
-            
-            # Call the base class method to ensure proper window closure
-            super().closeEvent(event)
+        except Exception as e:
+            logger.error(f"Error stopping local duration worker: {e}")
+            print(f"[SHUTDOWN] ⚠ Error stopping local duration worker: {e}")
+
+        # Clean up typography manager resources
+        try:
+            if hasattr(self, '_typography_manager'):
+                print("[SHUTDOWN] Cleaning up typography manager...")
+                # No explicit cleanup needed for typography manager currently
+                print("[SHUTDOWN] ✓ Typography manager cleaned up")
+        except Exception as e:
+            logger.error(f"Error cleaning up typography manager: {e}")
+
+        # Release any Qt resources that might be held
+        try:
+            if hasattr(self, 'playlist_tree') and self.playlist_tree:
+                self.playlist_tree.clear()
+            print("[SHUTDOWN] ✓ UI resources released")
+        except Exception as e:
+            logger.error(f"Error releasing UI resources: {e}")
+
+        print("[SHUTDOWN] Shutdown sequence completed, closing application...")
+        
+        # Call the base class method to ensure proper window closure
+        super().closeEvent(event)
 
 def main():
     app = QApplication(sys.argv)
+    
+    # Setup signal handlers for graceful shutdown
+    import signal
+    
+    def signal_handler(signum, frame):
+        print(f"[SHUTDOWN] Received signal {signum}, initiating graceful shutdown...")
+        app.quit()
+    
+    # Register signal handlers for clean shutdown
+    try:
+        signal.signal(signal.SIGINT, signal_handler)   # Ctrl+C
+        signal.signal(signal.SIGTERM, signal_handler)  # Termination request
+        print("[STARTUP] Signal handlers registered for graceful shutdown")
+    except Exception as e:
+        print(f"[STARTUP] Could not register signal handlers: {e}")
+    
     w = MediaPlayer()
     # Initialize typography AFTER the window builds and applies its theme so our QSS lands last
     from ui.typography import TypographyManager
     typo = TypographyManager(app, project_root=APP_DIR)
     typo.install()
     w.show()
+    
+    # Store reference to main window for signal handlers
+    app._main_window = w
+    
     sys.exit(app.exec())
 
 
