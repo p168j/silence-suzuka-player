@@ -1663,7 +1663,13 @@ def format_time(ms):
     if hours > 0:
         return f"{hours}:{minutes:02d}:{seconds:02d}"
     else:
-        return f"{minutes}:{seconds:02d}"    
+        return f"{minutes}:{seconds:02d}"
+
+def format_duration_from_seconds(seconds):
+    """Converts seconds to a MM:SS or H:MM:SS string for playlist display."""
+    if not seconds or seconds <= 0:
+        return ""
+    return format_time(int(seconds) * 1000)
 
 # Initialize with default level (will be updated from settings)
 logger = setup_logging()
@@ -2481,7 +2487,12 @@ class PlaylistTree(QTreeWidget):
     def __init__(self, player):
         super().__init__()
         self.player = player
-        self.setHeaderHidden(True)
+        # Enable headers and set column labels
+        self.setHeaderLabels(["Title", "Duration"])
+        self.setHeaderHidden(False)
+        # Configure column sizing
+        self.header().setSectionResizeMode(0, QHeaderView.Stretch)  # Title stretches
+        self.header().setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Duration fits content
         self.setObjectName('playlistTree')
         self.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.setDragEnabled(True)
@@ -4071,7 +4082,6 @@ class MediaPlayer(QMainWindow):
 
         # 1. The Playlist Tree (Index 0)
         self.playlist_tree = PlaylistTree(self)
-        self.playlist_tree.setHeaderHidden(True)
         self.playlist_tree.setObjectName('playlistTree')
         self.playlist_tree.setAlternatingRowColors(True)
         self.playlist_tree.setIndentation(20)
@@ -6736,7 +6746,7 @@ class MediaPlayer(QMainWindow):
             ptitle = g.get('title') or str(key)
             arr = g.get('items') or []
             # Add group nodes as top-level items
-            gnode = QTreeWidgetItem(self.playlist_tree, [f"📃 {ptitle} ({len(arr)})"])
+            gnode = QTreeWidgetItem(self.playlist_tree, [f"📃 {ptitle} ({len(arr)})", ""])
             gnode.setFont(0, self._font_serif_no_size(italic=True, bold=True))
             norm_key = key if key else (g.get('title') or ptitle)
             gnode.setData(0, Qt.UserRole, ('group', norm_key))
@@ -6754,7 +6764,8 @@ class MediaPlayer(QMainWindow):
                 pass
             for idx, it in arr:
                 icon = playlist_icon_for_type(it.get('type'))
-                node = QTreeWidgetItem([it.get('title', 'Unknown')])
+                duration_str = format_duration_from_seconds(it.get('duration', 0))
+                node = QTreeWidgetItem([it.get('title', 'Unknown'), duration_str])
                 if isinstance(icon, QIcon):
                     node.setIcon(0, icon)
                 else:
@@ -6766,7 +6777,7 @@ class MediaPlayer(QMainWindow):
         # --- Render single items ---
         if single_items:
             if getattr(self, 'group_singles', False):
-                gnode = QTreeWidgetItem(self.playlist_tree, [f"🎵 Miscellaneous ({len(single_items)})"])
+                gnode = QTreeWidgetItem(self.playlist_tree, [f"🎵 Miscellaneous ({len(single_items)})", ""])
                 gnode.setFont(0, self._font_serif_no_size(italic=True, bold=True))
                 gnode.setData(0, Qt.UserRole, ('group', 'miscellaneous'))
                 gnode.setData(0, Qt.UserRole + 1, 'miscellaneous')
@@ -6776,7 +6787,8 @@ class MediaPlayer(QMainWindow):
                 
                 for idx, it in single_items:
                     icon = playlist_icon_for_type(it.get('type'))
-                    node = QTreeWidgetItem([it.get('title', 'Unknown')])
+                    duration_str = format_duration_from_seconds(it.get('duration', 0))
+                    node = QTreeWidgetItem([it.get('title', 'Unknown'), duration_str])
                     if isinstance(icon, QIcon):
                         node.setIcon(0, icon)
                     else:
@@ -6787,7 +6799,8 @@ class MediaPlayer(QMainWindow):
             else:
                 for idx, it in single_items:
                     icon = playlist_icon_for_type(it.get('type'))
-                    node = QTreeWidgetItem(self.playlist_tree, [it.get('title', 'Unknown')])
+                    duration_str = format_duration_from_seconds(it.get('duration', 0))
+                    node = QTreeWidgetItem(self.playlist_tree, [it.get('title', 'Unknown'), duration_str])
                     if isinstance(icon, QIcon):
                         node.setIcon(0, icon)
                     else:
@@ -8276,6 +8289,8 @@ class MediaPlayer(QMainWindow):
             self.playlist[index]['duration'] = duration
             # Save to persistence
             self._save_current_playlist()
+            # Refresh the playlist widget to show the new duration
+            self._refresh_playlist_widget()
 
     def _on_duration_fetch_complete(self):
         """Clean up after duration fetching"""
@@ -8309,7 +8324,8 @@ class MediaPlayer(QMainWindow):
             elif should_group_singles:
                 # Add to miscellaneous group
                 misc_group = self._find_or_create_misc_group()
-                node = QTreeWidgetItem([item.get('title', 'Unknown')])
+                duration_str = format_duration_from_seconds(item.get('duration', 0))
+                node = QTreeWidgetItem([item.get('title', 'Unknown'), duration_str])
                 if isinstance(icon, QIcon):
                     node.setIcon(0, icon)
                 else:
@@ -8326,7 +8342,8 @@ class MediaPlayer(QMainWindow):
                 misc_group.setText(0, f"🎵 Miscellaneous ({misc_group.childCount()})")
             else:
                 # Add as top-level item
-                node = QTreeWidgetItem(self.playlist_tree, [item.get('title', 'Unknown')])
+                duration_str = format_duration_from_seconds(item.get('duration', 0))
+                node = QTreeWidgetItem(self.playlist_tree, [item.get('title', 'Unknown'), duration_str])
                 if isinstance(icon, QIcon):
                     node.setIcon(0, icon)
                 else:
@@ -8359,7 +8376,7 @@ class MediaPlayer(QMainWindow):
                     return item
         
         # Create new misc group
-        gnode = QTreeWidgetItem(self.playlist_tree, [f"🎵 Miscellaneous (0)"])
+        gnode = QTreeWidgetItem(self.playlist_tree, [f"🎵 Miscellaneous (0)", ""])
         gnode.setFont(0, self._font_serif_no_size(italic=True, bold=True))
         gnode.setData(0, Qt.UserRole, ('group', 'miscellaneous'))
         gnode.setData(0, Qt.UserRole + 1, 'miscellaneous')
