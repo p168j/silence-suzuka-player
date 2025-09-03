@@ -9352,6 +9352,7 @@ class MediaPlayer(QMainWindow):
         self.status.showMessage(f"Repeat {'on' if self.repeat_mode else 'off'}", 3000)
         self._save_settings()
         self._update_widget_themes() # This line updates the icon
+        self._update_up_next()       # This line updates the "Up Next" panel
 
     def set_volume(self, value):
         try:
