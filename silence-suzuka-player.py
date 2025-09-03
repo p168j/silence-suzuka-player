@@ -424,6 +424,20 @@ class PlaylistManagerDialog(QDialog):
             self.load_mode = "replace"
             self._is_destroyed = False
             self._initial_load_done = False # Flag to ensure we only load once
+            
+            # Initialize filter and sort state
+            self._current_filter = {
+                'name': '',
+                'min_items': 0,
+                'max_items': None,
+                'date_from': None,
+                'date_to': None
+            }
+            self._current_sort = {
+                'field': 'created',  # 'name', 'created', 'items'
+                'reverse': True  # True for descending, False for ascending
+            }
+            self._filtered_playlists = []  # Cache for filtered/sorted results
 
             self.setWindowTitle("Playlist Manager")
             self.setModal(True)
@@ -503,6 +517,9 @@ class PlaylistManagerDialog(QDialog):
         header_label = QLabel("Saved Playlists")
         header_label.setFont(QFont("Arial", 14, QFont.Bold))
         left_layout.addWidget(header_label)
+        
+        # Search and filter controls
+        self._add_search_and_filter_controls(left_layout)
         
         # Playlist list
         self.playlist_list = QListWidget()
@@ -619,83 +636,401 @@ class PlaylistManagerDialog(QDialog):
         main_layout.addWidget(splitter)
         self.setLayout(main_layout)
     
-    def _refresh_playlist_list(self):
-        """Refresh the list of saved playlists - with improved safety checks"""
+    def _add_search_and_filter_controls(self, layout):
+        """Add enhanced search and filtering controls"""
         try:
-            print(f"[DEBUG] _refresh_playlist_list called")
+            # Search group
+            search_group = QGroupBox("Search & Filter")
+            search_layout = QVBoxLayout(search_group)
+            search_layout.setSpacing(6)
             
-            # Early exit if dialog is destroyed
-            if self._is_destroyed:
-                print("[DEBUG] Dialog destroyed, aborting refresh")
+            # Quick search bar
+            search_row = QHBoxLayout()
+            search_label = QLabel("🔍")
+            search_label.setFixedWidth(20)
+            
+            self.search_edit = QLineEdit()
+            self.search_edit.setPlaceholderText("Search playlist names...")
+            self.search_edit.textChanged.connect(self._on_search_text_changed)
+            self.search_edit.setStyleSheet("""
+                QLineEdit {
+                    background-color: #f9f6f0;
+                    color: #4a2c2a;
+                    border: 1px solid #c2a882;
+                    border-radius: 4px;
+                    padding: 4px 8px;
+                }
+                QLineEdit:focus {
+                    border-color: #e76f51;
+                }
+            """)
+            
+            search_row.addWidget(search_label)
+            search_row.addWidget(self.search_edit)
+            search_layout.addLayout(search_row)
+            
+            # Advanced filters (collapsible)
+            filter_frame = QFrame()
+            filter_layout = QFormLayout(filter_frame)
+            filter_layout.setSpacing(4)
+            
+            # Item count filter
+            item_count_layout = QHBoxLayout()
+            self.min_items_spin = QSpinBox()
+            self.min_items_spin.setRange(0, 10000)
+            self.min_items_spin.setValue(0)
+            self.min_items_spin.valueChanged.connect(self._on_filter_changed)
+            self.min_items_spin.setStyleSheet("""
+                QSpinBox {
+                    background-color: #f9f6f0;
+                    color: #4a2c2a;
+                    border: 1px solid #c2a882;
+                    border-radius: 3px;
+                    padding: 2px;
+                }
+            """)
+            
+            self.max_items_spin = QSpinBox()
+            self.max_items_spin.setRange(0, 10000)
+            self.max_items_spin.setValue(10000)
+            self.max_items_spin.valueChanged.connect(self._on_filter_changed)
+            self.max_items_spin.setStyleSheet(self.min_items_spin.styleSheet())
+            
+            item_count_layout.addWidget(self.min_items_spin)
+            item_count_layout.addWidget(QLabel("to"))
+            item_count_layout.addWidget(self.max_items_spin)
+            item_count_layout.addStretch()
+            
+            filter_layout.addRow("Items:", item_count_layout)
+            
+            # Sorting controls
+            sort_layout = QHBoxLayout()
+            
+            self.sort_field_combo = QComboBox()
+            self.sort_field_combo.addItem("📅 Date Created", "created")
+            self.sort_field_combo.addItem("📝 Name", "name")
+            self.sort_field_combo.addItem("📊 Item Count", "items")
+            self.sort_field_combo.currentDataChanged.connect(self._on_sort_changed)
+            self.sort_field_combo.setStyleSheet("""
+                QComboBox {
+                    background-color: #f9f6f0;
+                    color: #4a2c2a;
+                    border: 1px solid #c2a882;
+                    border-radius: 3px;
+                    padding: 2px 4px;
+                }
+                QComboBox::drop-down {
+                    border: none;
+                }
+                QComboBox::down-arrow {
+                    image: none;
+                    border-left: 4px solid transparent;
+                    border-right: 4px solid transparent;
+                    border-top: 4px solid #4a2c2a;
+                }
+            """)
+            
+            self.sort_order_btn = QPushButton("⬇️")
+            self.sort_order_btn.setFixedWidth(32)
+            self.sort_order_btn.setToolTip("Sort order: Descending")
+            self.sort_order_btn.clicked.connect(self._toggle_sort_order)
+            self.sort_order_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #f9f6f0;
+                    color: #4a2c2a;
+                    border: 1px solid #c2a882;
+                    border-radius: 3px;
+                    padding: 2px;
+                }
+                QPushButton:hover {
+                    background-color: #e76f51;
+                    color: #f3ead3;
+                }
+            """)
+            
+            sort_layout.addWidget(self.sort_field_combo)
+            sort_layout.addWidget(self.sort_order_btn)
+            sort_layout.addStretch()
+            
+            filter_layout.addRow("Sort by:", sort_layout)
+            
+            # Clear filters button
+            clear_filters_btn = QPushButton("🗑️ Clear Filters")
+            clear_filters_btn.clicked.connect(self._clear_filters)
+            clear_filters_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #f9f6f0;
+                    color: #4a2c2a;
+                    border: 1px solid #c2a882;
+                    border-radius: 3px;
+                    padding: 4px 8px;
+                    font-size: 11px;
+                }
+                QPushButton:hover {
+                    background-color: #e76f51;
+                    color: #f3ead3;
+                }
+            """)
+            filter_layout.addRow("", clear_filters_btn)
+            
+            search_layout.addWidget(filter_frame)
+            
+            # Results count label
+            self.results_label = QLabel("0 playlists")
+            self.results_label.setStyleSheet("color: #7a5a3a; font-size: 11px; margin: 2px 0;")
+            search_layout.addWidget(self.results_label)
+            
+            layout.addWidget(search_group)
+            
+        except Exception as e:
+            print(f"Error setting up search controls: {e}")
+            # Add basic search as fallback
+            self.search_edit = QLineEdit()
+            self.search_edit.setPlaceholderText("Search playlists...")
+            self.search_edit.textChanged.connect(self._on_search_text_changed)
+            layout.addWidget(self.search_edit)
+    
+    def _on_search_text_changed(self, text):
+        """Handle search text changes with debouncing"""
+        try:
+            self._current_filter['name'] = text.strip().lower()
+            # Use a timer to debounce search input
+            if hasattr(self, '_search_timer'):
+                self._search_timer.stop()
+            else:
+                self._search_timer = QTimer()
+                self._search_timer.timeout.connect(self._apply_filters_and_sort)
+                self._search_timer.setSingleShot(True)
+            
+            self._search_timer.start(300)  # 300ms delay
+            
+        except Exception as e:
+            print(f"Search text changed error: {e}")
+    
+    def _on_filter_changed(self):
+        """Handle filter control changes"""
+        try:
+            self._current_filter['min_items'] = self.min_items_spin.value()
+            max_val = self.max_items_spin.value()
+            self._current_filter['max_items'] = max_val if max_val < 10000 else None
+            self._apply_filters_and_sort()
+        except Exception as e:
+            print(f"Filter changed error: {e}")
+    
+    def _on_sort_changed(self, field):
+        """Handle sort field changes"""
+        try:
+            self._current_sort['field'] = field
+            self._apply_filters_and_sort()
+        except Exception as e:
+            print(f"Sort changed error: {e}")
+    
+    def _toggle_sort_order(self):
+        """Toggle between ascending and descending sort order"""
+        try:
+            self._current_sort['reverse'] = not self._current_sort['reverse']
+            
+            # Update button appearance
+            if self._current_sort['reverse']:
+                self.sort_order_btn.setText("⬇️")
+                self.sort_order_btn.setToolTip("Sort order: Descending")
+            else:
+                self.sort_order_btn.setText("⬆️")
+                self.sort_order_btn.setToolTip("Sort order: Ascending")
+            
+            self._apply_filters_and_sort()
+            
+        except Exception as e:
+            print(f"Toggle sort order error: {e}")
+    
+    def _clear_filters(self):
+        """Clear all filters and reset to default view"""
+        try:
+            # Reset filter controls
+            self.search_edit.clear()
+            self.min_items_spin.setValue(0)
+            self.max_items_spin.setValue(10000)
+            
+            # Reset internal state
+            self._current_filter = {
+                'name': '',
+                'min_items': 0,
+                'max_items': None,
+                'date_from': None,
+                'date_to': None
+            }
+            
+            # Reset sort to default
+            self.sort_field_combo.setCurrentIndex(0)  # Date created
+            self._current_sort = {
+                'field': 'created',
+                'reverse': True
+            }
+            self.sort_order_btn.setText("⬇️")
+            self.sort_order_btn.setToolTip("Sort order: Descending")
+            
+            self._apply_filters_and_sort()
+            
+        except Exception as e:
+            print(f"Clear filters error: {e}")
+    
+    def _apply_filters_and_sort(self):
+        """Apply current filters and sorting to the playlist list"""
+        try:
+            if self._is_destroyed or not hasattr(self, 'playlist_list'):
                 return
-                
-            # Validate playlist_list exists and is accessible
-            if not hasattr(self, 'playlist_list'):
-                print("[DEBUG] playlist_list attribute missing")
+            
+            # Get all playlists as tuples (name, data)
+            all_playlists = list(self.saved_playlists.items()) if self.saved_playlists else []
+            
+            if not all_playlists:
+                self._update_playlist_display([])
                 return
-                
-            # Test C++ object validity
+            
+            # Apply filters
+            filtered_playlists = []
+            name_filter = self._current_filter.get('name', '').lower()
+            min_items = self._current_filter.get('min_items', 0)
+            max_items = self._current_filter.get('max_items')
+            
+            for name, playlist_data in all_playlists:
+                try:
+                    # Validate playlist data structure
+                    if not isinstance(playlist_data, dict):
+                        continue
+                    
+                    # Name filter
+                    if name_filter and name_filter not in name.lower():
+                        continue
+                    
+                    # Item count filter
+                    items = playlist_data.get('items', [])
+                    if not isinstance(items, list):
+                        items = []
+                    
+                    item_count = len(items)
+                    if item_count < min_items:
+                        continue
+                    if max_items is not None and item_count > max_items:
+                        continue
+                    
+                    filtered_playlists.append((name, playlist_data))
+                    
+                except Exception as e:
+                    print(f"Error filtering playlist {name}: {e}")
+                    # Continue processing other playlists even if one fails
+                    continue
+            
+            # Apply sorting with error handling
+            sort_field = self._current_sort.get('field', 'created')
+            reverse = self._current_sort.get('reverse', True)
+            
             try:
-                current_count = self.playlist_list.count()
-                # print(f"[DEBUG] playlist_list is valid, current count: {current_count}")
-            except RuntimeError as e:
-                print(f"[DEBUG] playlist_list C++ object invalid: {e}")
-                return
+                if sort_field == 'name':
+                    filtered_playlists.sort(key=lambda x: x[0].lower(), reverse=reverse)
+                elif sort_field == 'items':
+                    filtered_playlists.sort(
+                        key=lambda x: len(x[1].get('items', []) if isinstance(x[1].get('items'), list) else []), 
+                        reverse=reverse
+                    )
+                else:  # 'created'
+                    def get_created_date(playlist_tuple):
+                        try:
+                            metadata = playlist_tuple[1].get('metadata', {})
+                            created = metadata.get('created', '')
+                            # Ensure we have a valid date string for sorting
+                            if not created:
+                                return '1900-01-01T00:00:00'  # Very old date for missing dates
+                            return created
+                        except Exception:
+                            return '1900-01-01T00:00:00'
+                    
+                    filtered_playlists.sort(key=get_created_date, reverse=reverse)
+                    
             except Exception as e:
-                print(f"[DEBUG] Unexpected error testing playlist_list: {e}")
+                print(f"Error sorting playlists: {e}")
+                # If sorting fails, show user feedback but don't crash
+                if hasattr(self, 'results_label'):
+                    self.results_label.setText("⚠️ Sort error - showing unsorted")
+            
+            # Cache the filtered results
+            self._filtered_playlists = filtered_playlists
+            
+            # Update the display
+            self._update_playlist_display(filtered_playlists)
+            
+        except Exception as e:
+            print(f"Apply filters and sort error: {e}")
+            # Fallback: show error message to user
+            if hasattr(self, 'results_label'):
+                self.results_label.setText("⚠️ Filter error")
+            # Try to show at least the unfiltered list as fallback
+            try:
+                if hasattr(self, 'saved_playlists') and self.saved_playlists:
+                    self._update_playlist_display(list(self.saved_playlists.items())[:50])  # Limit to first 50 for safety
+            except Exception:
+                pass
+    
+    def _update_playlist_display(self, playlists_to_show):
+        """Update the playlist list widget with filtered/sorted results"""
+        try:
+            if self._is_destroyed or not hasattr(self, 'playlist_list'):
                 return
                 
-            # print(f"[DEBUG] saved_playlists type: {type(self.saved_playlists)}")
-            # print(f"[DEBUG] saved_playlists content: {list(self.saved_playlists.keys()) if isinstance(self.saved_playlists, dict) else 'Not a dict'}")
-            
-            # Clear the list safely
+            # Clear current list
             self.playlist_list.clear()
-            # print(f"[DEBUG] playlist_list cleared successfully")
             
-            # Handle empty playlists case
-            if not self.saved_playlists:
-                print("[DEBUG] No saved playlists found")
-                item = QListWidgetItem("No saved playlists")
-                item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
-                item.setData(Qt.UserRole, None)
-                
-                # Check if we can still add items safely
-                if not self._is_destroyed:
-                    try:
-                        self.playlist_list.addItem(item)
-                        print(f"[DEBUG] Added placeholder item")
-                    except RuntimeError:
-                        print("[DEBUG] Failed to add placeholder - dialog destroyed")
+            # Update results count
+            if hasattr(self, 'results_label'):
+                count = len(playlists_to_show)
+                total = len(self.saved_playlists) if self.saved_playlists else 0
+                if count == total:
+                    self.results_label.setText(f"{count} playlists")
+                else:
+                    self.results_label.setText(f"{count} of {total} playlists")
+            
+            # Handle empty results
+            if not playlists_to_show:
+                if self.saved_playlists:
+                    # There are playlists but none match filters
+                    item = QListWidgetItem("No playlists match your filters")
+                    item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
+                    item.setData(Qt.UserRole, None)
+                    self.playlist_list.addItem(item)
+                else:
+                    # No saved playlists at all
+                    item = QListWidgetItem("No saved playlists")
+                    item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
+                    item.setData(Qt.UserRole, None)
+                    self.playlist_list.addItem(item)
                 return
-
-            # print(f"[DEBUG] Processing {len(self.saved_playlists)} saved playlists")
             
-            # Sort by creation date (newest first)
-            try:
-                sorted_playlists = sorted(
-                    self.saved_playlists.items(),
-                    key=lambda x: x[1].get('metadata', {}).get('created', ''),
-                    reverse=True
-                )
-            except Exception as e:
-                print(f"[DEBUG] Sorting failed: {e}, using unsorted")
-                sorted_playlists = list(self.saved_playlists.items())
-            
-            for i, (name, playlist_data) in enumerate(sorted_playlists):
-                # Check if dialog was destroyed during iteration
+            # Add filtered playlists to the list
+            successful_adds = 0
+            for name, playlist_data in playlists_to_show:
                 if self._is_destroyed:
-                    print(f"[DEBUG] Dialog destroyed during iteration at item {i}")
                     break
                     
-                # print(f"[DEBUG] Processing playlist {i+1}: '{name}'")
-                
                 try:
+                    # Validate data structure
+                    if not isinstance(playlist_data, dict):
+                        print(f"Warning: Invalid playlist data for '{name}', skipping")
+                        continue
+                        
                     items = playlist_data.get('items', [])
+                    if not isinstance(items, list):
+                        items = []
+                        
                     metadata = playlist_data.get('metadata', {})
+                    if not isinstance(metadata, dict):
+                        metadata = {}
                     
                     # Create display text
                     item_count = len(items)
                     created = metadata.get('created', '')
+                    
+                    # Safe date parsing
+                    age_str = "Unknown date"
                     if created:
                         try:
                             dt = datetime.fromisoformat(created)
@@ -708,54 +1043,96 @@ class PlaylistManagerDialog(QDialog):
                                 age_str = f"{age.days} days ago"
                             else:
                                 age_str = dt.strftime("%Y-%m-%d")
-                        except:
-                            age_str = "Unknown date"
-                    else:
-                        age_str = "Unknown date"
+                        except (ValueError, TypeError) as e:
+                            print(f"Warning: Invalid date format for playlist '{name}': {created}")
                     
                     display_text = f"{name}\n{item_count} items • {age_str}"
-                    # print(f"[DEBUG] Creating list item with text: '{display_text}'")
                     
                     list_item = QListWidgetItem(display_text)
                     list_item.setData(Qt.UserRole, (name, playlist_data))
                     
-                     # Add icon based on content
-                    icon_size = QSize(24, 24)
-                    icon_set = False
+                    # Add icon based on content (with error handling)
+                    try:
+                        icon_size = QSize(24, 24)
+                        icon_set = False
 
-                    if any(item.get('type') == 'youtube' for item in items):
-                        icon = load_svg_icon(str(APP_DIR / 'icons/youtube-fa7.svg'), icon_size)
-                        list_item.setIcon(icon)
-                        icon_set = True
-                    elif any(item.get('type') == 'bilibili' for item in items):
-                        icon = load_svg_icon(str(APP_DIR / 'icons/bilibili-fa7.svg'), icon_size)
-                        list_item.setIcon(icon)
-                        icon_set = True
-                    
-                    if not icon_set:
-                        # Fallback for playlists with only local files or other types
-                        list_item.setIcon(self._create_source_icon('local'))
-                    
-                    # Add item safely
-                    if not self._is_destroyed:
-                        try:
-                            self.playlist_list.addItem(list_item)
-                            # print(f"[DEBUG] Added playlist item, list count now: {self.playlist_list.count()}")
-                        except RuntimeError:
-                            print(f"[DEBUG] Failed to add item {i} - dialog destroyed")
-                            break
-                    else:
-                        print(f"[DEBUG] Skipping item {i} - dialog destroyed")
-                        break
+                        # Check for YouTube content
+                        if any(item.get('type') == 'youtube' for item in items if isinstance(item, dict)):
+                            try:
+                                icon = load_svg_icon(str(APP_DIR / 'icons/youtube-fa7.svg'), icon_size)
+                                list_item.setIcon(icon)
+                                icon_set = True
+                            except Exception as e:
+                                print(f"Warning: Could not load YouTube icon: {e}")
                         
+                        # Check for Bilibili content
+                        elif any(item.get('type') == 'bilibili' for item in items if isinstance(item, dict)):
+                            try:
+                                icon = load_svg_icon(str(APP_DIR / 'icons/bilibili-fa7.svg'), icon_size)
+                                list_item.setIcon(icon)
+                                icon_set = True
+                            except Exception as e:
+                                print(f"Warning: Could not load Bilibili icon: {e}")
+                        
+                        # Fallback icon
+                        if not icon_set:
+                            list_item.setIcon(self._create_source_icon('local'))
+                            
+                    except Exception as e:
+                        print(f"Warning: Error setting icon for playlist '{name}': {e}")
+                        # Continue without icon
+                    
+                    self.playlist_list.addItem(list_item)
+                    successful_adds += 1
+                    
                 except Exception as e:
-                    print(f"[DEBUG] Error processing playlist {name}: {e}")
+                    print(f"Error creating list item for playlist '{name}': {e}")
                     continue
             
-            # print(f"[DEBUG] _refresh_playlist_list completed successfully")
+            # Update results count to reflect successful additions
+            if hasattr(self, 'results_label') and successful_adds != len(playlists_to_show):
+                current_text = self.results_label.text()
+                self.results_label.setText(f"{current_text} ({successful_adds} displayed)")
+                    
+        except Exception as e:
+            print(f"Update playlist display error: {e}")
+            # Show error message to user
+            if hasattr(self, 'results_label'):
+                self.results_label.setText("⚠️ Display error")
+            # Try to add at least an error item
+            try:
+                if hasattr(self, 'playlist_list'):
+                    self.playlist_list.clear()
+                    error_item = QListWidgetItem("⚠️ Error displaying playlists")
+                    error_item.setFlags(error_item.flags() & ~Qt.ItemIsSelectable)
+                    error_item.setData(Qt.UserRole, None)
+                    self.playlist_list.addItem(error_item)
+            except Exception:
+                pass
+    
+    def _refresh_playlist_list(self):
+        """Refresh the list of saved playlists using the enhanced filtering system"""
+        try:
+            if self._is_destroyed:
+                return
+                
+            # Validate playlist_list exists and is accessible
+            if not hasattr(self, 'playlist_list'):
+                return
+                
+            # Test C++ object validity
+            try:
+                _ = self.playlist_list.count()
+            except RuntimeError:
+                return
+            except Exception:
+                return
+            
+            # Use the new filtering and sorting system
+            self._apply_filters_and_sort()
                 
         except Exception as e:
-            print(f"[DEBUG] _refresh_playlist_list error: {e}")
+            print(f"_refresh_playlist_list error: {e}")
             import traceback
             traceback.print_exc()
     
