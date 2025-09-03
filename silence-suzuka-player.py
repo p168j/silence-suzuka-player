@@ -4211,7 +4211,7 @@ class MediaPlayer(QMainWindow):
             self.up_next_stack = QStackedLayout()
 
             # 1. The song list (index 0)
-            self.up_next = QTreeWidget()
+            self.up_next = ScrollingTreeWidget()
             self.up_next.setHeaderHidden(True)
             self.up_next.setObjectName('upNext')
             # self.up_next.setFixedHeight(140)  <-- REMOVED THIS LINE
@@ -4447,7 +4447,8 @@ class MediaPlayer(QMainWindow):
                     pass
         except Exception:
             pass
-        self._setup_up_next_scrolling()    
+        # Note: Up Next now uses ScrollingTreeWidget, so no custom scrolling setup needed
+        # self._setup_up_next_scrolling()    
 
         # DEBUG: Test if undo system is set up
         # print("=== UNDO SYSTEM CHECK ===")
@@ -7078,9 +7079,7 @@ class MediaPlayer(QMainWindow):
 
     def _update_up_next(self):
         try:
-            # --- FIX: Stop any scrolling animations before clearing the list ---
-            self._stop_scrolling()
-
+            # Note: ScrollingTreeWidget handles its own scrolling lifecycle
             if not hasattr(self, 'up_next'):
                 return
 
