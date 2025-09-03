@@ -59,6 +59,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QTimer, Signal, QThread, QSize
 from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter, QColor, QBrush
+from PySide6.QtWidgets import QGraphicsColorizeEffect
 
 
 class PlaylistMetadataWidget(QWidget):
@@ -636,7 +637,7 @@ class PlaylistManagerDialog(QDialog):
             # Test C++ object validity
             try:
                 current_count = self.playlist_list.count()
-                print(f"[DEBUG] playlist_list is valid, current count: {current_count}")
+                # print(f"[DEBUG] playlist_list is valid, current count: {current_count}")
             except RuntimeError as e:
                 print(f"[DEBUG] playlist_list C++ object invalid: {e}")
                 return
@@ -644,12 +645,12 @@ class PlaylistManagerDialog(QDialog):
                 print(f"[DEBUG] Unexpected error testing playlist_list: {e}")
                 return
                 
-            print(f"[DEBUG] saved_playlists type: {type(self.saved_playlists)}")
-            print(f"[DEBUG] saved_playlists content: {list(self.saved_playlists.keys()) if isinstance(self.saved_playlists, dict) else 'Not a dict'}")
+            # print(f"[DEBUG] saved_playlists type: {type(self.saved_playlists)}")
+            # print(f"[DEBUG] saved_playlists content: {list(self.saved_playlists.keys()) if isinstance(self.saved_playlists, dict) else 'Not a dict'}")
             
             # Clear the list safely
             self.playlist_list.clear()
-            print(f"[DEBUG] playlist_list cleared successfully")
+            # print(f"[DEBUG] playlist_list cleared successfully")
             
             # Handle empty playlists case
             if not self.saved_playlists:
@@ -667,7 +668,7 @@ class PlaylistManagerDialog(QDialog):
                         print("[DEBUG] Failed to add placeholder - dialog destroyed")
                 return
 
-            print(f"[DEBUG] Processing {len(self.saved_playlists)} saved playlists")
+            # print(f"[DEBUG] Processing {len(self.saved_playlists)} saved playlists")
             
             # Sort by creation date (newest first)
             try:
@@ -686,7 +687,7 @@ class PlaylistManagerDialog(QDialog):
                     print(f"[DEBUG] Dialog destroyed during iteration at item {i}")
                     break
                     
-                print(f"[DEBUG] Processing playlist {i+1}: '{name}'")
+                # print(f"[DEBUG] Processing playlist {i+1}: '{name}'")
                 
                 try:
                     items = playlist_data.get('items', [])
@@ -713,7 +714,7 @@ class PlaylistManagerDialog(QDialog):
                         age_str = "Unknown date"
                     
                     display_text = f"{name}\n{item_count} items • {age_str}"
-                    print(f"[DEBUG] Creating list item with text: '{display_text}'")
+                    # print(f"[DEBUG] Creating list item with text: '{display_text}'")
                     
                     list_item = QListWidgetItem(display_text)
                     list_item.setData(Qt.UserRole, (name, playlist_data))
@@ -739,7 +740,7 @@ class PlaylistManagerDialog(QDialog):
                     if not self._is_destroyed:
                         try:
                             self.playlist_list.addItem(list_item)
-                            print(f"[DEBUG] Added playlist item, list count now: {self.playlist_list.count()}")
+                            # print(f"[DEBUG] Added playlist item, list count now: {self.playlist_list.count()}")
                         except RuntimeError:
                             print(f"[DEBUG] Failed to add item {i} - dialog destroyed")
                             break
@@ -751,7 +752,7 @@ class PlaylistManagerDialog(QDialog):
                     print(f"[DEBUG] Error processing playlist {name}: {e}")
                     continue
             
-            print(f"[DEBUG] _refresh_playlist_list completed successfully")
+            # print(f"[DEBUG] _refresh_playlist_list completed successfully")
                 
         except Exception as e:
             print(f"[DEBUG] _refresh_playlist_list error: {e}")
@@ -1094,11 +1095,11 @@ class EnhancedPlaylistManager:
                             }
                         else:
                             # New format
-                            print(f"[DEBUG] Found new format playlist: {name}")
+                            # print(f"[DEBUG] Found new format playlist: {name}")
                             migrated[name] = playlist_items
                     
                     self.saved_playlists = migrated
-                    print(f"[DEBUG] Final saved_playlists: {list(self.saved_playlists.keys())}")
+                    # print(f"[DEBUG] Final saved_playlists: {list(self.saved_playlists.keys())}")
                     self._save_playlists()  # Save migrated format
             else:
                 # Try to migrate from old playlists.json
@@ -2832,6 +2833,7 @@ class MediaPlayer(QMainWindow):
         self._undo_stack = []  # Stack of undo operations
         self._max_undo_operations = 10  # Limit undo history
         
+        
 
     def _collapse_all_groups(self):
         """Collapses all top-level group items in the playlist tree."""
@@ -2929,7 +2931,7 @@ class MediaPlayer(QMainWindow):
             ))
             
         except Exception as e:
-            print(f"Flash button color error: {e}")
+            pass # print(f"Flash button color error: {e}")
 
     def _show_library_header_context_menu(self, pos):
         """Show context menu for the library header"""
@@ -2959,6 +2961,27 @@ class MediaPlayer(QMainWindow):
         except Exception as e:
             # print(f"[HEADER DEBUG] Exception: {e}")
             logger.error(f"Library header context menu error: {e}") 
+
+    def _toggle_all_groups(self):
+        """Toggle between expanding and collapsing all groups"""
+        try:
+            # Check if any groups are expanded
+            any_expanded = False
+            for i in range(self.playlist_tree.topLevelItemCount()):
+                item = self.playlist_tree.topLevelItem(i)
+                if item and item.isExpanded():
+                    any_expanded = True
+                    break
+            
+            if any_expanded:
+                self._collapse_all_groups()
+                self.status.showMessage("All groups collapsed", 2000)
+            else:
+                self._expand_all_groups()
+                self.status.showMessage("All groups expanded", 2000)
+                
+        except Exception as e:
+            logger.error(f"Failed to toggle groups: {e}")        
 
     def _reset_all_playback_positions(self):
         """Reset all playback positions for items in the current playlist"""
@@ -3372,7 +3395,7 @@ class MediaPlayer(QMainWindow):
         if not hasattr(self, 'up_next'):
             return
         
-        print("[DEBUG] Setting up Up Next scrolling")
+        # print("[DEBUG] Setting up Up Next scrolling")
         
         # Enable mouse tracking
         self.up_next.setMouseTracking(True)
@@ -3391,42 +3414,43 @@ class MediaPlayer(QMainWindow):
         self._original_leave_event = self.up_next.leaveEvent
         
         # --- FIX: Define the handlers and ACTUALLY assign them ---
-        def on_mouse_move(event):
-            # Call original handler first
-            self._original_mouse_move(event)
-            
-            # Get item under mouse
-            try:
-                pos = event.position().toPoint()
-            except AttributeError:
-                pos = event.pos()
-            
-            item = self.up_next.itemAt(pos)
-            
-            # Use debounce to prevent rapid switching
-            self._pending_item = item
-            self._mouse_debounce_timer.stop()
-            # --- FIX: Properly disconnect previous connections ---
-            try:
-                self._mouse_debounce_timer.timeout.disconnect()
-            except:
-                pass
-            self._mouse_debounce_timer.timeout.connect(lambda: self._handle_item_change(item))
-            self._mouse_debounce_timer.start(150)  # 150ms debounce
-                
-        def on_leave(event):
-            # Call original handler first
-            self._original_leave_event(event)
-            print("[DEBUG] Mouse left Up Next")
-            # --- FIX: Stop debounce timer and clear state ---
-            self._mouse_debounce_timer.stop()
-            try:
-                self._mouse_debounce_timer.timeout.disconnect()
-            except:
-                pass
-            self._pending_item = None
-            self._stop_scrolling()
+    def on_mouse_move(event):
+        # Call original handler first
+        self._original_mouse_move(event)
         
+        # Get item under mouse
+        try:
+            pos = event.position().toPoint()
+        except AttributeError:
+            pos = event.pos()
+        
+        item = self.up_next.itemAt(pos)
+        
+        # Use debounce to prevent rapid switching
+        self._pending_item = item
+        self._mouse_debounce_timer.stop()
+        
+        # Safely disconnect previous connections
+        try:
+            self._mouse_debounce_timer.timeout.disconnect()
+        except (RuntimeError, TypeError):
+            pass
+        
+        self._mouse_debounce_timer.timeout.connect(lambda: self._handle_item_change(item))
+        self._mouse_debounce_timer.start(150)  # 150ms debounce
+                
+    def on_leave(event):
+        # Call original handler first
+        self._original_leave_event(event)
+        # Stop debounce timer and clear state
+        self._mouse_debounce_timer.stop()
+        try:
+            self._mouse_debounce_timer.timeout.disconnect()
+        except (RuntimeError, TypeError):
+            pass
+        self._pending_item = None
+        self._stop_scrolling()
+            
         # --- FIX: Actually assign the new handlers ---
         self.up_next.mouseMoveEvent = on_mouse_move
         self.up_next.leaveEvent = on_leave
@@ -3466,17 +3490,25 @@ class MediaPlayer(QMainWindow):
         if item == self._scroll_item:
             return
             
-        print(f"[DEBUG] Item change: {item.text(0) if item else 'None'} (was: {self._scroll_item.text(0) if self._scroll_item else 'None'})")
-        
         # Always stop current scrolling first
         if self._scroll_item:
-            print(f"[DEBUG] Stopping scroll for: {self._scroll_item.text(0)}")
             self._stop_scrolling()
         
-        # Only start new scrolling if we have a valid item
+        # Use debounce to prevent rapid switching
+        self._pending_item = item
+        self._mouse_debounce_timer.stop()
+        
+        # Safely disconnect previous connections
+        try:
+            self._mouse_debounce_timer.timeout.disconnect()
+        except (RuntimeError, TypeError):
+            # No connections to disconnect, that's fine
+            pass
+        
+        # Only connect and start if we have a valid item
         if item:
-            print(f"[DEBUG] Starting scroll for: {item.text(0)}")
-            self._start_scrolling(item)
+            self._mouse_debounce_timer.timeout.connect(lambda: self._start_scrolling(item))
+            self._mouse_debounce_timer.start(150)  # 150ms debounce
 
     def _start_scrolling(self, item):
         """Start scrolling for an item"""
@@ -3491,14 +3523,14 @@ class MediaPlayer(QMainWindow):
         if text.startswith(("🔴 ", "🐟 ", "🎬 ")):
             clean_text = text[2:]
         
-        print(f"[DEBUG] Checking scroll for: '{text}' (clean: '{clean_text}')")
+        # print(f"[DEBUG] Checking scroll for: '{text}' (clean: '{clean_text}')")
         
         # Check if text needs scrolling
         font_metrics = self.up_next.fontMetrics()
         text_width = font_metrics.horizontalAdvance(clean_text)
         available_width = self.up_next.columnWidth(0) - 60  # Conservative margin
         
-        print(f"[DEBUG] Text width: {text_width}, Available: {available_width}")
+        # print(f"[DEBUG] Text width: {text_width}, Available: {available_width}")
         
         if text_width <= available_width:
             print("[DEBUG] Text fits, no scrolling needed")
@@ -3517,7 +3549,7 @@ class MediaPlayer(QMainWindow):
         
         def scroll_step():
             if not self._scroll_item or self._scroll_item != item:
-                print("[DEBUG] Scroll step - item mismatch, stopping")
+                # print("[DEBUG] Scroll step - item mismatch, stopping")
                 return
             
             pos = self._scroll_pos
@@ -3539,7 +3571,7 @@ class MediaPlayer(QMainWindow):
         # Connect and start timer
         self._scroll_timer.timeout.connect(scroll_step)
         self._scroll_timer.start(180)
-        print(f"[DEBUG] Started scrolling for: {original_text}")
+        # print(f"[DEBUG] Started scrolling for: {original_text}")
 
     def _update_item_text(self, item, text):
         """Safely update item text in main thread"""
@@ -3548,17 +3580,17 @@ class MediaPlayer(QMainWindow):
 
     def _stop_scrolling(self):
         """Stop scrolling and restore text"""
-        print("[DEBUG] _stop_scrolling called")
+        # print("[DEBUG] _stop_scrolling called")
         
         if self._scroll_timer.isActive():
             self._scroll_timer.stop()
-            print("[DEBUG] Timer stopped")
+            # print("[DEBUG] Timer stopped")
         
         if self._scroll_item and self._original_text:
             try:
                 # Immediately restore text
                 self._scroll_item.setText(0, self._original_text)
-                print(f"[DEBUG] Restored text immediately: {self._original_text}")
+                # print(f"[DEBUG] Restored text immediately: {self._original_text}")
             except Exception as e:
                 print(f"[DEBUG] Error restoring text: {e}")
         
@@ -3566,7 +3598,7 @@ class MediaPlayer(QMainWindow):
         self._scroll_item = None
         self._original_text = ""
         self._scroll_pos = 0
-        print("[DEBUG] Scroll state cleared")
+        # print("[DEBUG] Scroll state cleared")
 
     def _reset_silence_counter(self):
         """Reset the silence detection timer - call when app starts playing."""
@@ -3808,8 +3840,8 @@ class MediaPlayer(QMainWindow):
         top.addWidget(self.stats_btn)
         top.addWidget(self.settings_btn)
         
-        self.theme_btn = QPushButton("🎨"); self.theme_btn.setObjectName('settingsBtn'); self.theme_btn.setToolTip("Toggle Theme")
-        self.theme_btn.clicked.connect(self.toggle_theme)
+        self.theme_btn = QPushButton("🎨"); self.theme_btn.setObjectName('settingsBtn'); self.theme_btn.setToolTip("Dark mode coming soon!"); self.theme_btn.setEnabled(False)  
+        # self.theme_btn.clicked.connect(self.toggle_theme)
         top.addWidget(self.theme_btn)
         
         # Add the top layout to the root layout
@@ -4004,10 +4036,12 @@ class MediaPlayer(QMainWindow):
         # Initialize search timer
         self._search_timer = QTimer()
         self._search_timer.setSingleShot(True)
-        self._search_timer.timeout.connect(lambda: (
-            print(f"[DEBUG] Timer fired, filtering with: '{self.search_bar.text()}'"),
+
+        def do_filter():
+            # print(f"[DEBUG] Timer fired, filtering with: '{self.search_bar.text()}'")
             self.filter_playlist(self.search_bar.text())
-        )[1])
+
+        self._search_timer.timeout.connect(do_filter)
         
         # Track IME composition state
         self._ime_composing = False
@@ -4121,11 +4155,11 @@ class MediaPlayer(QMainWindow):
 
         # FIXED: Proper event handler setup
         def track_enter_handler(event):
-            print("[TRACK DEBUG] Mouse entered track label")
+            # print("[TRACK DEBUG] Mouse entered track label")
             self._start_track_title_scrolling()
 
         def track_leave_handler(event):
-            print("[TRACK DEBUG] Mouse left track label")
+            # print("[TRACK DEBUG] Mouse left track label")
             self._stop_track_title_scrolling()
 
         # Enable mouse tracking and set event handlers
@@ -4195,10 +4229,20 @@ class MediaPlayer(QMainWindow):
             shuffle_msg_layout = QVBoxLayout(shuffle_msg_widget)
             shuffle_msg_layout.setAlignment(Qt.AlignCenter)
             shuffle_msg_label = QLabel("🔀 Shuffle Mode is Active")
-            shuffle_msg_label.setObjectName('emptyStateSubheading') # Reuse existing style
+            shuffle_msg_label.setObjectName('emptyStateSubheading')
             shuffle_msg_label.setAlignment(Qt.AlignCenter)
             shuffle_msg_layout.addWidget(shuffle_msg_label)
             self.up_next_stack.addWidget(shuffle_msg_widget)
+
+            # 3. The repeat message (index 2) - ADD THIS NEW BLOCK
+            repeat_msg_widget = QWidget()
+            repeat_msg_layout = QVBoxLayout(repeat_msg_widget)
+            repeat_msg_layout.setAlignment(Qt.AlignCenter)
+            repeat_msg_label = QLabel("🔁 Repeat Mode is Active")
+            repeat_msg_label.setObjectName('emptyStateSubheading')
+            repeat_msg_label.setAlignment(Qt.AlignCenter)
+            repeat_msg_layout.addWidget(repeat_msg_label)
+            self.up_next_stack.addWidget(repeat_msg_widget)
 
             up_layout.addLayout(self.up_next_stack) # Add the stack to the panel
             main_col.addWidget(self.up_next_container, 1) # <-- MODIFIED THIS LINE
@@ -4231,10 +4275,10 @@ class MediaPlayer(QMainWindow):
 
         # Add this test:
         def simple_test():
-            print("Play button was clicked!")
+            # print("Play button was clicked!")
             try:
                 current_size = self.play_pause_btn.iconSize()
-                print(f"Current icon size: {current_size.width()}x{current_size.height()}")
+                # print(f"Current icon size: {current_size.width()}x{current_size.height()}")
                 # Test if we can change icon size
                 self.play_pause_btn.setIconSize(QSize(45, 45))
                 QTimer.singleShot(200, lambda: self.play_pause_btn.setIconSize(QSize(50, 50)))
@@ -4245,9 +4289,9 @@ class MediaPlayer(QMainWindow):
 
         # Test simple press feedback
         def test_press():
-            print("Button pressed - animation should trigger")
+            pass # print("Button pressed - animation should trigger")
         def test_release():
-            print("Button released - animation should trigger")
+            pass # print("Button released - animation should trigger")
         self.play_pause_btn.pressed.connect(test_press)
         self.play_pause_btn.released.connect(test_release)
 
@@ -4734,10 +4778,10 @@ class MediaPlayer(QMainWindow):
         text_width = font_metrics.horizontalAdvance(self._track_title_full)
         available_width = self.track_label.width() - 40  # Conservative margin
         
-        print(f"[TRACK DEBUG] Title width: {text_width}, Available: {available_width}")
+        # print(f"[TRACK DEBUG] Title width: {text_width}, Available: {available_width}")
         
         if text_width <= available_width:
-            print("[TRACK DEBUG] Title fits, no scrolling needed")
+            # print("[TRACK DEBUG] Title fits, no scrolling needed")
             return
         
         # Stop any existing timer safely
@@ -4765,33 +4809,33 @@ class MediaPlayer(QMainWindow):
         
         self._track_scroll_timer.timeout.connect(scroll_step)
         self._track_scroll_timer.start(200)
-        print(f"[TRACK DEBUG] Started scrolling: {self._track_title_full}")
+        # print(f"[TRACK DEBUG] Started scrolling: {self._track_title_full}")
 
     def _stop_track_title_scrolling(self):
         """Stop scrolling and restore original text"""
-        print("[TRACK DEBUG] _stop_track_title_scrolling called")
+        # print("[TRACK DEBUG] _stop_track_title_scrolling called")
         
         # Check timer state
         if hasattr(self, '_track_scroll_timer'):
-            print(f"[TRACK DEBUG] _track_scroll_timer exists: {self._track_scroll_timer}")
+            # print(f"[TRACK DEBUG] _track_scroll_timer exists: {self._track_scroll_timer}")
             if self._track_scroll_timer:
-                print("[TRACK DEBUG] Stopping timer...")
+                # print("[TRACK DEBUG] Stopping timer...")
                 self._track_scroll_timer.stop()
-                print(f"[TRACK DEBUG] Timer active after stop: {self._track_scroll_timer.isActive()}")
+                # print(f"[TRACK DEBUG] Timer active after stop: {self._track_scroll_timer.isActive()}")
                 self._track_scroll_timer = None
-                print("[TRACK DEBUG] Timer set to None")
+                # print("[TRACK DEBUG] Timer set to None")
             else:
-                print("[TRACK DEBUG] Timer was None")
+               pass # print("[TRACK DEBUG] Timer was None")
         else:
-            print("[TRACK DEBUG] _track_scroll_timer attribute doesn't exist")
+            pass # print("[TRACK DEBUG] _track_scroll_timer attribute doesn't exist")
             
         if hasattr(self, '_track_title_full') and self._track_title_full:
-            print(f"[TRACK DEBUG] Restoring text: {self._track_title_full}")
+            # print(f"[TRACK DEBUG] Restoring text: {self._track_title_full}")
             self.track_label.setText(self._track_title_full)
             self._update_track_label_elide()
-            print("[TRACK DEBUG] Text restored")
+            # print("[TRACK DEBUG] Text restored")
         else:
-            print("[TRACK DEBUG] No title to restore")
+            pass # print("[TRACK DEBUG] No title to restore")
     
     def _set_track_title(self, text):
         """Set track title with eliding support"""
@@ -5842,6 +5886,17 @@ class MediaPlayer(QMainWindow):
 
                 # Set the repeat icon based on its on/off state
                 self.repeat_btn.setIcon(repeat_icon_on if self.repeat_mode else repeat_icon_off)
+
+                # Update button styling to show active state
+                if self.repeat_mode:
+                    self.repeat_btn.setStyleSheet("background-color: rgba(231, 111, 81, 0.3); border-radius: 20px;")
+                else:
+                    self.repeat_btn.setStyleSheet("")
+
+                if self.shuffle_mode:
+                    self.shuffle_btn.setStyleSheet("background-color: rgba(231, 111, 81, 0.3); border-radius: 20px;")
+                else:
+                    self.shuffle_btn.setStyleSheet("")
 
             except Exception as e:
                 logger.warning(f"Failed to force-apply theme to widgets: {e}")
@@ -7022,26 +7077,30 @@ class MediaPlayer(QMainWindow):
             pass    
 
     def _update_up_next(self):
-            try:
-                # --- FIX: Stop any scrolling animations before clearing the list ---
-                self._stop_scrolling()
+        try:
+            # --- FIX: Stop any scrolling animations before clearing the list ---
+            self._stop_scrolling()
 
-                if not hasattr(self, 'up_next'):
-                    return
-                
-                if self.shuffle_mode:
-                    self.up_next_stack.setCurrentIndex(1) # Show the shuffle message
-                    self.up_next_header.setCheckable(False)
-                    # THIS IS THE KEY FIX: We now explicitly set the button's internal
-                    # state to 'checked' to match the forced-open visual state.
-                    self.up_next_header.setChecked(True)
-                    self._toggle_up_next_visible(True)
-                    return
-                else:
-                    # When leaving shuffle, the panel remains expanded.
-                    # We just need to restore its ability to be toggled by the user.
-                    self.up_next_header.setCheckable(True)
-                    self.up_next_stack.setCurrentIndex(0) # Show the song list
+            if not hasattr(self, 'up_next'):
+                return
+
+            # Show message for both shuffle AND repeat mode
+            if self.shuffle_mode:
+                self.up_next_stack.setCurrentIndex(1) # Show shuffle message
+                self.up_next_header.setCheckable(False)
+                self.up_next_header.setChecked(True)
+                self._toggle_up_next_visible(True)
+                return
+            elif self.repeat_mode:
+                self.up_next_stack.setCurrentIndex(2) # Show repeat message
+                self.up_next_header.setCheckable(False)
+                self.up_next_header.setChecked(True)
+                self._toggle_up_next_visible(True)
+                return
+            else:
+                # Normal mode - show the song list
+                self.up_next_header.setCheckable(True)
+                self.up_next_stack.setCurrentIndex(0) # Show the song list
 
                 # Respect the settings toggle
                 if not bool(getattr(self, 'show_up_next', True)):
@@ -7051,7 +7110,8 @@ class MediaPlayer(QMainWindow):
                 else:
                     if hasattr(self, 'up_next_container'):
                         self.up_next_container.setVisible(True)
-                
+
+                # Rest of your existing code for populating the song list...
                 self.up_next.clear()
                 indices = self._scope_indices()
 
@@ -7062,40 +7122,36 @@ class MediaPlayer(QMainWindow):
                     curpos = indices.index(self.current_index) if self.current_index in indices else -1
                 except Exception:
                     curpos = -1
-                
+
                 upcoming = []
                 if curpos >= 0:
-                    upcoming = indices[curpos+1:curpos+6]
+                    upcoming = indices[curpos + 1:curpos + 6]
                 else:
                     upcoming = indices[:5]
-                
+
                 if getattr(self, 'unwatched_only', False):
                     upcoming = [i for i in upcoming if not self._is_completed_url(self.playlist[i].get('url'))]
-                
+
                 for i in upcoming:
                     if 0 <= i < len(self.playlist):
                         it = self.playlist[i]
                         title = it.get('title', 'Unknown')
                         icon = playlist_icon_for_type(it.get('type'))
-                        
+
                         node = QTreeWidgetItem()
-                        
+
                         if isinstance(icon, QIcon):
                             node.setText(0, title)
                             node.setIcon(0, icon)
-                            print(f"[DEBUG] Up Next item with icon: '{title}'")
                         else:
-                            # For emoji icons, store the title separately for better scrolling
                             node.setText(0, f"{icon} {title}")
-                            print(f"[DEBUG] Up Next item with emoji: '{icon} {title}'")
 
                         node.setData(0, Qt.UserRole, ('next', i))
-                        # Store clean title for scrolling calculations
                         node.setData(0, Qt.UserRole + 1, title)
                         self.up_next.addTopLevelItem(node)
-            except Exception:
-                pass
-
+        except Exception:
+            pass
+        
     def _on_up_next_double_clicked(self, item, column):
         try:
             data = item.data(0, Qt.UserRole)
@@ -8477,7 +8533,7 @@ class MediaPlayer(QMainWindow):
         """Handle middle mouse clicks on playlist items"""
         try:
             if event.button() == Qt.MiddleButton:
-                item = self.playlist_tree.itemAt(event.pos())
+                item = self.playlist_tree.itemAt(event.position().toPoint())
                 if item:
                     data = item.data(0, Qt.UserRole)
                     if isinstance(data, tuple) and data[0] == 'group':
@@ -9108,12 +9164,20 @@ class MediaPlayer(QMainWindow):
         
         try:
             if start_pos_sec > 0:
-                self.mpv.command('loadfile', url, 'replace', f'start={start_pos_sec}')
+                # FIX: Use proper format for start parameter
+                self.mpv.loadfile(url, 'replace', start=str(start_pos_sec))
             else:
-                self.mpv.command('loadfile', url, 'replace')
+                self.mpv.loadfile(url, 'replace')
         except Exception as e:
             logger.error(f"mpv loadfile command failed: {e}")
-            self.mpv.play(url) # Fallback
+            # Fallback to basic play method
+            try:
+                self.mpv.play(url)
+                if start_pos_sec > 0:
+                    # Apply seek after loading
+                    QTimer.singleShot(500, lambda: setattr(self.mpv, 'time_pos', start_pos_sec))
+            except Exception as e2:
+                logger.error(f"Fallback play also failed: {e2}")
 
         # --- Set playback state ---
         self.mpv.pause = not should_play
@@ -9132,7 +9196,7 @@ class MediaPlayer(QMainWindow):
         self.time_label.setText(format_time(start_pos_ms))
         
         # --- Defer highlight to ensure UI is ready ---
-        QTimer.singleShot(100, self._highlight_current_row)    
+        QTimer.singleShot(100, self._highlight_current_row)
 
     # Playback
     def play_current(self):
@@ -10372,7 +10436,7 @@ class MediaPlayer(QMainWindow):
             QShortcut(QKeySequence(Qt.Key_S), self, self._toggle_shuffle_shortcut)
             QShortcut(QKeySequence(Qt.Key_R), self, self._toggle_repeat_shortcut)
 
-            QShortcut(QKeySequence(Qt.Key_C), self, self._collapse_all_groups)
+            QShortcut(QKeySequence(Qt.Key_C), self, self._toggle_all_groups)
             QShortcut(QKeySequence(Qt.Key_X), self, self._expand_all_groups)
 
             # Group playback
