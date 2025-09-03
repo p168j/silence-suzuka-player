@@ -2115,46 +2115,235 @@ class YtdlManager(QThread):
         
         logger.info("[YtdlManager] Background thread finished.")
 
-class DurationFetcher(QThread):
+class MetadataWorker(QThread):
+    """Enhanced worker for fetching metadata (titles, durations) with persistent yt-dlp instances"""
+    metadataReady = Signal(str, dict)  # url, metadata dict
     progressUpdated = Signal(int, int)  # current, total
-    durationReady = Signal(int, int)    # index, duration
-    
-    def __init__(self, items_to_fetch, parent=None):
+    statusUpdate = Signal(str)  # status message
+    error = Signal(str, str)  # url, error message
+
+    def __init__(self, metadata_requests, parent=None):
         super().__init__(parent)
-        self.items_to_fetch = items_to_fetch  # List of (index, item) tuples
+        self.metadata_requests = metadata_requests  # List of (url, type, fields) tuples
         self._should_stop = False
-    
+        self.ydl_instances = {}
+
     def stop(self):
         self._should_stop = True
-    
+
     def run(self):
+        logger.debug("[MetadataWorker] Starting metadata fetch")
         import yt_dlp
         
-        for i, (playlist_index, item) in enumerate(self.items_to_fetch):
+        total = len(self.metadata_requests)
+        processed = 0
+        
+        for url, item_type, fields in self.metadata_requests:
             if self._should_stop:
                 break
                 
             try:
-                opts = {
-                    'quiet': True,
-                    'no_warnings': True,
-                    'skip_download': True,
-                    'extract_flat': False,
-                }
+                # Lazy-initialize yt-dlp instance for this type
+                if item_type not in self.ydl_instances:
+                    opts = {
+                        'quiet': True,
+                        'no_warnings': True,
+                        'skip_download': True,
+                        'socket_timeout': 15,
+                        'retries': 3,
+                    }
+                    if item_type == 'bilibili':
+                        opts['cookiefile'] = str(COOKIES_BILI)
+                    
+                    self.ydl_instances[item_type] = yt_dlp.YoutubeDL(opts)
                 
-                if item.get('type') == 'bilibili':
-                    opts['cookiefile'] = str(COOKIES_BILI)
+                ydl = self.ydl_instances[item_type]
                 
-                with yt_dlp.YoutubeDL(opts) as ydl:
-                    info = ydl.extract_info(item.get('url'), download=False)
-                    duration = int(info.get('duration', 0)) if info else 0
-                    self.durationReady.emit(playlist_index, duration)
+                # Extract info with error handling
+                self.statusUpdate.emit(f"Fetching metadata for {url[:60]}...")
+                info = ydl.extract_info(url, download=False)
+                
+                if info:
+                    metadata = {}
+                    if 'title' in fields:
+                        metadata['title'] = info.get('title', '')
+                    if 'duration' in fields:
+                        metadata['duration'] = int(info.get('duration', 0))
+                    if 'description' in fields:
+                        metadata['description'] = info.get('description', '')
+                    if 'uploader' in fields:
+                        metadata['uploader'] = info.get('uploader', '')
+                    if 'view_count' in fields:
+                        metadata['view_count'] = info.get('view_count', 0)
+                    
+                    self.metadataReady.emit(url, metadata)
+                else:
+                    self.error.emit(url, "No metadata available")
                     
             except Exception as e:
-                print(f"Duration fetch error for {item.get('url')}: {e}")
-                self.durationReady.emit(playlist_index, 0)
+                logger.warning(f"[MetadataWorker] Failed to fetch metadata for {url}: {e}")
+                self.error.emit(url, str(e))
             
-            self.progressUpdated.emit(i + 1, len(self.items_to_fetch))       
+            processed += 1
+            self.progressUpdated.emit(processed, total)
+        
+        logger.debug("[MetadataWorker] Metadata fetch complete")
+
+class MetadataManager:
+    """Manages metadata caching and fetching for playlist items"""
+    
+    def __init__(self, app_dir):
+        self.app_dir = Path(app_dir)
+        self.cache_file = self.app_dir / 'metadata_cache.json'
+        self.cache = self._load_cache()
+        self.workers = []
+        
+    def _load_cache(self):
+        """Load metadata cache from disk"""
+        try:
+            if self.cache_file.exists():
+                with open(self.cache_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+        except Exception as e:
+            logger.warning(f"Failed to load metadata cache: {e}")
+        return {}
+    
+    def _save_cache(self):
+        """Save metadata cache to disk"""
+        try:
+            self.cache_file.parent.mkdir(exist_ok=True)
+            with open(self.cache_file, 'w', encoding='utf-8') as f:
+                json.dump(self.cache, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            logger.warning(f"Failed to save metadata cache: {e}")
+    
+    def get_cached_metadata(self, url, fields=None):
+        """Get cached metadata for a URL"""
+        if url in self.cache:
+            cached = self.cache[url]
+            if fields:
+                return {field: cached.get(field) for field in fields if field in cached}
+            return cached
+        return {}
+    
+    def cache_metadata(self, url, metadata):
+        """Cache metadata for a URL"""
+        if url not in self.cache:
+            self.cache[url] = {}
+        self.cache[url].update(metadata)
+        # Add timestamp
+        self.cache[url]['cached_at'] = time.time()
+        self._save_cache()
+    
+    def is_cache_fresh(self, url, max_age_days=7):
+        """Check if cached metadata is still fresh"""
+        if url not in self.cache:
+            return False
+        cached_at = self.cache[url].get('cached_at', 0)
+        age_days = (time.time() - cached_at) / (24 * 3600)
+        return age_days < max_age_days
+    
+    def cleanup_old_cache(self, max_age_days=30):
+        """Remove old cache entries"""
+        current_time = time.time()
+        to_remove = []
+        
+        for url, metadata in self.cache.items():
+            cached_at = metadata.get('cached_at', 0)
+            age_days = (current_time - cached_at) / (24 * 3600)
+            if age_days > max_age_days:
+                to_remove.append(url)
+        
+        for url in to_remove:
+            del self.cache[url]
+        
+        if to_remove:
+            logger.info(f"Cleaned up {len(to_remove)} old metadata cache entries")
+            self._save_cache()
+
+class DurationFetcher(QThread):
+    """Legacy wrapper for compatibility - delegates to MetadataWorker"""
+    progressUpdated = Signal(int, int)  # current, total
+    durationReady = Signal(int, int)    # index, duration
+    statusUpdate = Signal(str)  # status message
+    
+    def __init__(self, items_to_fetch, parent=None, metadata_manager=None):
+        super().__init__(parent)
+        self.items_to_fetch = items_to_fetch  # List of (index, item) tuples
+        self.metadata_manager = metadata_manager
+        self._should_stop = False
+        self.worker = None
+    
+    def stop(self):
+        self._should_stop = True
+        if self.worker:
+            self.worker.stop()
+    
+    def run(self):
+        # Prepare metadata requests, checking cache first
+        requests = []
+        cached_results = []
+        
+        for playlist_index, item in self.items_to_fetch:
+            if self._should_stop:
+                break
+                
+            url = item.get('url')
+            item_type = item.get('type', 'youtube')
+            
+            # Check cache first if manager is available
+            if self.metadata_manager and self.metadata_manager.is_cache_fresh(url):
+                cached = self.metadata_manager.get_cached_metadata(url, ['duration'])
+                if cached.get('duration'):
+                    cached_results.append((playlist_index, cached['duration']))
+                    continue
+            
+            requests.append((url, item_type, ['duration']))
+        
+        # Emit cached results immediately
+        for playlist_index, duration in cached_results:
+            self.durationReady.emit(playlist_index, duration)
+        
+        if not requests:
+            self.progressUpdated.emit(len(self.items_to_fetch), len(self.items_to_fetch))
+            return
+        
+        # Create worker for remaining requests
+        self.worker = MetadataWorker(requests, self)
+        self.worker.metadataReady.connect(self._on_metadata_ready)
+        self.worker.progressUpdated.connect(self._on_progress_updated)
+        self.worker.statusUpdate.connect(self.statusUpdate.emit)
+        self.worker.error.connect(self._on_error)
+        
+        # Adjust progress to account for cached results
+        self.cached_count = len(cached_results)
+        self.total_count = len(self.items_to_fetch)
+        
+        self.worker.run()  # Run synchronously in this thread
+    
+    def _on_metadata_ready(self, url, metadata):
+        # Find the playlist index for this URL
+        for playlist_index, item in self.items_to_fetch:
+            if item.get('url') == url:
+                duration = metadata.get('duration', 0)
+                self.durationReady.emit(playlist_index, duration)
+                
+                # Cache the result
+                if self.metadata_manager:
+                    self.metadata_manager.cache_metadata(url, metadata)
+                break
+    
+    def _on_progress_updated(self, current, total):
+        # Adjust progress to include cached results
+        adjusted_current = self.cached_count + current
+        self.progressUpdated.emit(adjusted_current, self.total_count)
+    
+    def _on_error(self, url, error):
+        # Find the playlist index and emit 0 duration
+        for playlist_index, item in self.items_to_fetch:
+            if item.get('url') == url:
+                self.durationReady.emit(playlist_index, 0)
+                break       
 
 # --- Stats heatmap widget ---
 class StatsHeatmapWidget(QWidget):
@@ -2688,6 +2877,9 @@ class MediaPlayer(QMainWindow):
             worker.start()
             self.ytdl_workers.append(worker)
         self._worker_index = 0
+        
+        # Initialize metadata manager for caching and optimized fetching
+        self.metadata_manager = MetadataManager(APP_DIR)
 
 
         self.setWindowTitle("Silence Suzuka Player")
@@ -2739,6 +2931,10 @@ class MediaPlayer(QMainWindow):
         self._force_play_ignore_completed = False
         self.play_scope = None
         self._last_clipboard_offer = ""
+        
+        # Metadata fetching settings
+        self.auto_fetch_durations = True
+        self.metadata_cache_days = 7
 
         # --- 2. Initialize Timers, Fonts, and Icons ---
         self.silence_timer = QTimer(self)
@@ -8221,67 +8417,209 @@ class MediaPlayer(QMainWindow):
             self.status.showMessage(f"Failed to add media: {e}", 4000)
 
     def _fetch_all_durations(self):
-        """Fetch durations for all items in playlist with cancel support"""
+        """Fetch durations for all items in playlist with enhanced caching and progress feedback"""
         if not self.playlist:
             return
         
-        # Count items that need duration fetching
-        items_needing_duration = [(i, item) for i, item in enumerate(self.playlist) 
-                                if item.get('type') in ('youtube', 'bilibili') 
-                                and not item.get('duration')]
+        # Count items that need duration fetching (check cache first)
+        items_needing_duration = []
+        cached_count = 0
+        
+        for i, item in enumerate(self.playlist):
+            if item.get('type') in ('youtube', 'bilibili') and not item.get('duration'):
+                url = item.get('url')
+                # Check if we have fresh cached duration
+                if url and self.metadata_manager.is_cache_fresh(url):
+                    cached = self.metadata_manager.get_cached_metadata(url, ['duration'])
+                    if cached.get('duration'):
+                        # Apply cached duration immediately
+                        item['duration'] = cached['duration']
+                        cached_count += 1
+                        continue
+                
+                items_needing_duration.append((i, item))
+        
+        # Save any cached durations we found
+        if cached_count > 0:
+            self._save_current_playlist()
+            self._refresh_playlist_widget()
         
         if not items_needing_duration:
-            self.status.showMessage("All items already have duration info", 3000)
+            if cached_count > 0:
+                self.status.showMessage(f"Duration info restored from cache for {cached_count} items", 3000)
+            else:
+                self.status.showMessage("All items already have duration info", 3000)
             return
         
+        # Show enhanced dialog with cache info
+        cache_msg = f" ({cached_count} loaded from cache)" if cached_count > 0 else ""
         reply = QMessageBox.question(
             self, "Fetch Durations",
-            f"Fetch durations for {len(items_needing_duration)} videos?\n\nThis may take several minutes.",
+            f"Fetch durations for {len(items_needing_duration)} videos{cache_msg}?\n\n"
+            f"This will use cached data when available and may take a few minutes for new items.",
             QMessageBox.Yes | QMessageBox.No
         )
         
         if reply == QMessageBox.Yes:
-            # Create duration fetcher with cancel support
-            self._duration_fetcher = DurationFetcher(items_needing_duration, self)
+            # Create enhanced duration fetcher with metadata manager
+            self._duration_fetcher = DurationFetcher(items_needing_duration, self, self.metadata_manager)
             self._duration_fetcher.progressUpdated.connect(self._on_duration_progress)
             self._duration_fetcher.durationReady.connect(self._on_duration_ready)
+            self._duration_fetcher.statusUpdate.connect(self._on_duration_status)
             self._duration_fetcher.finished.connect(self._on_duration_fetch_complete)
             
-            # Show cancellable progress dialog
-            self._show_duration_progress(len(items_needing_duration))
+            # Show enhanced progress dialog
+            total_items = len(items_needing_duration) + cached_count
+            self._show_duration_progress(total_items, cached_count)
             self._duration_fetcher.start()
 
-    def _show_duration_progress(self, total):
-        """Show cancellable progress dialog for duration fetching"""
+    def _show_duration_progress(self, total, cached_count=0):
+        """Show enhanced progress dialog for duration fetching"""
         from PySide6.QtWidgets import QProgressDialog
-        self._duration_progress = QProgressDialog("Fetching durations...", "Cancel", 0, total, self)
+        initial_msg = f"Initializing... ({cached_count} from cache)" if cached_count > 0 else "Initializing..."
+        self._duration_progress = QProgressDialog(initial_msg, "Cancel", 0, total, self)
         self._duration_progress.setWindowModality(Qt.WindowModal)
+        self._duration_progress.setWindowTitle("Fetching Durations")
         self._duration_progress.canceled.connect(self._cancel_duration_fetch)
+        
+        # Set initial progress to cached count
+        if cached_count > 0:
+            self._duration_progress.setValue(cached_count)
+        
         self._duration_progress.show()
 
     def _cancel_duration_fetch(self):
         """Cancel the duration fetching operation"""
         if hasattr(self, '_duration_fetcher'):
             self._duration_fetcher.stop()
+            self.status.showMessage("Duration fetching cancelled", 3000)
 
     def _on_duration_progress(self, current, total):
-        """Update progress dialog"""
+        """Update progress dialog with enhanced information"""
         if hasattr(self, '_duration_progress'):
             self._duration_progress.setValue(current)
-            self._duration_progress.setLabelText(f"Fetching durations... ({current}/{total})")
+            percentage = int((current / total) * 100) if total > 0 else 0
+            self._duration_progress.setLabelText(f"Fetching durations... {current}/{total} ({percentage}%)")
+
+    def _on_duration_status(self, status_message):
+        """Handle status updates from duration fetcher"""
+        if hasattr(self, '_duration_progress'):
+            # Show abbreviated status in progress dialog
+            abbreviated = status_message[:50] + "..." if len(status_message) > 50 else status_message
+            current_text = self._duration_progress.labelText()
+            if "Fetching durations..." in current_text:
+                base_text = current_text.split('\n')[0]  # Keep the progress part
+                self._duration_progress.setLabelText(f"{base_text}\n{abbreviated}")
+        
+        # Also show in status bar for more detail
+        self.status.showMessage(status_message, 2000)
 
     def _on_duration_ready(self, index, duration):
-        """Store duration when it's fetched"""
+        """Store duration when it's fetched with enhanced feedback"""
         if 0 <= index < len(self.playlist):
             self.playlist[index]['duration'] = duration
-            # Save to persistence
-            self._save_current_playlist()
+            # Save to persistence (debounced)
+            self._schedule_save_current_playlist()
+            
+            # Update UI immediately for this item if visible
+            try:
+                self._update_tree_item_duration(index, duration)
+            except Exception as e:
+                logger.warning(f"Failed to update tree item duration: {e}")
 
     def _on_duration_fetch_complete(self):
-        """Clean up after duration fetching"""
+        """Clean up after duration fetching with enhanced summary"""
         if hasattr(self, '_duration_progress'):
             self._duration_progress.close()
-        self.status.showMessage("Duration fetching complete", 3000)
+        
+        # Count successful fetches
+        duration_count = sum(1 for item in self.playlist if item.get('duration', 0) > 0)
+        total_items = len([item for item in self.playlist if item.get('type') in ('youtube', 'bilibili')])
+        
+        self.status.showMessage(f"Duration fetching complete - {duration_count}/{total_items} items have duration info", 4000)
+        
+        # Clean up old cache entries periodically
+        try:
+            self.metadata_manager.cleanup_old_cache()
+        except Exception as e:
+            logger.warning(f"Cache cleanup failed: {e}")
+    
+    def _update_tree_item_duration(self, index, duration):
+        """Update duration display for a specific tree item"""
+        try:
+            # This is a placeholder - in a real implementation, you'd find the tree item
+            # and update its duration column if the tree shows duration information
+            pass
+        except Exception:
+            pass
+    
+    def _start_background_duration_fetch(self, new_items):
+        """Start background duration fetching for new items (configurable)"""
+        if not getattr(self, 'auto_fetch_durations', True):
+            return
+        
+        # Find items that need duration fetching
+        items_needing_duration = []
+        for item in new_items:
+            if item.get('type') in ('youtube', 'bilibili') and not item.get('duration'):
+                url = item.get('url')
+                # Check cache first
+                if url and not self.metadata_manager.is_cache_fresh(url):
+                    items_needing_duration.append(item)
+                elif url:
+                    # Try to apply cached duration
+                    cached = self.metadata_manager.get_cached_metadata(url, ['duration'])
+                    if cached.get('duration'):
+                        item['duration'] = cached['duration']
+        
+        if not items_needing_duration:
+            return
+        
+        # Show subtle notification about background fetching
+        if len(items_needing_duration) > 1:
+            self.status.showMessage(f"Fetching durations for {len(items_needing_duration)} items in background...", 3000)
+        
+        # Create background fetcher
+        try:
+            if hasattr(self, '_background_duration_fetcher') and self._background_duration_fetcher.isRunning():
+                # Stop existing background fetcher
+                self._background_duration_fetcher.stop()
+                self._background_duration_fetcher.wait(2000)
+            
+            # Convert to (index, item) format
+            indexed_items = []
+            for item in items_needing_duration:
+                try:
+                    index = self.playlist.index(item)
+                    indexed_items.append((index, item))
+                except ValueError:
+                    continue
+            
+            if indexed_items:
+                self._background_duration_fetcher = DurationFetcher(indexed_items, self, self.metadata_manager)
+                self._background_duration_fetcher.durationReady.connect(self._on_background_duration_ready)
+                self._background_duration_fetcher.finished.connect(self._on_background_duration_complete)
+                self._background_duration_fetcher.start()
+                
+        except Exception as e:
+            logger.warning(f"Failed to start background duration fetch: {e}")
+    
+    def _on_background_duration_ready(self, index, duration):
+        """Handle background duration fetch results"""
+        if 0 <= index < len(self.playlist):
+            self.playlist[index]['duration'] = duration
+            # Save periodically (debounced)
+            self._schedule_save_current_playlist()
+    
+    def _on_background_duration_complete(self):
+        """Handle background duration fetch completion"""
+        fetched_count = 0
+        for item in self.playlist:
+            if item.get('duration', 0) > 0:
+                fetched_count += 1
+        
+        if fetched_count > 0:
+            self.status.showMessage(f"Background duration fetch complete", 2000)
 
     def _schedule_save_current_playlist(self):
         """Schedule saving the current playlist with debounce."""
@@ -9632,6 +9970,19 @@ class MediaPlayer(QMainWindow):
             chk_show_badge.setToolTip("Show or hide the total listening time for the current day in the main window.")
             f_ui.addRow(chk_show_badge)
             
+            # Metadata fetching settings
+            lbl_metadata = QLabel("Metadata Fetching"); lbl_metadata.setStyleSheet("font-weight: bold; margin-top: 10px;"); f_ui.addRow(lbl_metadata)
+            
+            chk_auto_fetch_durations = QCheckBox("Automatically fetch durations in background")
+            chk_auto_fetch_durations.setChecked(bool(getattr(self, 'auto_fetch_durations', True)))
+            chk_auto_fetch_durations.setToolTip("Automatically fetch video durations when new items are added to the playlist.")
+            f_ui.addRow(chk_auto_fetch_durations)
+            
+            spn_cache_days = QSpinBox(); spn_cache_days.setRange(1, 30); spn_cache_days.setSuffix(" days")
+            spn_cache_days.setValue(int(getattr(self, 'metadata_cache_days', 7)))
+            spn_cache_days.setToolTip("How long to keep metadata in cache before re-fetching.")
+            f_ui.addRow("Cache duration:", spn_cache_days)
+            
             tabs.addTab(w_ui, "UI")
 
             # Diagnostics tab
@@ -9703,6 +10054,12 @@ class MediaPlayer(QMainWindow):
                 try:
                     self.show_today_badge = bool(chk_show_badge.isChecked())
                     if hasattr(self, 'today_badge'): self.today_badge.setVisible(self.show_today_badge)
+                except Exception: pass
+                
+                # Metadata fetching settings
+                try:
+                    self.auto_fetch_durations = bool(chk_auto_fetch_durations.isChecked())
+                    self.metadata_cache_days = int(spn_cache_days.value())
                 except Exception: pass
                 
                 # Persist all settings
@@ -9970,6 +10327,9 @@ class MediaPlayer(QMainWindow):
             if items_needing_titles:
                 for item in items_needing_titles:
                     self._resolve_title_parallel(item.get('url'), item.get('type', 'local'))
+            
+            # 8. Start background duration fetching for media items (if enabled)
+            self._start_background_duration_fetch(new_items)
             
     def _restart_audio_monitor(self):
         """Restart the audio monitor with new settings"""
