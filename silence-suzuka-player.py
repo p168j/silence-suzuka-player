@@ -4054,7 +4054,7 @@ class MediaPlayer(QMainWindow):
         self.playlist_tree.setFont(self._font_serif_no_size(italic=True, bold=True))
 
         # --- ADD THESE LINES FOR ICON SIZE AND ROW HEIGHT ---
-        self.playlist_tree.setIconSize(QSize(28, 28))  
+        self.playlist_tree.setIconSize(QSize(24, 24))  
 
         # Apply custom style ONLY for dark theme (let vinyl use system default)
         # We'll apply this properly after theme loads in _load_files()
@@ -4063,7 +4063,7 @@ class MediaPlayer(QMainWindow):
         self.playlist_stack.addWidget(self.playlist_tree)
 
          # --- ADD THESE LINES FOR ICON SIZE AND ROW HEIGHT ---
-        self.playlist_tree.setIconSize(QSize(28, 28))  
+        self.playlist_tree.setIconSize(QSize(24, 24))  
 
         self.playing_delegate = PlayingItemDelegate(self)
         self.playlist_tree.setItemDelegate(self.playing_delegate)
@@ -4184,7 +4184,7 @@ class MediaPlayer(QMainWindow):
             self.up_next.setFont(self._font_serif_no_size(italic=True, bold=True))
             self.up_next.setAlternatingRowColors(True)
             self.up_next.setIndentation(12)
-            self.up_next.setIconSize(QSize(28, 28))
+            self.up_next.setIconSize(QSize(24, 24))
             self.up_next.setContextMenuPolicy(Qt.CustomContextMenu)
             self.up_next.customContextMenuRequested.connect(self._show_up_next_menu)
             self.up_next.itemDoubleClicked.connect(self._on_up_next_double_clicked)
@@ -5236,7 +5236,12 @@ class MediaPlayer(QMainWindow):
         QSlider::sub-page:horizontal { background-color: #e76f51; border-radius: 3px; }
         #timeLabel, #durLabel { font-family: '{self._ui_font}'; font-size: 13px; color: #b3b3b3; }
         #silenceIndicator { color: #e76f51; font-size: 18px; margin: 0 8px; padding-bottom: 3px; }
-        #upNext::item { min-height: 28px; height: 28px; padding: 6px 12px; }
+        #upNext::item { 
+            min-height: 26px;        /* Slightly smaller */
+            height: 26px; 
+            padding: 5px 8px;        /* Tighter padding */
+            line-height: 1.3;        /* Add consistent line height */
+        }
         #upNext::item:hover { background-color: rgba(255, 85, 85, 0.08); }
         #upNext::item:selected { background-color: #e76f51; color: #f3f3f3; }
         #upNext { 
@@ -5554,10 +5559,11 @@ class MediaPlayer(QMainWindow):
         #miniBtn:pressed { color: #654321; }
         #playlistTree { background-color: transparent; border: none; color: #4a2c2a; font-family: '{self._serif_font}'; alternate-background-color: #f0e7cf; margin-left: 8px; }
         #playlistTree::item {
-            min-height: 32px;
-            height: 32px;
-            padding: 8px 16px 8px 12px;
-            color: #3b2d1a;
+            min-height: 30px;        /* Reduced from 32px */
+            height: 30px;            /* Reduced from 32px */
+            padding: 6px 12px 6px 8px;  /* Tighter: 6px vertical, 8px left (was 8px, 12px) */
+            color: #3d2318;          /* Warmer brown (was #3b2d1a) */
+            line-height: 1.3;        /* Add this line for tighter text */
         }
 
         /* NEW: Add this rule for the playing item border */
@@ -5644,7 +5650,16 @@ class MediaPlayer(QMainWindow):
         QTabBar::tab:hover { background-color: #f0e7cf; }
         #upNext { font-family: '{self._serif_font}'; alternate-background-color: #f0e7cf; }
         #timeLabel, #durLabel { font-family: '{self._ui_font}'; font-size: 13px; color: #654321; }
-        QLineEdit#searchBar { background-color: #f0e7cf; border: 1px solid #c2a882; border-radius: 6px; padding: 4px 8px; margin: 8px 0; color: #4a2c2a; selection-background-color: #e76f51; }
+        QLineEdit#searchBar { 
+            background-color: #f0e7cf; 
+            border: 1px solid #c2a882; 
+            border-radius: 6px; 
+            padding: 6px 10px;              /* Slightly more comfortable */
+            margin: 10px 0;                 /* More breathing room */
+            color: #3d2318;                 /* Warmer text color */
+            selection-background-color: #e76f51;
+            font-size: 13px;                /* Ensure readable size */
+        }
         /* REMOVED: #emptyStateIcon, #emptyStateHeading, #emptyStateSubheading - let _update_widget_themes() handle them */
         #addMediaBtn {
         background-color: #e76f51;
@@ -5688,14 +5703,15 @@ class MediaPlayer(QMainWindow):
     font-weight: bold;
     }
     #libraryHeader {
-    background: #4a2c2a;
-    color: #f3ead3;
-    font-weight: 600;
-    padding: 8px 16px 8px 20px;
-    min-height: 32px;
-    border-top-left-radius: 8px;
-    border-top-right-radius: 8px;
-    font-family: '{self._serif_font}';
+        background: #4a2c2a;
+        color: #f3ead3;
+        font-weight: 600;
+        padding: 12px 16px 12px 20px;  /* Increased from 8px to 12px vertical */
+        min-height: 36px;              /* Increased from 32px to 36px */
+        border-top-left-radius: 8px;
+        border-top-right-radius: 8px;
+        font-family: '{self._serif_font}';
+        margin-bottom: 4px;            /* Add space below header */
     }
     #addMediaContainer {
         max-width: 220px;
@@ -7199,12 +7215,12 @@ class MediaPlayer(QMainWindow):
                         original_text = original_text[2:]
 
                     if idx == self.current_index:
-                        # --- THIS IS THE FIX ---
-                        # ALWAYS add the '▶' symbol to the current item,
-                        # regardless of whether the player is paused or active.
-                        # This ensures the session restore state is visually correct.
                         item.setText(0, f"▶ {original_text}")
                         item.setFont(0, playing_font)
+                        text_color = QColor("#d1603f")      # Slightly deeper orange
+                        item.setForeground(0, text_color)
+                        # Add subtle background highlight
+                        item.setBackground(0, QColor(231, 111, 81, 25))  # Very subtle orange background
 
                         # Set the theme-appropriate highlight color
                         text_color = QColor("#e76f51") # Same for both themes
