@@ -3515,6 +3515,10 @@ class MediaPlayer(QMainWindow):
 
     def _handle_item_change(self, item):
         """Handle item change with proper debouncing and cleanup"""
+        # Only process top-level items (not child items)
+        if item and item.parent() is not None:
+            return
+            
         # Only process if this is genuinely a different item
         if item == self._scroll_item:
             return
