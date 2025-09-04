@@ -165,55 +165,94 @@ class MiniPlayer(QWidget):
         self._drag_pos = None
 
     def _setup_ui(self):
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(6)
+        # Overall horizontal layout
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(8, 8, 8, 8)
+        main_layout.setSpacing(10)
 
-        # 1. Track Title (stretches to fill space)
+        # 1. Left side: Thumbnail
+        self.thumbnail_label = QLabel()
+        self.thumbnail_label.setFixedSize(48, 48)
+        self.thumbnail_label.setObjectName("miniPlayerThumbnail")
+        self.thumbnail_label.setStyleSheet("background-color: #1a1a1a; border-radius: 4px;")
+        main_layout.addWidget(self.thumbnail_label)
+
+        # 2. Center column: Title and controls
+        center_widget = QWidget()
+        center_layout = QVBoxLayout(center_widget)
+        center_layout.setContentsMargins(0, 0, 0, 0)
+        center_layout.setSpacing(0)
+
         self.track_title = QLabel("No Track Playing")
         self.track_title.setObjectName("miniPlayerTitle")
-        layout.addWidget(self.track_title, 1) # The '1' makes it stretch
+        self.track_title.setAlignment(Qt.AlignCenter)
+        center_layout.addWidget(self.track_title)
 
-        # 2. Control Buttons
-        self.prev_btn = QPushButton("⏮")
-        self.play_pause_btn = QPushButton("▶")
-        self.next_btn = QPushButton("⏭")
-        
-        # A button to return to the main window
+        # --- IMPROVED Controls Layout ---
+        controls_layout = QHBoxLayout()
+        self.prev_btn = QPushButton("")
+        self.play_pause_btn = QPushButton("")
+        self.next_btn = QPushButton("")
+
+        # Set different sizes for visual hierarchy
+        self.prev_btn.setFixedSize(28, 28)
+        self.play_pause_btn.setFixedSize(40, 40) # Larger play/pause button
+        self.next_btn.setFixedSize(28, 28)
+
+        # Add stretch on both sides to force the buttons to the center
+        controls_layout.addStretch()
+        for btn in [self.prev_btn, self.play_pause_btn, self.next_btn]:
+            btn.setObjectName("miniPlayerButton")
+            controls_layout.addWidget(btn)
+        controls_layout.addStretch()
+        # --- END IMPROVED Controls Layout ---
+
+        center_layout.addLayout(controls_layout)
+        main_layout.addWidget(center_widget, 1)
+
+        # 3. Right side: Show Main Player button
         self.show_main_btn = QPushButton("⏏️") 
         self.show_main_btn.setToolTip("Show Full Player")
-
-        for btn in [self.prev_btn, self.play_pause_btn, self.next_btn, self.show_main_btn]:
-            btn.setObjectName("miniPlayerButton")
-            btn.setFixedSize(32, 32)
-            layout.addWidget(btn)
+        self.show_main_btn.setObjectName("miniPlayerButton")
+        self.show_main_btn.setFixedSize(32, 32)
+        main_layout.addWidget(self.show_main_btn)
 
     def _apply_theme(self):
-        # We can reuse the main app's theme for consistency
-        theme_style = """
-            QWidget {{
-                background-color: #2a2a2a;
-                color: #f3f3f3;
-                border-radius: 8px;
-            }}
-            #miniPlayerTitle {{
-                font-weight: bold;
-            }}
-            #miniPlayerButton {{
-                background: transparent;
-                border: none;
-                font-size: 16px;
-            }}
-            #miniPlayerButton:hover {{
-                background-color: rgba(255, 255, 255, 0.1);
-                border-radius: 16px;
-            }}
-            #miniPlayerButton:pressed {{
-                background-color: rgba(255, 255, 255, 0.2);
-            }}
-        """
+        # Check the main player's theme
+        if self.main_player.theme == 'vinyl':
+            # Vinyl theme QSS
+            theme_style = """
+                QWidget {
+                    background-color: #f3ead3;
+                    color: #4a2c2a;
+                    border-radius: 8px;
+                    border: 1px solid #c2a882;
+                }
+                #miniPlayerTitle { font-weight: bold; }
+                #miniPlayerButton:hover {
+                    background-color: rgba(0, 0, 0, 0.05);
+                    border-radius: 16px;
+                }
+                #miniPlayerButton:pressed { background-color: rgba(0, 0, 0, 0.1); }
+            """
+        else:
+            # Dark theme QSS (your original style)
+            theme_style = """
+                QWidget {
+                    background-color: #2a2a2a;
+                    color: #f3f3f3;
+                    border-radius: 8px;
+                }
+                #miniPlayerTitle { font-weight: bold; }
+                #miniPlayerButton { background: transparent; border: none; }
+                #miniPlayerButton:hover {
+                    background-color: rgba(255, 255, 255, 0.1);
+                    border-radius: 16px;
+                }
+                #miniPlayerButton:pressed { background-color: rgba(255, 255, 255, 0.2); }
+            """
         self.setStyleSheet(theme_style)
-
+        
     # --- Methods for dragging the frameless window ---
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -231,11 +270,31 @@ class MiniPlayer(QWidget):
     def update_track_title(self, title):
         # We'll wire this up later
         self.track_title.setText(title)
-
     def update_playback_state(self, is_playing):
-        # We'll wire this up later
-        self.play_pause_btn.setText("❚❚" if is_playing else "▶")
+        # This method now sets ICONS instead of text
+        is_dark = self.main_player.theme == 'dark'
+        if is_playing:
+            # Use the main player's loaded pause icon
+            self.play_pause_btn.setIcon(self.main_player._pause_icon_normal)
+        else:
+            # Use the main player's loaded play icon
+            self.play_pause_btn.setIcon(self.main_player._play_icon_normal)
 
+        # Also set prev/next icons, which might change with the theme
+        self.prev_btn.setIcon(self.main_player.prev_icon_dark if is_dark else self.main_player.prev_icon_vinyl)
+        self.next_btn.setIcon(self.main_player.next_icon_dark if is_dark else self.main_player.next_icon_vinyl)
+
+        # Apply the theme again to refresh button styles if needed
+        self._apply_theme()
+
+    def update_thumbnail(self, pixmap):
+        if not pixmap.isNull():
+            # Scale the pixmap to fit the label while keeping aspect ratio
+            scaled_pixmap = pixmap.scaled(self.thumbnail_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            self.thumbnail_label.setPixmap(scaled_pixmap)
+        else:
+            # Clear the thumbnail if an empty pixmap is received
+            self.thumbnail_label.clear()
 
 class PlaylistMetadataWidget(QWidget):
     """Widget to display playlist metadata in a card-like format"""
@@ -2666,7 +2725,7 @@ class PlaylistLoaderThread(QThread):
         ydl_opts = {
             'quiet': True,
             'no_warnings': True,
-            'extract_flat': True,
+            'extract_flat': False,
             'skip_download': True,
             'socket_timeout': 60,
             'retries': 3,
@@ -3510,8 +3569,12 @@ class ScrollingTreeWidget(QTreeWidget):
 
 # --- Player ---
 class MediaPlayer(QMainWindow):
+    playbackStateChanged = Signal(bool)  # Emits True for playing, False for paused
+    trackChanged = Signal(str)           # Emits the new track title
+
     requestTimerSignal = Signal(int, object)
     statusMessageSignal = Signal(str, int)
+    trackThumbnailReady = Signal(QPixmap)
     
     def __init__(self):
         super().__init__()
@@ -3602,6 +3665,15 @@ class MediaPlayer(QMainWindow):
         self._last_clipboard_offer = ""
 
         # --- 2. Initialize Timers, Fonts, and Icons ---
+
+        self.tray_click_timer = QTimer(self)
+        self.tray_click_timer.setSingleShot(True)
+        # When this timer finishes, it will call the toggle_play_pause function
+        self.tray_click_timer.timeout.connect(lambda: (
+            print("[DEBUG] Tray single-click timer fired! Calling toggle_play_pause..."),
+            self.toggle_play_pause()
+        ))
+
         self.silence_timer = QTimer(self)
         self.silence_timer.timeout.connect(self._update_silence_tooltip)
         self.silence_timer.start(1000)
@@ -4818,6 +4890,7 @@ class MediaPlayer(QMainWindow):
         top.addWidget(self.theme_btn)
         
         self._update_top_bar_icons()
+        if hasattr(self, 'mini_player') and self.mini_player: self.mini_player._apply_theme()
         
         root.addLayout(top)
         
@@ -5280,14 +5353,37 @@ class MediaPlayer(QMainWindow):
 
     def _toggle_mini_player(self):
         """Hides the main window and shows the mini-player."""
-        # Create the mini-player instance on the first click
         if not hasattr(self, 'mini_player') or not self.mini_player:
             self.mini_player = MiniPlayer(main_player_instance=self)
 
-            # --- Connect the mini-player's buttons back to our main player ---
-            # This allows the mini-player to control the main app
+            # Connect buttons
+            self.mini_player.play_pause_btn.clicked.connect(self.toggle_play_pause)
+            self.mini_player.next_btn.clicked.connect(self.next_track)
+            self.mini_player.prev_btn.clicked.connect(self.previous_track)
             self.mini_player.show_main_btn.clicked.connect(self._show_main_player_from_mini)
-            # We will connect the other buttons (play, next, etc.) later.
+
+            # Connect state signals
+            self.playbackStateChanged.connect(self.mini_player.update_playback_state)
+            self.trackChanged.connect(self.mini_player.update_track_title)
+            self.trackThumbnailReady.connect(self.mini_player.update_thumbnail) # <-- ADD THIS LINE
+
+        # Immediately sync the mini-player with the current state
+        self.mini_player.update_playback_state(self._is_playing())
+        if 0 <= self.current_index < len(self.playlist):
+            item = self.playlist[self.current_index]
+            self.mini_player.update_track_title(item.get('title', 'Unknown'))
+            # --- Trigger initial thumbnail update ---
+            thumb_url = item.get('thumbnail')
+            if thumb_url:
+                fetcher = ThumbnailFetcher(thumb_url, self)
+                fetcher.thumbnailReady.connect(self.mini_player.update_thumbnail)
+                fetcher.start()
+            else:
+                self.mini_player.update_thumbnail(QPixmap())
+            # --- End initial thumbnail update ---
+        else:
+            self.mini_player.update_track_title("No Track Playing")
+            self.mini_player.update_thumbnail(QPixmap())
 
         self.hide()
         self.mini_player.show()
@@ -7024,17 +7120,22 @@ class MediaPlayer(QMainWindow):
         self.tray_icon.show()
 
     def _on_tray_activated(self, reason):
-        # NEW: Handle single-click to toggle play/pause
-        if reason == QSystemTrayIcon.Trigger: # This is a single left-click
-            self.toggle_play_pause()
+        # On a single-click, don't act immediately. Start a timer instead.
+        if reason == QSystemTrayIcon.Trigger:
+            # --- THIS IS THE FIX ---
+            # Use the direct and reliable method to get the double-click interval
+            delay = QApplication.doubleClickInterval()
+            self.tray_click_timer.start(delay)
 
-        # Keep the existing double-click logic to show/hide the window
+        # On a double-click, cancel the pending single-click action and do the double-click action.
         elif reason == QSystemTrayIcon.DoubleClick:
+            self.tray_click_timer.stop() # This prevents the play/pause
+            # Now, show or hide the window
             if self.isVisible():
                 self.hide()
             else:
                 self._show_player()
-
+                
     def _setup_button_animations(self):
         """Button feedback with proper circular glow"""
         try:
@@ -10464,6 +10565,20 @@ class MediaPlayer(QMainWindow):
             
             # --- Determine resume position ---
             item = self.playlist[self.current_index]
+            self.trackChanged.emit(item.get('title', 'Unknown'))
+            try:
+                thumb_url = item.get('thumbnail')
+                if thumb_url:
+                    fetcher = ThumbnailFetcher(thumb_url, self)
+                    # When the fetcher is done, it will emit its own signal.
+                    # We connect that to our new main player signal.
+                    fetcher.thumbnailReady.connect(self.trackThumbnailReady.emit)
+                    fetcher.start()
+                else:
+                    # If there's no thumbnail, emit an empty pixmap to clear the old one
+                    self.trackThumbnailReady.emit(QPixmap())
+            except Exception as e:
+                logger.error(f"Failed to start thumbnail fetcher: {e}")
             url = item.get('url')
             key = self._canonical_url_key(url) if url else None
             resume_ms = int(self.playback_positions.get(key, self.playback_positions.get(url, 0))) if url else 0
@@ -10576,6 +10691,7 @@ class MediaPlayer(QMainWindow):
             # # DEBUG removed
             self._update_silence_indicator()
         self._update_tray()
+        self.playbackStateChanged.emit(self._is_playing())
 
     def _toggle_shuffle(self):
         self.shuffle_mode = self.shuffle_btn.isChecked()
