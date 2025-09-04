@@ -3598,6 +3598,8 @@ class MediaPlayer(QMainWindow):
     
     def __init__(self):
         super().__init__()
+        self.is_playlist_collapsed = False  # Tracks the state of the playlist
+        self._setup_keyboard_shortcuts()  # Call to setup hotkeys
 
         # --- 1. LOAD ALL THREE ICONS HERE ---
         # This replaces the previous icon loading logic for the tray.
@@ -3927,20 +3929,16 @@ class MediaPlayer(QMainWindow):
         #    we do nothing, even though the system is silent.
 
     def _collapse_all_groups(self):
-        """Collapses all top-level group items in the playlist tree."""
-        try:
-            self.playlist_tree.collapseAll()
-            self.status.showMessage("All groups collapsed", 2000)
-        except Exception as e:
-            logger.error(f"Failed to collapse groups: {e}")
+        # Example of collapsing the playlist tree
+        for i in range(self.playlist_tree.topLevelItemCount()):
+            item = self.playlist_tree.topLevelItem(i)
+            item.setExpanded(False)
 
     def _expand_all_groups(self):
-        """Expands all top-level group items in the playlist tree."""
-        try:
-            self.playlist_tree.expandAll()
-            self.status.showMessage("All groups expanded", 2000)
-        except Exception as e:
-            logger.error(f"Failed to expand groups: {e}")    
+        # Example of expanding the playlist tree
+        for i in range(self.playlist_tree.topLevelItemCount()):
+            item = self.playlist_tree.topLevelItem(i)
+            item.setExpanded(True)
 
     def _resolve_title_parallel(self, url, kind):
         """Distribute title resolution across multiple workers"""
@@ -11787,7 +11785,8 @@ class MediaPlayer(QMainWindow):
             self._search_timer.start(delay)
             
         except Exception as e:
-            print(f"Schedule search filter error: {e}")
+            pass
+    
 
     def _on_search_text_changed(self, text):
         """Simplified search with better Japanese support"""
@@ -11902,6 +11901,17 @@ class MediaPlayer(QMainWindow):
             # Playlist navigation
             QShortcut(QKeySequence(Qt.Key_Home), self, self._navigate_to_top)
             QShortcut(QKeySequence(Qt.Key_End), self, self._navigate_to_bottom)
+
+            # Add the hotkey 'C' for collapsing and expanding the playlist
+            QShortcut(QKeySequence("C"), self, self._toggle_playlist)
+            
+    def _toggle_playlist(self):
+        # Toggle between collapse and expand
+        if self.is_playlist_collapsed:
+            self._expand_all_groups()
+        else:
+            self._collapse_all_groups()
+        self.is_playlist_collapsed = not self.is_playlist_collapsed               
             
     def _toggle_mute(self):
         """Toggles the player's mute status."""
