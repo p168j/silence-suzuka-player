@@ -4893,23 +4893,27 @@ class MediaPlayer(QMainWindow):
         self.load_btn.setObjectName('miniBtn')
         self.load_btn.setToolTip("Load saved playlist")
         self.load_btn.clicked.connect(self.load_playlist_dialog) 
-        self.save_btn.setIconSize(self.sidebar_icon_size) 
-        self.save_btn.setFixedSize(52, 44)  # Much larger for easier clicking
+        self.load_btn.setIconSize(self.sidebar_icon_size)
+        self.load_btn.setFixedSize(52, 44)                  
 
         self.duration_btn = QPushButton()
         self.duration_btn.setIcon(load_svg_icon(str(APP_DIR / 'icons/duration.svg'), self.sidebar_icon_size))
         self.duration_btn.setObjectName('miniBtn')
         self.duration_btn.setToolTip("Fetch all durations")
         self.duration_btn.clicked.connect(self._fetch_all_durations)
-        self.save_btn.setIconSize(self.sidebar_icon_size) 
-        self.save_btn.setFixedSize(52, 44)  # Much larger for easier clicking
+        self.duration_btn.setIconSize(self.sidebar_icon_size) 
+        self.duration_btn.setFixedSize(52, 44)                  
 
         self.unwatched_btn = QPushButton()
         self.unwatched_btn.setObjectName('miniBtn')
         self.unwatched_btn.setCheckable(True)
         self.unwatched_btn.setFixedSize(36, 28)
-        self.save_btn.setIconSize(self.sidebar_icon_size) 
-        self.save_btn.setFixedSize(52, 44)  # Much larger for easier clicking
+        self.unwatched_btn.setIconSize(self.sidebar_icon_size) 
+        self.unwatched_btn.setFixedSize(52, 44)                  
+
+        self.unwatched_btn = QPushButton()
+        self.unwatched_btn.setObjectName('miniBtn')
+        self.unwatched_btn.setCheckable(True)
 
         try:
             # CORRECT FILENAMES for eye icons
@@ -4918,7 +4922,6 @@ class MediaPlayer(QMainWindow):
             if eye_on_path.exists() and eye_off_path.exists():
                 self._unwatched_icon_on = QIcon(str(eye_on_path))
                 self._unwatched_icon_off = QIcon(str(eye_off_path))
-                self.unwatched_btn.setIconSize(QSize(18, 18))
                 self.unwatched_btn.setText("")
             else:
                 raise FileNotFoundError("Eye icons not found")
@@ -4926,6 +4929,10 @@ class MediaPlayer(QMainWindow):
             self._unwatched_icon_on = None
             self._unwatched_icon_off = None
             self.unwatched_btn.setText("👁")
+        
+        # --- ADD THESE LINES FOR CONSISTENT SIZING ---
+        self.unwatched_btn.setIconSize(self.sidebar_icon_size)
+        self.unwatched_btn.setFixedSize(52, 44)
 
         self.unwatched_btn.setToolTip("")
         self.unwatched_btn.toggled.connect(self._toggle_unwatched_only)
@@ -5469,7 +5476,7 @@ class MediaPlayer(QMainWindow):
                 self.unwatched_btn.setText("")  # icon-only
                 # Ensure icon is sized for alignment
                 try:
-                    self.unwatched_btn.setIconSize(QSize(18, 18))
+                    self.unwatched_btn.setIconSize(self.sidebar_icon_size)
                 except Exception:
                     pass
             else:
