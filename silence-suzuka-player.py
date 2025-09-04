@@ -5376,68 +5376,84 @@ class MediaPlayer(QMainWindow):
 
     def _toggle_mini_player(self):
         """Hides the main window and shows the mini-player."""
-        # Check if mini_player exists and create it if it doesn't
-        if not hasattr(self, 'mini_player') or not self.mini_player:
-            self.mini_player = MiniPlayer(main_player_instance=self)
-            
-            # Connect all the control buttons
-            self.mini_player.play_pause_btn.clicked.connect(self.toggle_play_pause)
-            self.mini_player.next_btn.clicked.connect(self.next_track)
-            self.mini_player.prev_btn.clicked.connect(self.previous_track)
-            self.mini_player.show_main_btn.clicked.connect(self._show_main_player_from_mini)
-            
-            # Connect state change signals
-            self.playbackStateChanged.connect(self.mini_player.update_playback_state)
-            self.trackChanged.connect(self.mini_player.update_track_title)
-            self.trackThumbnailReady.connect(self.mini_player.update_thumbnail)
-            self.positionChanged.connect(self.mini_player.update_progress)
-        
-        # Sync current state with mini player
-        self.mini_player.update_playback_state(self._is_playing())
-        
-        # Update track title
-        if 0 <= self.current_index < len(self.playlist):
-            item = self.playlist[self.current_index]
-            self.mini_player.update_track_title(item.get('title', 'Unknown'))
-        else:
-            self.mini_player.update_track_title("No Track Playing")
-        
-        # Update progress if playing
         try:
-            if hasattr(self, 'mpv') and self.mpv:
-                position_ms = int((self.mpv.time_pos or 0) * 1000)
-                duration_ms = int((self.mpv.duration or 0) * 1000)
-                self.mini_player.update_progress(position_ms, duration_ms)
-        except Exception:
-            pass
-        
-        # Position the mini player before showing
-        if hasattr(self, 'mini_player_pos'):
-            self.mini_player.move(self.mini_player_pos)
-        else:
-            # Position in top-right corner of screen by default
-            screen = QApplication.primaryScreen()
-            if screen:
-                screen_rect = screen.availableGeometry()
-                x = screen_rect.right() - self.mini_player.width() - 20
-                y = screen_rect.top() + 20
-                self.mini_player.move(x, y)
-        
-        # Hide main window and show mini player
-        self.hide()
-        self.mini_player.show()
-        self.mini_player.raise_()
-        self.mini_player.activateWindow()
+            # Debug output
+            print("[MINI PLAYER] Toggle mini player called")
+            
+            # Check if mini_player exists and create it if it doesn't
+            if not hasattr(self, 'mini_player') or not self.mini_player:
+                print("[MINI PLAYER] Creating new mini player instance")
+                self.mini_player = MiniPlayer(main_player_instance=self)
+                
+                # Connect all the control buttons
+                self.mini_player.play_pause_btn.clicked.connect(self.toggle_play_pause)
+                self.mini_player.next_btn.clicked.connect(self.next_track)
+                self.mini_player.prev_btn.clicked.connect(self.previous_track)
+                self.mini_player.show_main_btn.clicked.connect(self._show_main_player_from_mini)
+                
+                # Connect state change signals
+                self.playbackStateChanged.connect(self.mini_player.update_playback_state)
+                self.trackChanged.connect(self.mini_player.update_track_title)
+                self.trackThumbnailReady.connect(self.mini_player.update_thumbnail)
+                self.positionChanged.connect(self.mini_player.update_progress)
+                
+                print("[MINI PLAYER] Mini player created and signals connected")
+            
+            # Sync current state with mini player
+            self.mini_player.update_playback_state(self._is_playing())
+            
+            # Update track title
+            if 0 <= self.current_index < len(self.playlist):
+                item = self.playlist[self.current_index]
+                self.mini_player.update_track_title(item.get('title', 'Unknown'))
+            else:
+                self.mini_player.update_track_title("No Track Playing")
+            
+            # Update progress if playing
+            try:
+                if hasattr(self, 'mpv') and self.mpv:
+                    position_ms = int((self.mpv.time_pos or 0) * 1000)
+                    duration_ms = int((self.mpv.duration or 0) * 1000)
+                    self.mini_player.update_progress(position_ms, duration_ms)
+            except Exception as e:
+                print(f"[MINI PLAYER] Error updating progress: {e}")
+            
+            # Position the mini player before showing
+            if hasattr(self, 'mini_player_pos'):
+                self.mini_player.move(self.mini_player_pos)
+            else:
+                # Position in top-right corner of screen by default
+                screen = QApplication.primaryScreen()
+                if screen:
+                    screen_rect = screen.availableGeometry()
+                    x = screen_rect.right() - self.mini_player.width() - 20
+                    y = screen_rect.top() + 20
+                    self.mini_player.move(x, y)
+            
+            print("[MINI PLAYER] Hiding main window and showing mini player")
+            
+            # Hide main window and show mini player
+            self.hide()
+            self.mini_player.show()
+            self.mini_player.raise_()
+            self.mini_player.activateWindow()
+            
+            print("[MINI PLAYER] Mini player should now be visible")
+            
+        except Exception as e:
+            print(f"[MINI PLAYER] Error in _toggle_mini_player: {e}")
+            import traceback
+            traceback.print_exc()
+            QMessageBox.warning(self, "Mini Player Error", f"Failed to open mini player:\n{str(e)}")
+        def _show_main_player_from_mini(self):
+            """Hides the mini-player and shows the main window."""
+            if hasattr(self, 'mini_player') and self.mini_player:
+                # Save the mini-player's position for next time
+                self.mini_player_pos = self.mini_player.pos()
+                self.mini_player.hide()
 
-    def _show_main_player_from_mini(self):
-        """Hides the mini-player and shows the main window."""
-        if hasattr(self, 'mini_player') and self.mini_player:
-            # Save the mini-player's position for next time
-            self.mini_player_pos = self.mini_player.pos()
-            self.mini_player.hide()
-
-        # This is your existing helper method to show the main window correctly
-        self._show_player()
+            # This is your existing helper method to show the main window correctly
+            self._show_player()
 
 
     def _play_selected_group(self):
