@@ -148,128 +148,112 @@ def playlist_icon_for_type(item_type):
 class MiniPlayer(QWidget):
     def __init__(self, main_player_instance, parent=None):
         super().__init__(parent)
-        self.main_player = main_player_instance
-        self._drag_pos = None
+        self.main_player = main_player_instance  # A reference to the main app
 
+        # --- Window Flags ---
+        # Make it a frameless tool window that stays on top
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
-        self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setWindowTitle("Mini Player")
-        self.setMinimumSize(200, 280)
-        self.setMaximumSize(200, 280)
+        self.setAttribute(Qt.WA_TranslucentBackground) # Allows for rounded corners
 
+        # --- UI Setup ---
+        self.setWindowTitle("Mini Player")
+        self.resize(300, 60) # A small, compact size
         self._setup_ui()
         self._apply_theme()
 
+        # --- Dragging Logic ---
+        self._drag_pos = None
+
     def _setup_ui(self):
-        self.root_layout = QVBoxLayout(self)
-        self.root_layout.setContentsMargins(0, 0, 0, 0)
-        self.root_layout.setSpacing(0)
+        # Overall horizontal layout
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(8, 8, 8, 8)
+        main_layout.setSpacing(10)
 
-        self.content_widget = QWidget()
-        self.content_widget.setObjectName("contentWidget")
-        main_layout = QVBoxLayout(self.content_widget)
-        main_layout.setContentsMargins(12, 12, 12, 12)
-        main_layout.setSpacing(8)
-
+        # 1. Left side: Thumbnail
         self.thumbnail_label = QLabel()
-        self.thumbnail_label.setFixedSize(176, 99)
+        self.thumbnail_label.setFixedSize(48, 48)
         self.thumbnail_label.setObjectName("miniPlayerThumbnail")
-        self.thumbnail_label.setScaledContents(True)
-        main_layout.addWidget(self.thumbnail_label, 0, Qt.AlignCenter)
+        self.thumbnail_label.setStyleSheet("background-color: #1a1a1a; border-radius: 4px;")
+        main_layout.addWidget(self.thumbnail_label)
+
+        # 2. Center column: Title and controls
+        center_widget = QWidget()
+        center_layout = QVBoxLayout(center_widget)
+        center_layout.setContentsMargins(0, 0, 0, 0)
+        center_layout.setSpacing(0)
 
         self.track_title = QLabel("No Track Playing")
         self.track_title.setObjectName("miniPlayerTitle")
-        self.track_title.setWordWrap(True)
         self.track_title.setAlignment(Qt.AlignCenter)
-        main_layout.addWidget(self.track_title, 1)
+        center_layout.addWidget(self.track_title)
 
-        self.progress_bar = QSlider(Qt.Horizontal)
-        self.progress_bar.setObjectName("miniPlayerProgress")
-        self.progress_bar.setFixedHeight(8)
-        self.progress_bar.setEnabled(False)
-        main_layout.addWidget(self.progress_bar)
-
+        # --- IMPROVED Controls Layout ---
         controls_layout = QHBoxLayout()
         self.prev_btn = QPushButton("")
         self.play_pause_btn = QPushButton("")
         self.next_btn = QPushButton("")
-        self.show_main_btn = QPushButton("")
-        
+
+        # Set different sizes for visual hierarchy
         self.prev_btn.setFixedSize(28, 28)
-        self.play_pause_btn.setFixedSize(40, 40)
+        self.play_pause_btn.setFixedSize(40, 40) # Larger play/pause button
         self.next_btn.setFixedSize(28, 28)
-        self.show_main_btn.setFixedSize(28, 28)
-        
+
+        # Add stretch on both sides to force the buttons to the center
         controls_layout.addStretch()
-        for btn in [self.prev_btn, self.play_pause_btn, self.next_btn, self.show_main_btn]:
+        for btn in [self.prev_btn, self.play_pause_btn, self.next_btn]:
             btn.setObjectName("miniPlayerButton")
             controls_layout.addWidget(btn)
         controls_layout.addStretch()
-        main_layout.addLayout(controls_layout)
+        # --- END IMPROVED Controls Layout ---
 
-        self.root_layout.addWidget(self.content_widget)
+        center_layout.addLayout(controls_layout)
+        main_layout.addWidget(center_widget, 1)
+
+        # 3. Right side: Show Main Player button
+        self.show_main_btn = QPushButton("⏏️") 
+        self.show_main_btn.setToolTip("Show Full Player")
+        self.show_main_btn.setObjectName("miniPlayerButton")
+        self.show_main_btn.setFixedSize(32, 32)
+        main_layout.addWidget(self.show_main_btn)
 
     def _apply_theme(self):
-        is_dark = self.main_player.theme == 'dark'
-        bg_color = "#2a2a2a" if is_dark else "#f3ead3"
-        text_color = "#f3f3f3" if is_dark else "#4a2c2a"
-        hover_bg = "rgba(255, 255, 255, 0.1)" if is_dark else "rgba(0, 0, 0, 0.05)"
-        thumb_bg = "#1a1a1a" if is_dark else "#e9e0c8"
-        progress_groove = "#4a4a4a" if is_dark else "#c2a882"
-        progress_handle = "#e76f51"
-
-        theme_style = f"""
-            #contentWidget {{ background-color: {bg_color}; border-radius: 8px; }}
-            #miniPlayerTitle {{ color: {text_color}; font-weight: bold; }}
-            #miniPlayerThumbnail {{ background-color: {thumb_bg}; border-radius: 4px; border: 1px solid {progress_groove}; }}
-            #miniPlayerButton {{ border: none; background: transparent; }}
-            #miniPlayerButton:hover {{ background-color: {hover_bg}; border-radius: 14px; }}
-            #miniPlayerProgress::groove:horizontal {{ background-color: {progress_groove}; height: 4px; border-radius: 2px; }}
-            #miniPlayerProgress::handle:horizontal {{ background-color: transparent; width: 0px; }}
-            #miniPlayerProgress::sub-page:horizontal {{ background-color: {progress_handle}; border-radius: 2px; }}
-        """
+        # Check the main player's theme
+        if self.main_player.theme == 'vinyl':
+            # Vinyl theme QSS
+            theme_style = """
+                QWidget {
+                    background-color: #f3ead3;
+                    color: #4a2c2a;
+                    border-radius: 8px;
+                    border: 1px solid #c2a882;
+                }
+                #miniPlayerTitle { font-weight: bold; }
+                #miniPlayerButton:hover {
+                    background-color: rgba(0, 0, 0, 0.05);
+                    border-radius: 16px;
+                }
+                #miniPlayerButton:pressed { background-color: rgba(0, 0, 0, 0.1); }
+            """
+        else:
+            # Dark theme QSS (your original style)
+            theme_style = """
+                QWidget {
+                    background-color: #2a2a2a;
+                    color: #f3f3f3;
+                    border-radius: 8px;
+                }
+                #miniPlayerTitle { font-weight: bold; }
+                #miniPlayerButton { background: transparent; border: none; }
+                #miniPlayerButton:hover {
+                    background-color: rgba(255, 255, 255, 0.1);
+                    border-radius: 16px;
+                }
+                #miniPlayerButton:pressed { background-color: rgba(255, 255, 255, 0.2); }
+            """
         self.setStyleSheet(theme_style)
-        self.update_playback_state(self.main_player._is_playing())
-
-    def update_thumbnail(self, pixmap):
-        if not pixmap.isNull():
-            scaled = pixmap.scaled(self.thumbnail_label.size(), Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-            self.thumbnail_label.setPixmap(scaled)
-        else:
-            self.thumbnail_label.clear()
-            self.thumbnail_label.setText("?")
-
-    def update_track_title(self, title):
-        fm = self.track_title.fontMetrics()
-        elided_title = fm.elidedText(title, Qt.ElideRight, self.track_title.width())
-        self.track_title.setText(elided_title)
-
-    def update_playback_state(self, is_playing):
-        is_dark = self.main_player.theme == 'dark'
-        icon_size_main, icon_size_small = QSize(24, 24), QSize(16, 16)
-
-        self.play_pause_btn.setIcon(self.main_player._pause_icon_normal if is_playing else self.main_player._play_icon_normal)
-        self.play_pause_btn.setIconSize(icon_size_main)
-
-        self.prev_btn.setIcon(self.main_player.prev_icon_dark if is_dark else self.main_player.prev_icon_vinyl)
-        self.next_btn.setIcon(self.main_player.next_icon_dark if is_dark else self.main_player.next_icon_vinyl)
-        self.prev_btn.setIconSize(icon_size_small)
-        self.next_btn.setIconSize(icon_size_small)
         
-        show_main_color = "#f3f3f3" if is_dark else "#4a2c2a"
-        self.show_main_btn.setToolTip("Show Full Player")
-        
-        # Use the app icon as a reliable fallback to exit the mini player
-        icon_path = APP_DIR / 'icons/app-icon.svg'
-        if icon_path.exists():
-            self.show_main_btn.setIcon(QIcon(_render_svg_tinted(str(icon_path), icon_size_small, show_main_color)))
-        else:
-            self.show_main_btn.setText("⤢") # Fallback text
-
-    def update_progress(self, position_ms, duration_ms):
-        self.progress_bar.setRange(0, duration_ms if duration_ms > 0 else 100)
-        self.progress_bar.setValue(position_ms)
-
+    # --- Methods for dragging the frameless window ---
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
             self._drag_pos = event.globalPosition().toPoint()
@@ -301,7 +285,7 @@ class MiniPlayer(QWidget):
         self.next_btn.setIcon(self.main_player.next_icon_dark if is_dark else self.main_player.next_icon_vinyl)
 
         # Apply the theme again to refresh button styles if needed
-        # self._apply_theme()
+        self._apply_theme()
 
     def update_thumbnail(self, pixmap):
         if not pixmap.isNull():
@@ -2770,7 +2754,7 @@ class PlaylistLoaderThread(QThread):
         try:
             if info is None:
                 self.itemsReady.emit([]); return
-            
+            # If this is a playlist with 'entries'
             if isinstance(info, dict) and info.get('entries'):
                 playlist_title = info.get('title') or self.url
                 entries = list(info.get('entries') or [])
@@ -2782,34 +2766,20 @@ class PlaylistLoaderThread(QThread):
                     u = entry.get('webpage_url') or entry.get('url') or idv
                     if not u:
                         continue
-                    
+                    # Normalize to full URL when extractor returns IDs only
                     if self.kind == 'bilibili' and not (u.startswith('http://') or u.startswith('https://')):
                         u = f"https://www.bilibili.com/video/{idv or u}"
                     if self.kind == 'youtube' and not (u.startswith('http://') or u.startswith('https://')):
                         u = f"https://www.youtube.com/watch?v={idv or u}"
                     title = entry.get('title') or u
-                    
-                    thumbnail_url = None
-                    if 'thumbnails' in entry and entry['thumbnails']:
-                        thumbnail_url = entry['thumbnails'][-1].get('url') # Get the best quality
-                    elif 'thumbnail' in entry:
-                        thumbnail_url = entry.get('thumbnail')
-
-                    chunk.append({
-                        'title': title, 'url': u, 'type': self.kind, 
-                        'playlist': playlist_title, 'playlist_key': info.get('id') or self.url,
-                        'thumbnail': thumbnail_url
-                    })
-                self.itemsReady.emit(chunk)
+                    chunk.append({'title': title, 'url': u, 'type': self.kind, 'playlist': playlist_title, 'playlist_key': info.get('id') or self.url})
+                    if len(chunk) >= 25:
+                        self.itemsReady.emit(chunk); chunk = []
+                if chunk:
+                    self.itemsReady.emit(chunk)
             else:
-                thumbnail_url = None
-                if isinstance(info, dict):
-                    if 'thumbnails' in info and info['thumbnails']:
-                        thumbnail_url = info['thumbnails'][-1].get('url')
-                    elif 'thumbnail' in info:
-                        thumbnail_url = info.get('thumbnail')
-                
-                self.itemsReady.emit([{'title': info.get('title') or self.url, 'url': self.url, 'type': self.kind, 'thumbnail': thumbnail_url}])
+                # Single video fallback
+                self.itemsReady.emit([{'title': info.get('title') or self.url, 'url': self.url, 'type': self.kind}])
         except Exception as e:
             self.error.emit(str(e)); return
 
@@ -3601,8 +3571,6 @@ class ScrollingTreeWidget(QTreeWidget):
 class MediaPlayer(QMainWindow):
     playbackStateChanged = Signal(bool)  # Emits True for playing, False for paused
     trackChanged = Signal(str)           # Emits the new track title
-    trackThumbnailReady = Signal(QPixmap)
-    positionChanged = Signal(int, int) 
 
     requestTimerSignal = Signal(int, object)
     statusMessageSignal = Signal(str, int)
@@ -3807,15 +3775,7 @@ class MediaPlayer(QMainWindow):
         self._undo_stack = []  # Stack of undo operations
         self._max_undo_operations = 10  # Limit undo history
 
-    def _show_main_player_from_mini(self):
-        """Hides the mini-player and shows the main window."""
-        if hasattr(self, 'mini_player') and self.mini_player:
-            # Save the mini-player's position for next time
-            self.mini_player_pos = self.mini_player.pos()
-            self.mini_player.hide()
 
-        # This is your existing helper method to show the main window correctly
-        self._show_player()
 
     def _update_top_bar_icons(self):
         """Loads and tints the top bar icons to match the current theme."""
@@ -4900,14 +4860,14 @@ class MediaPlayer(QMainWindow):
         self.stats_btn.setObjectName('settingsBtn')
         self.stats_btn.setToolTip("Listening Statistics")
         self.stats_btn.setIconSize(self.top_bar_icon_size)
-        self.stats_btn.setFixedSize(48, 44)  
+        self.stats_btn.setFixedSize(48, 44)  # Much larger button container
         self.stats_btn.clicked.connect(self.open_stats)
         
         self.settings_btn = QPushButton()
         self.settings_btn.setObjectName('settingsBtn')
         self.settings_btn.setToolTip("Settings")
         self.settings_btn.setIconSize(self.top_bar_icon_size)
-        self.settings_btn.setFixedSize(48, 44) 
+        self.stats_btn.setFixedSize(48, 44)  # Much larger button container
         self.settings_btn.clicked.connect(self.open_settings_tabs)
     
         top.addWidget(self.stats_btn)
@@ -4917,7 +4877,7 @@ class MediaPlayer(QMainWindow):
         self.mini_player_btn.setObjectName('settingsBtn')
         self.mini_player_btn.setToolTip("Switch to Mini Player")
         self.mini_player_btn.setIconSize(self.top_bar_icon_size)
-        self.mini_player_btn.setFixedSize(48, 44) 
+        self.stats_btn.setFixedSize(48, 44)  # Much larger button container
         self.mini_player_btn.clicked.connect(self._toggle_mini_player)
         top.addWidget(self.mini_player_btn)
 
@@ -4925,7 +4885,7 @@ class MediaPlayer(QMainWindow):
         self.theme_btn.setObjectName('settingsBtn')
         self.theme_btn.setToolTip("Toggle Theme")
         self.theme_btn.setIconSize(self.top_bar_icon_size)
-        self.theme_btn.setFixedSize(48, 44)  
+        self.stats_btn.setFixedSize(48, 44)  # Much larger button container
         # self.theme_btn.clicked.connect(self.toggle_theme)
         top.addWidget(self.theme_btn)
         
@@ -5393,73 +5353,50 @@ class MediaPlayer(QMainWindow):
 
     def _toggle_mini_player(self):
         """Hides the main window and shows the mini-player."""
-        try:
-            # Create the mini_player instance and connect signals ONCE.
-            if not hasattr(self, 'mini_player') or not self.mini_player:
-                self.mini_player = MiniPlayer(main_player_instance=self)
-                
-                # Connect all the control buttons
-                self.mini_player.play_pause_btn.clicked.connect(self.toggle_play_pause)
-                self.mini_player.next_btn.clicked.connect(self.next_track)
-                self.mini_player.prev_btn.clicked.connect(self.previous_track)
-                self.mini_player.show_main_btn.clicked.connect(self._show_main_player_from_mini)
-                
-                # Connect state change signals
-                self.playbackStateChanged.connect(self.mini_player.update_playback_state)
-                self.trackChanged.connect(self.mini_player.update_track_title)
-                self.trackThumbnailReady.connect(self.mini_player.update_thumbnail)
-                self.positionChanged.connect(self.mini_player.update_progress)
-            
-            # --- ALWAYS SYNC STATE WHEN SHOWING ---
-            
-            # Sync playback state, theme, and title
-            self.mini_player._apply_theme() # Re-apply theme in case it changed
-            if 0 <= self.current_index < len(self.playlist):
-                item = self.playlist[self.current_index]
-                self.mini_player.update_track_title(item.get('title', 'Unknown'))
-            else:
-                self.mini_player.update_track_title("No Track Playing")
+        if not hasattr(self, 'mini_player') or not self.mini_player:
+            self.mini_player = MiniPlayer(main_player_instance=self)
 
-            # Manually trigger thumbnail update for the current track
-            if 0 <= self.current_index < len(self.playlist):
-                current_item = self.playlist[self.current_index]
-                thumb_url = current_item.get('thumbnail')
-                if thumb_url and HAVE_REQUESTS:
-                    fetcher = ThumbnailFetcher(thumb_url, self)
-                    fetcher.thumbnailReady.connect(self.mini_player.update_thumbnail)
-                    fetcher.start()
-                else:
-                    self.mini_player.update_thumbnail(QPixmap())
+            # Connect buttons
+            self.mini_player.play_pause_btn.clicked.connect(self.toggle_play_pause)
+            self.mini_player.next_btn.clicked.connect(self.next_track)
+            self.mini_player.prev_btn.clicked.connect(self.previous_track)
+            self.mini_player.show_main_btn.clicked.connect(self._show_main_player_from_mini)
+
+            # Connect state signals
+            self.playbackStateChanged.connect(self.mini_player.update_playback_state)
+            self.trackChanged.connect(self.mini_player.update_track_title)
+            self.trackThumbnailReady.connect(self.mini_player.update_thumbnail) # <-- ADD THIS LINE
+
+        # Immediately sync the mini-player with the current state
+        self.mini_player.update_playback_state(self._is_playing())
+        if 0 <= self.current_index < len(self.playlist):
+            item = self.playlist[self.current_index]
+            self.mini_player.update_track_title(item.get('title', 'Unknown'))
+            # --- Trigger initial thumbnail update ---
+            thumb_url = item.get('thumbnail')
+            if thumb_url:
+                fetcher = ThumbnailFetcher(thumb_url, self)
+                fetcher.thumbnailReady.connect(self.mini_player.update_thumbnail)
+                fetcher.start()
             else:
                 self.mini_player.update_thumbnail(QPixmap())
-            
-            # Update progress bar
-            try:
-                if hasattr(self, 'mpv') and self.mpv:
-                    position_ms = int((self.mpv.time_pos or 0) * 1000)
-                    duration_ms = int((self.mpv.duration or 0) * 1000)
-                    self.mini_player.update_progress(position_ms, duration_ms)
-            except Exception:
-                pass
-            
-            # Position the mini player
-            if hasattr(self, 'mini_player_pos'):
-                self.mini_player.move(self.mini_player_pos)
-            else:
-                screen = self.screen() or QApplication.primaryScreen()
-                if screen:
-                    screen_rect = screen.availableGeometry()
-                    x = screen_rect.right() - self.mini_player.width() - 20
-                    y = screen_rect.top() + 20
-                    self.mini_player.move(x, y)
-            
-            self.hide()
-            self.mini_player.show()
-            self.mini_player.raise_()
-            self.mini_player.activateWindow()
-            
-        except Exception as e:
-            QMessageBox.warning(self, "Mini Player Error", f"Failed to open mini player:\n{str(e)}")
+            # --- End initial thumbnail update ---
+        else:
+            self.mini_player.update_track_title("No Track Playing")
+            self.mini_player.update_thumbnail(QPixmap())
+
+        self.hide()
+        self.mini_player.show()
+
+    def _show_main_player_from_mini(self):
+        """Hides the mini-player and shows the main window."""
+        if hasattr(self, 'mini_player') and self.mini_player:
+            # Save the mini-player's position for next time
+            self.mini_player_pos = self.mini_player.pos()
+            self.mini_player.hide()
+
+        # This is your existing helper method to show the main window correctly
+        self._show_player()
 
 
     def _play_selected_group(self):
@@ -10631,15 +10568,17 @@ class MediaPlayer(QMainWindow):
             self.trackChanged.emit(item.get('title', 'Unknown'))
             try:
                 thumb_url = item.get('thumbnail')
-                if thumb_url and HAVE_REQUESTS:
+                if thumb_url:
                     fetcher = ThumbnailFetcher(thumb_url, self)
+                    # When the fetcher is done, it will emit its own signal.
+                    # We connect that to our new main player signal.
                     fetcher.thumbnailReady.connect(self.trackThumbnailReady.emit)
                     fetcher.start()
                 else:
+                    # If there's no thumbnail, emit an empty pixmap to clear the old one
                     self.trackThumbnailReady.emit(QPixmap())
             except Exception as e:
                 logger.error(f"Failed to start thumbnail fetcher: {e}")
-
             url = item.get('url')
             key = self._canonical_url_key(url) if url else None
             resume_ms = int(self.playback_positions.get(key, self.playback_positions.get(url, 0))) if url else 0
@@ -10857,8 +10796,6 @@ class MediaPlayer(QMainWindow):
         # Update tray and silence indicator visibility based on current playback state
         self._update_tray()
         self.update_badge()
-        try: self.positionChanged.emit(self._last_play_pos_ms, int((self.mpv.duration or 0) * 1000))
-        except Exception: pass
 
         # Adaptive save intervals based on content and activity
         if self._is_playing() and 0 <= self.current_index < len(self.playlist):
