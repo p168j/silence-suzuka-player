@@ -3550,8 +3550,40 @@ class MediaPlayer(QMainWindow):
 
         self._undo_stack = []  # Stack of undo operations
         self._max_undo_operations = 10  # Limit undo history
+
+    def on_silence_detected(self):
+        """
+        Plays media only if auto-play is enabled AND the system has been silent
+        AND the user has been RECENTLY ACTIVE.
+        """
+        afk_monitor = getattr(self, 'afk_monitor', None)
+
+        # 1. Initial checks: Is auto-play on? Is something already playing? Is there a playlist?
+        if not self.auto_play_enabled or self._is_playing() or not self.playlist or not afk_monitor:
+            return
+
+        # 2. NEW: Define what "recently active" means. Let's say any input
+        #    within the last 90 seconds counts as active.
+        ACTIVE_THRESHOLD_SECONDS = 90
+
+        # 3. Get the time since the user's last input.
+        inactivity_duration = time.time() - afk_monitor.last_input_time
+
+        # 4. CORE LOGIC: If the user's last action was RECENT (i.e., less than our
+        #    threshold), it's safe to start playing.
+        if inactivity_duration < ACTIVE_THRESHOLD_SECONDS:
+            self.status.showMessage("Silence Detected, User is Active - Resuming", 4000)
+            
+            # If nothing was selected, start from the beginning of the current scope
+            if self.current_index == -1:
+                indices = self._scope_indices()
+                self.current_index = indices[0] if indices else 0
+            
+            self.play_current()
+            self._update_silence_indicator()
         
-        
+        # 5. ELSE: If the user has been inactive for a long time (truly AFK),
+        #    we do nothing, even though the system is silent.
 
     def _collapse_all_groups(self):
         """Collapses all top-level group items in the playlist tree."""
@@ -6905,7 +6937,7 @@ class MediaPlayer(QMainWindow):
             self.tray_icon = None
             return
         
-        icon = self.tray_icon_play 
+        icon = self.windowIcon() 
 
         self.tray_icon = QSystemTrayIcon(icon, self)
         self.tray_icon.setToolTip("Silence Suzuka Player")
@@ -7104,6 +7136,7 @@ class MediaPlayer(QMainWindow):
                 s = json.load(open(CFG_SETTINGS, 'r', encoding='utf-8'))
                 self.center_on_restore = bool(s.get('center_on_restore', True))
                 self.auto_play_enabled = bool(s.get('auto_play_enabled', self.auto_play_enabled))
+                self.smart_autostart_enabled = bool(s.get('smart_autostart_enabled', True))
                 self.afk_timeout_minutes = int(s.get('afk_timeout_minutes', self.afk_timeout_minutes))
                 self.silence_duration_s = float(s.get('silence_duration_s', self.silence_duration_s))
                 self.show_thumbnails = bool(s.get('show_thumbnails', self.show_thumbnails))
@@ -7288,6 +7321,7 @@ class MediaPlayer(QMainWindow):
     def _save_settings(self):
         s = {
             'auto_play_enabled': self.auto_play_enabled,
+            'smart_autostart_enabled': getattr(self, 'smart_autostart_enabled', True),
             'afk_timeout_minutes': self.afk_timeout_minutes,
             'silence_duration_s': self.silence_duration_s,
             'show_thumbnails': self.show_thumbnails,
@@ -10712,7 +10746,7 @@ class MediaPlayer(QMainWindow):
                 s_resume.setValue(float(getattr(self, 'resume_threshold', max(0.03, getattr(self, 'silence_threshold', 0.03) * 1.5))))
                 s_resume.setToolTip("Sound level required to exit the silent state. Should be slightly higher than the silence threshold.")
                 
-                s_silence = QDoubleSpinBox(); s_silence.setRange(0.5, 60.0); s_silence.setSingleStep(0.5); s_silence.setSuffix(" minutes")
+                s_silence = QDoubleSpinBox(); s_silence.setRange(0.1, 60.0); s_silence.setSingleStep(0.25); s_silence.setSuffix(" minutes")
                 s_silence.setValue(float(getattr(self, 'silence_duration_s', 300.0)) / 60.0)
                 s_silence.setToolTip("Duration of continuous silence required before auto-play is triggered.")
                 
@@ -10726,6 +10760,22 @@ class MediaPlayer(QMainWindow):
                 f_mon.addRow("Silence threshold:", s_threshold)
                 f_mon.addRow("Resume threshold:", s_resume)
                 f_mon.addRow("Auto-play after silence:", s_silence)
+
+                # Create the main auto-play checkbox that was defined earlier
+                f_mon.addRow(chk_auto)
+
+                # Create the NEW Smart Start checkbox
+                chk_smart_start = QCheckBox("Use Smart Start (Requires recent activity to play)")
+                chk_smart_start.setChecked(bool(getattr(self, 'smart_autostart_enabled', True)))
+                chk_smart_start.setToolTip("If enabled, auto-play will only trigger if you've recently used your mouse or keyboard.\nThis prevents playback when you are truly away from the computer.")
+
+                # Link its enabled state to the main auto-play checkbox
+                chk_smart_start.setEnabled(chk_auto.isChecked())
+                chk_auto.toggled.connect(chk_smart_start.setEnabled)
+
+                # Add the Smart Start checkbox to the layout
+                f_mon.addRow("", chk_smart_start)
+
                 f_mon.addRow(chk_auto)
             
             tabs.addTab(w_mon, "Audio Monitor")
@@ -10808,6 +10858,8 @@ class MediaPlayer(QMainWindow):
                     except Exception: pass
                     try: self.auto_play_enabled = bool(chk_auto.isChecked())
                     except Exception: pass
+                    try: self.smart_autostart_enabled = bool(chk_smart_start.isChecked())
+                    except Exception: pass
                     try:
                         if getattr(self, 'audio_monitor', None):
                             self.audio_monitor.update_settings(
@@ -10823,8 +10875,13 @@ class MediaPlayer(QMainWindow):
                     if hasattr(self, 'up_next_container'): self.up_next_container.setVisible(self.show_up_next)
                 except Exception: pass
                 try:
+                    # --- FIX: Save the expansion state BEFORE refreshing ---
+                    expansion_state = self._get_tree_expansion_state()
+
                     self.group_singles = bool(chk_group_singles.isChecked())
-                    self._refresh_playlist_widget()
+
+                    # --- FIX: Pass the state TO the refresh function ---
+                    self._refresh_playlist_widget(expansion_state=expansion_state)
                 except Exception: pass
                 try: self.center_on_restore = bool(chk_center_on_restore.isChecked())
                 except Exception: pass
@@ -11540,12 +11597,36 @@ class MediaPlayer(QMainWindow):
 
     # Silence + AFK handlers
     def on_silence_detected(self):
-        if self.auto_play_enabled and self.playlist and (not self._is_playing()):
+        afk_monitor = getattr(self, 'afk_monitor', None)
+
+        # Initial checks: Is auto-play on? Is something already playing? Is there a playlist?
+        if not self.auto_play_enabled or self._is_playing() or not self.playlist:
+            return
+
+        # Check if the "Smart Start" feature is enabled
+        if getattr(self, 'smart_autostart_enabled', True):
+            # --- SMART LOGIC: Silence + Recent Activity = Play ---
+            if not afk_monitor: return
+
+            
+            inactivity_duration = time.time() - afk_monitor.last_input_time
+
+            if inactivity_duration < self.silence_duration_s:
+                self.status.showMessage("Silence Detected, User is Active - Resuming", 4000)
+            else:
+                # User is silent AND inactive (truly AFK), so we do nothing.
+                return
+        else:
+            # --- SIMPLE LOGIC: Silence = Play ---
             self.status.showMessage("System silence detected - Resuming playback", 4000)
-            if self.current_index == -1:  # No current video selected
-                self.current_index = 0  # Default to the first video
-            self.play_current()  # Resume the current video
-            self._update_silence_indicator()
+
+        # This is the shared code that runs if the conditions are met
+        if self.current_index == -1:
+            indices = self._scope_indices()
+            self.current_index = indices[0] if indices else 0
+
+        self.play_current()
+        self._update_silence_indicator()
 
     def on_user_afk(self):
         if self._is_playing():
