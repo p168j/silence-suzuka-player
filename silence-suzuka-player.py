@@ -7962,6 +7962,21 @@ class MediaPlayer(QMainWindow):
         except Exception as e:
             print(f"Failed to apply dialog theme: {e}")
 
+    def _create_icon_action(self, text, icon_name, callback):
+        """Creates a QAction with an icon from the icons folder."""
+        try:
+            icon_path = APP_DIR / 'icons' / icon_name
+            icon = QIcon(str(icon_path)) if icon_path.exists() else QIcon()
+            action = QAction(icon, text, self)
+            action.triggered.connect(callback)
+            return action
+        except Exception as e:
+            logger.error(f"Failed to create icon action '{text}': {e}")
+            # Fallback to a text-only action
+            action = QAction(text, self)
+            action.triggered.connect(callback)
+            return action
+
     def _is_completed_url(self, url):
         try:
             if not url:
@@ -9844,10 +9859,7 @@ class MediaPlayer(QMainWindow):
                 menu.addAction("▶ Play").triggered.connect(lambda: self._play_index(idx))
                 menu.addAction("⭐ Play Next").triggered.connect(lambda i=idx: self._queue_item_next(i))
                 copy_action = menu.addAction("🔗 Copy URL")
-                copy_action.triggered.connect(lambda checked=False, u=url: (
-                    # DEBUG removed,
-                    self._copy_url(u)
-                )[1])
+                copy_action.triggered.connect(lambda checked=False, u=url: self._copy_url(u))
                 remove_action = self._create_icon_action("Remove", "trash.svg", lambda: self._remove_index(idx))
                 menu.addAction(remove_action)
                 menu.addSeparator()
