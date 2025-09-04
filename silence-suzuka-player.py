@@ -153,11 +153,11 @@ class MiniPlayer(QWidget):
         # --- Window Flags ---
         # Make it a frameless tool window that stays on top
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
-        self.setAttribute(Qt.WA_TranslucentBackground) # Allows for rounded corners
+        self.setAttribute(Qt.WA_TranslucentBackground)  # Allows for rounded corners
 
         # --- UI Setup ---
         self.setWindowTitle("Mini Player")
-        self.resize(300, 60) # A small, compact size
+        self.resize(300, 60)  # A small, compact size
         self._setup_ui()
         self._apply_theme()
 
@@ -186,6 +186,8 @@ class MiniPlayer(QWidget):
         self.track_title = QLabel("No Track Playing")
         self.track_title.setObjectName("miniPlayerTitle")
         self.track_title.setAlignment(Qt.AlignCenter)
+        self.track_title.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.track_title.setMaximumWidth(200)  # Set a maximum width for the title
         center_layout.addWidget(self.track_title)
 
         # --- IMPROVED Controls Layout ---
@@ -196,7 +198,7 @@ class MiniPlayer(QWidget):
 
         # Set different sizes for visual hierarchy
         self.prev_btn.setFixedSize(28, 28)
-        self.play_pause_btn.setFixedSize(40, 40) # Larger play/pause button
+        self.play_pause_btn.setFixedSize(40, 40)  # Larger play/pause button
         self.next_btn.setFixedSize(28, 28)
 
         # Add stretch on both sides to force the buttons to the center
@@ -211,7 +213,7 @@ class MiniPlayer(QWidget):
         main_layout.addWidget(center_widget, 1)
 
         # 3. Right side: Show Main Player button
-        self.show_main_btn = QPushButton("⏏️") 
+        self.show_main_btn = QPushButton("⏏️")
         self.show_main_btn.setToolTip("Show Full Player")
         self.show_main_btn.setObjectName("miniPlayerButton")
         self.show_main_btn.setFixedSize(32, 32)
@@ -252,7 +254,7 @@ class MiniPlayer(QWidget):
                 #miniPlayerButton:pressed { background-color: rgba(255, 255, 255, 0.2); }
             """
         self.setStyleSheet(theme_style)
-        
+
     # --- Methods for dragging the frameless window ---
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -268,8 +270,11 @@ class MiniPlayer(QWidget):
 
     # --- Placeholder slots for updating the UI ---
     def update_track_title(self, title):
-        # We'll wire this up later
-        self.track_title.setText(title)
+        # Use QFontMetrics to elide the text if it exceeds the maximum width
+        font_metrics = self.track_title.fontMetrics()
+        elided_title = font_metrics.elidedText(title, Qt.ElideRight, self.track_title.maximumWidth())
+        self.track_title.setText(elided_title)
+
     def update_playback_state(self, is_playing):
         # This method now sets ICONS instead of text
         is_dark = self.main_player.theme == 'dark'
