@@ -3373,6 +3373,25 @@ class MediaPlayer(QMainWindow):
     def __init__(self):
         super().__init__()
 
+        # --- 1. LOAD ALL THREE ICONS HERE ---
+        # This replaces the previous icon loading logic for the tray.
+        try:
+            # Main application icon (static)
+            self.app_icon = QIcon(str(APP_DIR / 'icons/app-icon.svg'))
+
+            # Tray icons (dynamic)
+            self.tray_icon_play = QIcon(str(APP_DIR / 'icons/tray-play.svg'))
+            self.tray_icon_pause = QIcon(str(APP_DIR / 'icons/tray-pause.svg'))
+        except Exception as e:
+            print(f"Error loading new icons: {e}")
+            # Provide a fallback if icons are missing
+            self.app_icon = QIcon()
+            self.tray_icon_play = QIcon()
+            self.tray_icon_pause = QIcon()
+
+        # Set the main window icon to the static headphones icon
+        self.setWindowIcon(self.app_icon)
+
         self._playlist_manager = None
 
         # Create 4 parallel workers for faster title resolution
@@ -6885,7 +6904,9 @@ class MediaPlayer(QMainWindow):
             print("⚠ System tray not available")
             self.tray_icon = None
             return
-        icon = self.tray_icon_play
+        
+        icon = self.tray_icon_play 
+
         self.tray_icon = QSystemTrayIcon(icon, self)
         self.tray_icon.setToolTip("Silence Suzuka Player")
         tray_menu = QMenu()
@@ -7057,12 +7078,19 @@ class MediaPlayer(QMainWindow):
     def _update_tray(self):
         if not getattr(self, 'tray_icon', None):
             return
+            
+        # --- 2. ADD THE SWITCHING LOGIC HERE ---
+        # This replaces the entire body of the original _update_tray method.
         if self._is_playing():
+            # If playing, set the tray icon to 'pause'
+            self.tray_icon.setIcon(self.tray_icon_pause)
             self.tray_play_pause.setText("Pause")
-            self.tray_icon.setIcon(self.tray_icon_pause) # Use the new white pause icon
         else:
+            # If not playing, set the tray icon to 'play'
+            self.tray_icon.setIcon(self.tray_icon_play)
             self.tray_play_pause.setText("Play")
-            self.tray_icon.setIcon(self.tray_icon_play) # Use the new white play icon
+        
+        # Update the tooltip as before
         if 0 <= self.current_index < len(self.playlist):
             self.tray_icon.setToolTip(f"Silence Suzuka Player\nNow Playing: {self.playlist[self.current_index].get('title','Unknown')}")
         else:
@@ -11910,6 +11938,7 @@ def main():
     app._main_window = w
     
     sys.exit(app.exec())
+
 
 if __name__ == '__main__':
     main()
