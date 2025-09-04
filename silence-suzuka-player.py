@@ -177,16 +177,24 @@ class MiniPlayer(QWidget):
         self.thumbnail_label.setStyleSheet("background-color: #1a1a1a; border-radius: 4px;")
         main_layout.addWidget(self.thumbnail_label)
 
-        # 2. Center column: Title and controls
+        # 2. Center column: Title, Duration, and controls
         center_widget = QWidget()
         center_layout = QVBoxLayout(center_widget)
         center_layout.setContentsMargins(0, 0, 0, 0)
-        center_layout.setSpacing(0)
+        center_layout.setSpacing(2)
 
+        # --- NEW: Title and Duration Layout ---
+        title_bar_layout = QHBoxLayout()
         self.track_title = QLabel("No Track Playing")
         self.track_title.setObjectName("miniPlayerTitle")
-        self.track_title.setAlignment(Qt.AlignCenter)
-        center_layout.addWidget(self.track_title)
+
+        self.track_duration = QLabel("")
+        self.track_duration.setObjectName("miniPlayerDuration")
+        self.track_duration.setStyleSheet("color: #999999; font-size: 11px; padding-right: 4px;")
+
+        title_bar_layout.addWidget(self.track_title, 1)
+        title_bar_layout.addWidget(self.track_duration)
+        center_layout.addLayout(title_bar_layout)
 
         # --- IMPROVED Controls Layout ---
         controls_layout = QHBoxLayout()
@@ -211,7 +219,7 @@ class MiniPlayer(QWidget):
         main_layout.addWidget(center_widget, 1)
 
         # 3. Right side: Show Main Player button
-        self.show_main_btn = QPushButton("⏏️") 
+        self.show_main_btn = QPushButton("🔼")
         self.show_main_btn.setToolTip("Show Full Player")
         self.show_main_btn.setObjectName("miniPlayerButton")
         self.show_main_btn.setFixedSize(32, 32)
@@ -295,6 +303,12 @@ class MiniPlayer(QWidget):
         else:
             # Clear the thumbnail if an empty pixmap is received
             self.thumbnail_label.clear()
+            
+    def update_track_duration(self, duration_ms):
+        if duration_ms > 0:
+            self.track_duration.setText(format_time(duration_ms))
+        else:
+            self.track_duration.setText("")
 
 class PlaylistMetadataWidget(QWidget):
     """Widget to display playlist metadata in a card-like format"""
@@ -2772,20 +2786,23 @@ class PlaylistLoaderThread(QThread):
                     if self.kind == 'youtube' and not (u.startswith('http://') or u.startswith('https://')):
                         u = f"https://www.youtube.com/watch?v={idv or u}"
                     title = entry.get('title') or u
-                    chunk.append({'title': title, 'url': u, 'type': self.kind, 'playlist': playlist_title, 'playlist_key': info.get('id') or self.url})
+                    thumbnail = entry.get('thumbnail') # Get the thumbnail URL
+                    chunk.append({'title': title, 'url': u, 'type': self.kind, 'playlist': playlist_title, 'playlist_key': info.get('id') or self.url, 'thumbnail': thumbnail})
                     if len(chunk) >= 25:
                         self.itemsReady.emit(chunk); chunk = []
                 if chunk:
                     self.itemsReady.emit(chunk)
             else:
                 # Single video fallback
-                self.itemsReady.emit([{'title': info.get('title') or self.url, 'url': self.url, 'type': self.kind}])
+                thumbnail = info.get('thumbnail')
+                self.itemsReady.emit([{'title': info.get('title') or self.url, 'url': self.url, 'type': self.kind, 'thumbnail': thumbnail}])
         except Exception as e:
             self.error.emit(str(e)); return
 
 class YtdlManager(QThread):
     """A persistent background thread to manage and reuse expensive yt-dlp instances."""
     titleResolved = Signal(str, str)  # url, title
+    thumbnailResolved = Signal(str, str) # url, thumbnail_url
     error = Signal(str)
 
     def __init__(self, parent=None):
@@ -2837,9 +2854,13 @@ class YtdlManager(QThread):
                 ydl = self.ydl_instances[kind]
                 info = ydl.extract_info(url, download=False)
                 
-                title = info.get('title') if isinstance(info, dict) else None
-                if title and title != url:
-                    self.titleResolved.emit(url, title)
+                if isinstance(info, dict):
+                    title = info.get('title')
+                    thumbnail = info.get('thumbnail')
+                    if title and title != url:
+                        self.titleResolved.emit(url, title)
+                    if thumbnail:
+                        self.thumbnailResolved.emit(url, thumbnail)
 
             except Exception as e:
                 logger.warning(f"[YtdlManager] Failed to resolve title for {url}: {e}")
@@ -3571,6 +3592,7 @@ class ScrollingTreeWidget(QTreeWidget):
 class MediaPlayer(QMainWindow):
     playbackStateChanged = Signal(bool)  # Emits True for playing, False for paused
     trackChanged = Signal(str)           # Emits the new track title
+    durationChanged = Signal(int)   
 
     requestTimerSignal = Signal(int, object)
     statusMessageSignal = Signal(str, int)
@@ -3605,9 +3627,11 @@ class MediaPlayer(QMainWindow):
         for i in range(4):
             worker = YtdlManager(self)
             worker.titleResolved.connect(self._on_title_resolved)
+            worker.thumbnailResolved.connect(self._on_thumbnail_resolved) 
             worker.error.connect(lambda e: print(f"Title resolution error: {e}"))
             worker.start()
             self.ytdl_workers.append(worker)
+
         self._worker_index = 0
         self._local_dur = LocalDurationQueue(self)
         self._local_dur.durationReady.connect(self._on_duration_ready)  # reuse existing slot
@@ -5356,34 +5380,42 @@ class MediaPlayer(QMainWindow):
         if not hasattr(self, 'mini_player') or not self.mini_player:
             self.mini_player = MiniPlayer(main_player_instance=self)
 
-            # Connect buttons
+            # --- Connect Buttons and Signals (Clear Version) ---
             self.mini_player.play_pause_btn.clicked.connect(self.toggle_play_pause)
             self.mini_player.next_btn.clicked.connect(self.next_track)
             self.mini_player.prev_btn.clicked.connect(self.previous_track)
             self.mini_player.show_main_btn.clicked.connect(self._show_main_player_from_mini)
 
-            # Connect state signals
+            # Connect state signals from the main player to the mini player's update methods
             self.playbackStateChanged.connect(self.mini_player.update_playback_state)
             self.trackChanged.connect(self.mini_player.update_track_title)
-            self.trackThumbnailReady.connect(self.mini_player.update_thumbnail) # <-- ADD THIS LINE
+            self.durationChanged.connect(self.mini_player.update_track_duration)
+            self.trackThumbnailReady.connect(self.mini_player.update_thumbnail)
 
-        # Immediately sync the mini-player with the current state
+        # --- Sync the mini-player with the current state ---
         self.mini_player.update_playback_state(self._is_playing())
+
         if 0 <= self.current_index < len(self.playlist):
             item = self.playlist[self.current_index]
             self.mini_player.update_track_title(item.get('title', 'Unknown'))
-            # --- Trigger initial thumbnail update ---
-            thumb_url = item.get('thumbnail')
-            if thumb_url:
-                fetcher = ThumbnailFetcher(thumb_url, self)
-                fetcher.thumbnailReady.connect(self.mini_player.update_thumbnail)
-                fetcher.start()
+            
+            # Set initial duration
+            duration_s = item.get('duration', 0)
+            self.mini_player.update_track_duration(int(duration_s * 1000) if duration_s > 0 else 0)
+
+            # --- FIX for Local File Thumbnails ---
+            if item.get('type') == 'local':
+                # For local files, show a generic icon instead of a thumbnail
+                local_icon_pixmap = playlist_icon_for_type('local').pixmap(QSize(48, 48))
+                self.mini_player.update_thumbnail(local_icon_pixmap)
             else:
-                self.mini_player.update_thumbnail(QPixmap())
-            # --- End initial thumbnail update ---
+                # For network files, trigger the normal thumbnail fetch
+                self._trigger_thumbnail_fetch_for_current_track()
         else:
+            # If nothing is playing, clear all fields
             self.mini_player.update_track_title("No Track Playing")
-            self.mini_player.update_thumbnail(QPixmap())
+            self.mini_player.update_track_duration(0)
+            self.mini_player.update_thumbnail(QPixmap()) # Clear thumbnail
 
         self.hide()
         self.mini_player.show()
@@ -6956,6 +6988,7 @@ class MediaPlayer(QMainWindow):
                     if dur_ms > 0:
                         self.progress.setRange(0, dur_ms)
                         self.dur_label.setText(format_time(dur_ms))
+                        self.durationChanged.emit(dur_ms)
                 except Exception:
                     pass
 
@@ -8305,6 +8338,52 @@ class MediaPlayer(QMainWindow):
             self._save_current_playlist()
         except Exception as e:
             print(f"Error updating title: {e}")
+
+    def _on_thumbnail_resolved(self, url: str, thumbnail_url: str):
+        """Stores the resolved thumbnail URL and triggers a fetch if it's for the current track."""
+        try:
+            item_updated = None
+            for item in self.playlist:
+                if item.get('url') == url:
+                    item['thumbnail'] = thumbnail_url
+                    item_updated = item
+                    break
+
+            if item_updated:
+                # If this is the current track, trigger the thumbnail image download
+                if 0 <= self.current_index < len(self.playlist) and self.playlist[self.current_index].get('url') == url:
+                    self._trigger_thumbnail_fetch_for_current_track()
+
+                self._save_current_playlist()
+        except Exception as e:
+            logger.error(f"Failed to process resolved thumbnail for {url}: {e}")
+
+    def _trigger_thumbnail_fetch_for_current_track(self):
+        """Fetches the thumbnail for the current track if a URL is available or can be resolved."""
+        if not (0 <= self.current_index < len(self.playlist)):
+            self.trackThumbnailReady.emit(QPixmap())
+            return
+
+        item = self.playlist[self.current_index]
+        thumb_url = item.get('thumbnail')
+
+        try:
+            if thumb_url:
+                fetcher = ThumbnailFetcher(thumb_url, self)
+                fetcher.thumbnailReady.connect(self.trackThumbnailReady.emit)
+                fetcher.start()
+            elif item.get('type') in ('youtube', 'bilibili'):
+                # Thumbnail URL is missing, so we ask the background worker for it.
+                logger.info(f"Thumbnail URL missing for '{item.get('title')}'. Fetching now.")
+                worker = self.ytdl_workers[self._worker_index]
+                worker.resolve(item.get('url'), item.get('type'))
+                self._worker_index = (self._worker_index + 1) % len(self.ytdl_workers)
+                self.trackThumbnailReady.emit(QPixmap()) # Clear old thumbnail
+            else:
+                self.trackThumbnailReady.emit(QPixmap())
+        except Exception as e:
+            logger.error(f"Failed to trigger thumbnail fetch: {e}")
+            self.trackThumbnailReady.emit(QPixmap())
 
     def _update_item_title(self, url: str, title: str):
         """Update item title with optimized tree search"""
@@ -10536,6 +10615,8 @@ class MediaPlayer(QMainWindow):
         # --- Defer highlight to ensure UI is ready ---
         QTimer.singleShot(100, self._highlight_current_row)
 
+        self._trigger_thumbnail_fetch_for_current_track()
+
     # Playback
     def play_current(self):
             if not (0 <= self.current_index < len(self.playlist)):
@@ -10566,19 +10647,8 @@ class MediaPlayer(QMainWindow):
             # --- Determine resume position ---
             item = self.playlist[self.current_index]
             self.trackChanged.emit(item.get('title', 'Unknown'))
-            try:
-                thumb_url = item.get('thumbnail')
-                if thumb_url:
-                    fetcher = ThumbnailFetcher(thumb_url, self)
-                    # When the fetcher is done, it will emit its own signal.
-                    # We connect that to our new main player signal.
-                    fetcher.thumbnailReady.connect(self.trackThumbnailReady.emit)
-                    fetcher.start()
-                else:
-                    # If there's no thumbnail, emit an empty pixmap to clear the old one
-                    self.trackThumbnailReady.emit(QPixmap())
-            except Exception as e:
-                logger.error(f"Failed to start thumbnail fetcher: {e}")
+            self._trigger_thumbnail_fetch_for_current_track()
+
             url = item.get('url')
             key = self._canonical_url_key(url) if url else None
             resume_ms = int(self.playback_positions.get(key, self.playback_positions.get(url, 0))) if url else 0
