@@ -62,87 +62,6 @@ from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter, QColor, QBrush
 from PySide6.QtWidgets import QGraphicsColorizeEffect
 from PySide6.QtWidgets import QStyleOptionViewItem, QStyle
 from PySide6.QtCore import QRect
-from pathlib import Path
-
-def _render_svg_tinted(svg_path, size: QSize, color: str) -> QPixmap:
-        """Renders an SVG file, tinting its fill/stroke with a single color."""
-        try:
-            with open(svg_path, 'r', encoding='utf-8') as f:
-                svg_data = f.read()
-            
-            # A more robust method: Inject a CSS style to override fill and stroke
-            # This works even if the original SVG has no fill/stroke attributes
-            style_override = f"<style>g, path, rect, circle, polygon {{ fill: {color} !important; stroke: {color} !important; }}</style>"
-            
-            # Find the closing tag of the opening <svg> element to inject the style
-            import re
-            match = re.search(r'(<svg[^>]*>)', svg_data)
-            if match:
-                # Inject the style right after the opening <svg ...> tag
-                svg_data = svg_data[:match.end()] + style_override + svg_data[match.end():]
-            else:
-                # Fallback for SVGs without attributes in the root tag
-                svg_data = svg_data.replace('<svg>', f'<svg>{style_override}')
-                
-            # Load the modified SVG data
-            renderer = QSvgRenderer(QByteArray(svg_data.encode('utf-8')))
-            pixmap = QPixmap(size)
-            pixmap.fill(Qt.transparent)
-            
-            painter = QPainter(pixmap)
-            painter.setRenderHint(QPainter.Antialiasing, True)
-            renderer.render(painter)
-            painter.end()
-            
-            return pixmap
-        except Exception as e:
-            # Add a print statement here to help debug if it still fails
-            print(f"Error rendering SVG {svg_path} with color {color}: {e}")
-            return QPixmap() # Return an empty pixmap on error
-        
-def _render_svg_outline_tinted(svg_path, size: QSize, color: str) -> QPixmap:
-    """Renders an SVG file, tinting ONLY its stroke and forcing the fill to be transparent."""
-    try:
-        with open(svg_path, 'r', encoding='utf-8') as f:
-            svg_data = f.read()
-        
-        # Inject CSS to force a transparent fill and a colored stroke
-        # This is the key change to ensure outlines are not filled in.
-        style_override = f"<style>g, path, rect, circle, polygon {{ fill: none !important; stroke: {color} !important; stroke-width: 1.5px; }}</style>"
-        
-        import re
-        match = re.search(r'(<svg[^>]*>)', svg_data)
-        if match:
-            svg_data = svg_data[:match.end()] + style_override + svg_data[match.end():]
-        else:
-            svg_data = svg_data.replace('<svg>', f'<svg>{style_override}')
-            
-        renderer = QSvgRenderer(QByteArray(svg_data.encode('utf-8')))
-        pixmap = QPixmap(size)
-        pixmap.fill(Qt.transparent)
-        
-        painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.Antialiasing, True)
-        renderer.render(painter)
-        painter.end()
-        
-        return pixmap
-    except Exception as e:
-        print(f"Error rendering OUTLINE SVG {svg_path} with color {color}: {e}")
-        return QPixmap()
-
-def playlist_icon_for_type(item_type):
-    # Standardized to 28x28 for better visibility
-    icon_size = QSize(32, 32)
-    if item_type == 'youtube':
-        return load_svg_icon(str(APP_DIR / 'icons/youtube-fa7.svg'), icon_size)
-    elif item_type == 'bilibili':
-        return load_svg_icon(str(APP_DIR / 'icons/bilibili-fa7.svg'), icon_size)
-    elif item_type == 'local':
-        # --- MODIFIED LINE ---
-        return load_svg_icon(str(APP_DIR / 'icons/local-file.svg'), icon_size) 
-    else:
-        return load_svg_icon(str(APP_DIR / 'icons/music.svg'), icon_size)
 
 
 class MiniPlayer(QWidget):
@@ -165,94 +84,55 @@ class MiniPlayer(QWidget):
         self._drag_pos = None
 
     def _setup_ui(self):
-        # Overall horizontal layout
-        main_layout = QHBoxLayout(self)
-        main_layout.setContentsMargins(8, 8, 8, 8)
-        main_layout.setSpacing(10)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
 
-        # 1. Left side: Thumbnail
-        self.thumbnail_label = QLabel()
-        self.thumbnail_label.setFixedSize(48, 48)
-        self.thumbnail_label.setObjectName("miniPlayerThumbnail")
-        self.thumbnail_label.setStyleSheet("background-color: #1a1a1a; border-radius: 4px;")
-        main_layout.addWidget(self.thumbnail_label)
-
-        # 2. Center column: Title and controls
-        center_widget = QWidget()
-        center_layout = QVBoxLayout(center_widget)
-        center_layout.setContentsMargins(0, 0, 0, 0)
-        center_layout.setSpacing(0)
-
+        # 1. Track Title (stretches to fill space)
         self.track_title = QLabel("No Track Playing")
         self.track_title.setObjectName("miniPlayerTitle")
-        self.track_title.setAlignment(Qt.AlignCenter)
-        center_layout.addWidget(self.track_title)
+        layout.addWidget(self.track_title, 1) # The '1' makes it stretch
 
-        # --- IMPROVED Controls Layout ---
-        controls_layout = QHBoxLayout()
-        self.prev_btn = QPushButton("")
-        self.play_pause_btn = QPushButton("")
-        self.next_btn = QPushButton("")
-
-        # Set different sizes for visual hierarchy
-        self.prev_btn.setFixedSize(28, 28)
-        self.play_pause_btn.setFixedSize(40, 40) # Larger play/pause button
-        self.next_btn.setFixedSize(28, 28)
-
-        # Add stretch on both sides to force the buttons to the center
-        controls_layout.addStretch()
-        for btn in [self.prev_btn, self.play_pause_btn, self.next_btn]:
-            btn.setObjectName("miniPlayerButton")
-            controls_layout.addWidget(btn)
-        controls_layout.addStretch()
-        # --- END IMPROVED Controls Layout ---
-
-        center_layout.addLayout(controls_layout)
-        main_layout.addWidget(center_widget, 1)
-
-        # 3. Right side: Show Main Player button
+        # 2. Control Buttons
+        self.prev_btn = QPushButton("⏮")
+        self.play_pause_btn = QPushButton("▶")
+        self.next_btn = QPushButton("⏭")
+        
+        # A button to return to the main window
         self.show_main_btn = QPushButton("⏏️") 
         self.show_main_btn.setToolTip("Show Full Player")
-        self.show_main_btn.setObjectName("miniPlayerButton")
-        self.show_main_btn.setFixedSize(32, 32)
-        main_layout.addWidget(self.show_main_btn)
+
+        for btn in [self.prev_btn, self.play_pause_btn, self.next_btn, self.show_main_btn]:
+            btn.setObjectName("miniPlayerButton")
+            btn.setFixedSize(32, 32)
+            layout.addWidget(btn)
 
     def _apply_theme(self):
-        # Check the main player's theme
-        if self.main_player.theme == 'vinyl':
-            # Vinyl theme QSS
-            theme_style = """
-                QWidget {
-                    background-color: #f3ead3;
-                    color: #4a2c2a;
-                    border-radius: 8px;
-                    border: 1px solid #c2a882;
-                }
-                #miniPlayerTitle { font-weight: bold; }
-                #miniPlayerButton:hover {
-                    background-color: rgba(0, 0, 0, 0.05);
-                    border-radius: 16px;
-                }
-                #miniPlayerButton:pressed { background-color: rgba(0, 0, 0, 0.1); }
-            """
-        else:
-            # Dark theme QSS (your original style)
-            theme_style = """
-                QWidget {
-                    background-color: #2a2a2a;
-                    color: #f3f3f3;
-                    border-radius: 8px;
-                }
-                #miniPlayerTitle { font-weight: bold; }
-                #miniPlayerButton { background: transparent; border: none; }
-                #miniPlayerButton:hover {
-                    background-color: rgba(255, 255, 255, 0.1);
-                    border-radius: 16px;
-                }
-                #miniPlayerButton:pressed { background-color: rgba(255, 255, 255, 0.2); }
-            """
+        # We can reuse the main app's theme for consistency
+        theme_style = """
+            QWidget {{
+                background-color: #2a2a2a;
+                color: #f3f3f3;
+                border-radius: 8px;
+            }}
+            #miniPlayerTitle {{
+                font-weight: bold;
+            }}
+            #miniPlayerButton {{
+                background: transparent;
+                border: none;
+                font-size: 16px;
+            }}
+            #miniPlayerButton:hover {{
+                background-color: rgba(255, 255, 255, 0.1);
+                border-radius: 16px;
+            }}
+            #miniPlayerButton:pressed {{
+                background-color: rgba(255, 255, 255, 0.2);
+            }}
+        """
         self.setStyleSheet(theme_style)
-        
+
     # --- Methods for dragging the frameless window ---
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -270,31 +150,11 @@ class MiniPlayer(QWidget):
     def update_track_title(self, title):
         # We'll wire this up later
         self.track_title.setText(title)
+
     def update_playback_state(self, is_playing):
-        # This method now sets ICONS instead of text
-        is_dark = self.main_player.theme == 'dark'
-        if is_playing:
-            # Use the main player's loaded pause icon
-            self.play_pause_btn.setIcon(self.main_player._pause_icon_normal)
-        else:
-            # Use the main player's loaded play icon
-            self.play_pause_btn.setIcon(self.main_player._play_icon_normal)
+        # We'll wire this up later
+        self.play_pause_btn.setText("❚❚" if is_playing else "▶")
 
-        # Also set prev/next icons, which might change with the theme
-        self.prev_btn.setIcon(self.main_player.prev_icon_dark if is_dark else self.main_player.prev_icon_vinyl)
-        self.next_btn.setIcon(self.main_player.next_icon_dark if is_dark else self.main_player.next_icon_vinyl)
-
-        # Apply the theme again to refresh button styles if needed
-        self._apply_theme()
-
-    def update_thumbnail(self, pixmap):
-        if not pixmap.isNull():
-            # Scale the pixmap to fit the label while keeping aspect ratio
-            scaled_pixmap = pixmap.scaled(self.thumbnail_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            self.thumbnail_label.setPixmap(scaled_pixmap)
-        else:
-            # Clear the thumbnail if an empty pixmap is received
-            self.thumbnail_label.clear()
 
 class PlaylistMetadataWidget(QWidget):
     """Widget to display playlist metadata in a card-like format"""
@@ -954,7 +814,7 @@ class PlaylistManagerDialog(QDialog):
             self.sort_field_combo.addItem("📅 Date Created", "created")
             self.sort_field_combo.addItem("📝 Name", "name")
             self.sort_field_combo.addItem("📊 Item Count", "items")
-            self.sort_field_combo.activated.connect(self._on_sort_changed)
+            self.sort_field_combo.currentDataChanged.connect(self._on_sort_changed)
             self.sort_field_combo.setStyleSheet("""
                 QComboBox {
                     background-color: #f9f6f0;
@@ -1061,10 +921,9 @@ class PlaylistManagerDialog(QDialog):
         except Exception as e:
             print(f"Filter changed error: {e}")
     
-    def _on_sort_changed(self, index):
+    def _on_sort_changed(self, field):
         """Handle sort field changes"""
         try:
-            field = self.sort_field_combo.itemData(index)
             self._current_sort['field'] = field
             self._apply_filters_and_sort()
         except Exception as e:
@@ -2207,10 +2066,6 @@ class PlayingItemDelegate(QStyledItemDelegate):
                     painter.fillRect(option.rect, bg_color)
                     painter.restore()
 
-
-
-
-
 class LightChevronTreeStyle(QProxyStyle):
     def __init__(self, base=None, color="#e0e0e0"):
         super().__init__(base)
@@ -2256,7 +2111,41 @@ class LightChevronTreeStyle(QProxyStyle):
         
         super().drawPrimitive(element, option, painter, widget)
 
-    
+def _render_svg_tinted(svg_path, size: QSize, color: str) -> QPixmap:
+    """Renders an SVG file, tinting its fill/stroke with a single color."""
+    try:
+        with open(svg_path, 'r', encoding='utf-8') as f:
+            svg_data = f.read()
+        
+        # A simple regex to find fill/stroke attributes and replace their values.
+        # This works for simple, single-color icons.
+        svg_data = re.sub(r'(fill|stroke)="[^"]+"', f'\\1="{color}"', svg_data)
+        
+        # Load the modified SVG data
+        renderer = QSvgRenderer(QByteArray(svg_data.encode('utf-8')))
+        pixmap = QPixmap(size)
+        pixmap.fill(Qt.transparent)
+        
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        renderer.render(painter)
+        painter.end()
+        
+        return pixmap
+    except Exception:
+        return QPixmap() # Return an empty pixmap on error
+
+def playlist_icon_for_type(item_type):
+    # Standardized to 28x28 for better visibility
+    icon_size = QSize(28, 28)
+    if item_type == 'youtube':
+        return load_svg_icon(str(APP_DIR / 'icons/youtube-fa7.svg'), icon_size)
+    elif item_type == 'bilibili':
+        return load_svg_icon(str(APP_DIR / 'icons/bilibili-fa7.svg'), icon_size)
+    elif item_type == 'local':
+        return "🎬"
+    else:
+        return "🎵"
         
 def load_svg_icon(path, size=QSize(18, 18)):
     renderer = QSvgRenderer(path)
@@ -2726,7 +2615,7 @@ class PlaylistLoaderThread(QThread):
         ydl_opts = {
             'quiet': True,
             'no_warnings': True,
-            'extract_flat': True,      # THIS IS THE KEY CHANGE FOR PERFORMANCE
+            'extract_flat': True,
             'skip_download': True,
             'socket_timeout': 60,
             'retries': 3,
@@ -2755,7 +2644,7 @@ class PlaylistLoaderThread(QThread):
         try:
             if info is None:
                 self.itemsReady.emit([]); return
-            
+            # If this is a playlist with 'entries'
             if isinstance(info, dict) and info.get('entries'):
                 playlist_title = info.get('title') or self.url
                 entries = list(info.get('entries') or [])
@@ -2767,25 +2656,23 @@ class PlaylistLoaderThread(QThread):
                     u = entry.get('webpage_url') or entry.get('url') or idv
                     if not u:
                         continue
-                    
+                    # Normalize to full URL when extractor returns IDs only
                     if self.kind == 'bilibili' and not (u.startswith('http://') or u.startswith('https://')):
                         u = f"https://www.bilibili.com/video/{idv or u}"
                     if self.kind == 'youtube' and not (u.startswith('http://') or u.startswith('https://')):
                         u = f"https://www.youtube.com/watch?v={idv or u}"
                     title = entry.get('title') or u
-                    
-                    item = {'title': title, 'url': u, 'type': self.kind, 'playlist': playlist_title, 'playlist_key': info.get('id') or self.url}
-                    if 'thumbnail' in entry:
-                        item['thumbnail'] = entry['thumbnail']
-                    chunk.append(item)
-
+                    chunk.append({'title': title, 'url': u, 'type': self.kind, 'playlist': playlist_title, 'playlist_key': info.get('id') or self.url})
+                    if len(chunk) >= 25:
+                        self.itemsReady.emit(chunk); chunk = []
                 if chunk:
                     self.itemsReady.emit(chunk)
             else:
+                # Single video fallback
                 self.itemsReady.emit([{'title': info.get('title') or self.url, 'url': self.url, 'type': self.kind}])
         except Exception as e:
             self.error.emit(str(e)); return
-        
+
 class YtdlManager(QThread):
     """A persistent background thread to manage and reuse expensive yt-dlp instances."""
     titleResolved = Signal(str, str)  # url, title
@@ -3393,86 +3280,85 @@ class PlaylistTree(QTreeWidget):
         print("Column 1 width (Duration):", self.columnWidth(1))
 
     def dropEvent(self, event):
-        """Handle drop events for both internal reordering and external files/URLs."""
-        
-        # --- CASE 1: Internal move (reordering items within the playlist) ---
-        if event.source() == self and event.proposedAction() == Qt.MoveAction:
-            try:
-                # Store undo data BEFORE making changes
-                old_playlist_for_undo = [item.copy() for item in self.player.playlist]
-                old_index_for_undo = self.player.current_index
-                was_playing_for_undo = self.player._is_playing()
-                expansion_state = self.player._get_tree_expansion_state()
+        """Handle drop events for files and URLs with duplicate guard and preserved expansion state."""
+        try:
+            mime_data = event.mimeData()
+            expansion_state = self._get_tree_expansion_state()
 
-                # Get the target item and drop position
-                target_item = self.itemAt(event.pos())
-                drop_indicator = self.dropIndicatorPosition()
+            added = 0
+            skipped = 0
 
-                # Get dragged items and their original data
-                dragged_items_data = []
-                selected_nodes = self.selectedItems()
-                for node in selected_nodes:
-                    data = node.data(0, Qt.UserRole)
-                    if isinstance(data, tuple) and data[0] == 'current':
-                        original_index = data[1]
-                        if 0 <= original_index < len(self.player.playlist):
-                           dragged_items_data.append(self.player.playlist[original_index])
+            def _norm_local(u: str) -> str:
+                import os
+                p = _path_from_url_or_path(u or "")
+                try:
+                    return os.path.normcase(os.path.abspath(p))
+                except Exception:
+                    return p
 
-                # Remove dragged items from the main playlist to create a temporary list
-                temp_playlist = [item for item in self.player.playlist if item not in dragged_items_data]
+            new_items = []  # for undo
 
-                # Determine the insertion index in the temporary playlist
-                insertion_index = -1
-                if target_item:
-                    target_data = target_item.data(0, Qt.UserRole)
-                    if isinstance(target_data, tuple) and target_data[0] == 'current':
-                        target_playlist_item = self.player.playlist[target_data[1]]
-                        try:
-                            insertion_index = temp_playlist.index(target_playlist_item)
-                            if drop_indicator == QAbstractItemView.DropIndicatorPosition.BelowItem:
-                                insertion_index += 1
-                        except ValueError:
-                            insertion_index = len(temp_playlist)
-                
-                if insertion_index == -1:
-                    insertion_index = len(temp_playlist)
+            if mime_data.hasUrls():
+                existing_local = set(
+                    _norm_local(it.get('url'))
+                    for it in self.playlist
+                    if isinstance(it, dict) and it.get('type') == 'local' and it.get('url')
+                )
 
-                # Insert the dragged items at the calculated position
-                for item_to_insert in dragged_items_data:
-                    temp_playlist.insert(insertion_index, item_to_insert)
-                    insertion_index += 1
+                for url in mime_data.urls():
+                    file_path = url.toLocalFile()
+                    if file_path:
+                        nf = _norm_local(file_path)
+                        if nf in existing_local:
+                            skipped += 1
+                            continue
 
-                # Replace the player's playlist with the newly ordered one
-                self.player.playlist = temp_playlist
-                
-                # Add to undo stack
-                self.player._add_undo_operation('move_items', {
-                    'playlist': old_playlist_for_undo,
-                    'current_index': old_index_for_undo,
-                    'was_playing': was_playing_for_undo
+                        item = {
+                            'title': Path(file_path).name,
+                            'url': file_path,
+                            'type': 'local'
+                        }
+                        self.playlist.append(item)
+                        new_items.append({'index': len(self.playlist) - 1, 'item': item})
+                        existing_local.add(nf)
+                        added += 1
+
+                        if hasattr(self, '_local_dur'):
+                            self._local_dur.enqueue(len(self.playlist) - 1, self.playlist[-1])
+                    else:
+                        # Web URL (no dedupe here; handled inside _add_url_to_playlist)
+                        self._add_url_to_playlist(url.toString())
+
+            elif mime_data.hasText():
+                text = (mime_data.text() or "").strip().strip('"').strip("'")
+                if text:
+                    # Route through the unified path handler (it dedupes and enqueues)
+                    before_len = len(self.playlist)
+                    self._add_url_to_playlist(text)
+                    if len(self.playlist) > before_len:
+                        new_items.append({'index': len(self.playlist) - 1, 'item': self.playlist[-1]})
+
+            # Save, refresh, and record undo for added items
+            self._save_current_playlist()
+            self._refresh_playlist_widget(expansion_state=expansion_state)
+            event.acceptProposedAction()
+
+            if new_items:
+                self._add_undo_operation('add_items', {
+                    'items': new_items,
+                    'was_playing': self._is_playing(),
+                    'old_current_index': self.current_index
                 })
 
-                # Finalize the move
-                self.player._save_current_playlist()
-                self.player._refresh_playlist_widget(expansion_state=expansion_state)
-                
-                # --- THIS IS THE FIX ---
-                # Highlight the current row BUT disable the auto-scroll
-                self.player._highlight_current_row(scroll_to_item=False)
-                
-                event.acceptProposedAction()
-                self.player.status.showMessage("Reordered playlist (Ctrl+Z to undo)", 3000)
+            if added or skipped:
+                msg = f"Added {added} item(s)"
+                if skipped:
+                    msg += f", skipped {skipped} duplicate(s)"
+                self.status.showMessage(msg, 4000)
 
-            except Exception as e:
-                print(f"Internal drop event error: {e}")
-                import traceback
-                traceback.print_exc()
-                event.ignore()
-
-        # --- CASE 2: External drop (files/URLs from outside the app) ---
-        else:
-            # (The rest of the external drop logic remains unchanged)
-            super().dropEvent(event) # Let the original handler manage external drops
+        except Exception as e:
+            print(f"Drop event error: {e}")
+            event.ignore()
 
 class ScrollingTreeWidget(QTreeWidget):
     def __init__(self, parent=None):
@@ -3573,12 +3459,8 @@ class ScrollingTreeWidget(QTreeWidget):
 
 # --- Player ---
 class MediaPlayer(QMainWindow):
-    playbackStateChanged = Signal(bool)  # Emits True for playing, False for paused
-    trackChanged = Signal(str)           # Emits the new track title
-
     requestTimerSignal = Signal(int, object)
     statusMessageSignal = Signal(str, int)
-    trackThumbnailReady = Signal(QPixmap)
     
     def __init__(self):
         super().__init__()
@@ -3669,15 +3551,6 @@ class MediaPlayer(QMainWindow):
         self._last_clipboard_offer = ""
 
         # --- 2. Initialize Timers, Fonts, and Icons ---
-
-        self.tray_click_timer = QTimer(self)
-        self.tray_click_timer.setSingleShot(True)
-        # When this timer finishes, it will call the toggle_play_pause function
-        self.tray_click_timer.timeout.connect(lambda: (
-            print("[DEBUG] Tray single-click timer fired! Calling toggle_play_pause..."),
-            self.toggle_play_pause()
-        ))
-
         self.silence_timer = QTimer(self)
         self.silence_timer.timeout.connect(self._update_silence_tooltip)
         self.silence_timer.start(1000)
@@ -3692,52 +3565,39 @@ class MediaPlayer(QMainWindow):
         # This definition now correctly happens BEFORE the UI is built
         self.icon_size = QSize(22, 22)
         try:
-            # Helper function for safe loading
-            def safe_load_icon(path, fallback_text):
-                return QIcon(str(path)) if path.exists() else QIcon.fromTheme(fallback_text, QIcon(fallback_text))
-
-            def safe_load_tinted(path, size, color, fallback_text):
-                 if path.exists():
-                     return QIcon(_render_svg_tinted(str(path), size, color))
-                 return QIcon.fromTheme(fallback_text, QIcon(fallback_text))
-
             play_path = APP_DIR / 'icons/play.svg'
             pause_path = APP_DIR / 'icons/pause.svg'
             prev_path = APP_DIR / 'icons/previous.svg'
             next_path = APP_DIR / 'icons/next.svg'
             shuffle_path = APP_DIR / 'icons/shuffle.svg'
             repeat_path = APP_DIR / 'icons/repeat.svg'
+            icon_px = QSize(50, 50)
+            self._play_icon_normal = load_svg_icon(str(play_path), icon_px) if play_path.exists() else QIcon()
+            self._pause_icon_normal = load_svg_icon(str(pause_path), icon_px) if pause_path.exists() else QIcon()
+            self.prev_icon_vinyl = QIcon(str(prev_path)) if prev_path.exists() else "⏮"
+            self.next_icon_vinyl = QIcon(str(next_path)) if next_path.exists() else "⏭"
+            self.shuffle_icon_vinyl = QIcon(str(shuffle_path)) if shuffle_path.exists() else "🔀"
+            self.repeat_icon_vinyl = QIcon(str(repeat_path)) if repeat_path.exists() else "🔁"
+            self.prev_icon_dark = QIcon(_render_svg_tinted(str(prev_path), self.icon_size, "#FFFFFF")) if prev_path.exists() else "⏮"
+            self.next_icon_dark = QIcon(_render_svg_tinted(str(next_path), self.icon_size, "#FFFFFF")) if next_path.exists() else "⏭"
+            self.shuffle_icon_dark = QIcon(_render_svg_tinted(str(shuffle_path), self.icon_size, "#FFFFFF")) if shuffle_path.exists() else "🔀"
+            self.repeat_icon_dark = QIcon(_render_svg_tinted(str(repeat_path), self.icon_size, "#FFFFFF")) if repeat_path.exists() else "🔁"
             shuffle_on_path = APP_DIR / 'icons/shuffle-on.svg'
             repeat_on_path = APP_DIR / 'icons/repeat-on.svg'
-            mute_path = APP_DIR / 'icons/volume-mute.svg'
-            volume_path = APP_DIR / 'icons/volume.svg'
             accent_color_on = "#e76f51"
-            icon_px = QSize(50, 50)
-
-            self._play_icon_normal = safe_load_icon(play_path, "▶")
-            self._pause_icon_normal = safe_load_icon(pause_path, "❚❚")
-            
-            self.prev_icon_vinyl = safe_load_icon(prev_path, "⏮")
-            self.next_icon_vinyl = safe_load_icon(next_path, "⏭")
-            self.shuffle_icon_vinyl = safe_load_icon(shuffle_path, "🔀")
-            self.repeat_icon_vinyl = safe_load_icon(repeat_path, "🔁")
-            self.shuffle_on_icon_vinyl = safe_load_icon(shuffle_on_path, "🔀")
-            self.repeat_on_icon_vinyl = safe_load_icon(repeat_on_path, "🔁")
-
-            self.prev_icon_dark = safe_load_tinted(prev_path, self.icon_size, "#FFFFFF", "⏮")
-            self.next_icon_dark = safe_load_tinted(next_path, self.icon_size, "#FFFFFF", "⏭")
-            self.shuffle_icon_dark = safe_load_tinted(shuffle_path, self.icon_size, "#FFFFFF", "🔀")
-            self.repeat_icon_dark = safe_load_tinted(repeat_path, self.icon_size, "#FFFFFF", "🔁")
-            self.shuffle_on_icon_dark = safe_load_tinted(shuffle_on_path, self.icon_size, accent_color_on, "🔀")
-            self.repeat_on_icon_dark = safe_load_tinted(repeat_on_path, self.icon_size, accent_color_on, "🔁")
-            
+            self.shuffle_on_icon_vinyl = QIcon(str(shuffle_on_path)) if shuffle_on_path.exists() else "🔀"
+            self.repeat_on_icon_vinyl = QIcon(str(repeat_on_path)) if repeat_on_path.exists() else "🔁"
+            self.shuffle_on_icon_dark = QIcon(_render_svg_tinted(str(shuffle_on_path), self.icon_size, accent_color_on)) if shuffle_on_path.exists() else "🔀"
+            self.repeat_on_icon_dark = QIcon(_render_svg_tinted(str(repeat_on_path), self.icon_size, accent_color_on)) if repeat_on_path.exists() else "🔁"
             self.tray_icon_play = self._play_icon_normal
             self.tray_icon_pause = self._pause_icon_normal
-            self.volume_icon = safe_load_icon(volume_path, "🔊")
-            self.volume_mute_icon = safe_load_icon(mute_path, "🔇")
+            self.volume_icon = QIcon(str(APP_DIR / 'icons/volume.svg'))
+            mute_path = APP_DIR / 'icons/volume-mute.svg'
+            self.volume_mute_icon = QIcon(str(mute_path)) if mute_path.exists() else "🔇"
             
-            self.icon_audio_active = "🔊"
-            self.icon_audio_silent = "🔇"
+            # --- FIX: Use emojis for both audio states ---
+            self.icon_audio_active = "🔊"  # Sound is active
+            self.icon_audio_silent = "🔇"  # System is silent
         except Exception as e:
             logger.error(f"Failed during icon creation: {e}")
 
@@ -3779,102 +3639,28 @@ class MediaPlayer(QMainWindow):
         self._undo_stack = []  # Stack of undo operations
         self._max_undo_operations = 10  # Limit undo history
 
-    def _get_title_and_duration_sync(self, url, kind):
-        """Synchronously fetches a video's title and duration."""
-        try:
-            import yt_dlp
-            opts = {
-                'quiet': True,
-                'no_warnings': True,
-                'skip_download': True,
-                'extract_flat': 'in_playlist',
-                'socket_timeout': 10,
-            }
-            if kind == 'bilibili':
-                opts['cookiefile'] = str(COOKIES_BILI)
-            
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                if isinstance(info, dict):
-                    title = info.get('title')
-                    duration = info.get('duration')
-                    return title, duration
-                return None, None
-        except Exception as e:
-            logger.warning(f"Sync title/duration fetch failed for {url}: {e}")
-            return None, None
-
-    def _get_title_sync(self, url, kind):
-        """Synchronously fetches a single video's title. Used for on-demand resolution."""
-        try:
-            import yt_dlp
-            opts = {
-                'quiet': True,
-                'no_warnings': True,
-                'skip_download': True,
-                'extract_flat': 'in_playlist', # Don't extract playlist if it's a single video
-                'socket_timeout': 10,
-            }
-            if kind == 'bilibili':
-                opts['cookiefile'] = str(COOKIES_BILI)
-            
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                return info.get('title') if isinstance(info, dict) else None
-        except Exception as e:
-            logger.warning(f"Synchronous title fetch failed for {url}: {e}")
-            return None
-
-    def _process_with_yield(self, items: list, processor_func, batch_size: int = 25, progress_callback=None):
-            """Process a large list in batches to keep UI responsive."""
-            total_items = len(items)
-            processed = 0
-            
-            def process_batch():
-                nonlocal processed
-                batch_end = min(processed + batch_size, total_items)
-                batch = items[processed:batch_end]
-                
-                try:
-                    processor_func(batch, processed)
-                    processed = batch_end
-                    
-                    if progress_callback:
-                        progress_callback(processed, total_items)
-                    
-                    if processed < total_items:
-                        # Schedule next batch
-                        QTimer.singleShot(1, process_batch)
-                    
-                except Exception as e:
-                    print(f"Batch processing error: {e}")
-            
-            process_batch()
-
     def _update_top_bar_icons(self):
         """Loads and tints the top bar icons to match the current theme."""
         try:
+            # Determine the correct color based on the current theme
             icon_color = "#f3f3f3" if self.theme == 'dark' else "#4a2c2a"
-            
-            # Use the much larger top bar icon size
-            icon_size = self.top_bar_icon_size  # Now 32x32
+            icon_size = QSize(18, 18) # A good, clean size for the top bar
 
-            # Use the OUTLINE function for these buttons
-            stats_icon = QIcon(_render_svg_outline_tinted(str(APP_DIR / 'icons/stats.svg'), icon_size, icon_color))
+            # Load, tint, and set the icon for each button
+            stats_icon = QIcon(_render_svg_tinted(str(APP_DIR / 'icons/stats.svg'), icon_size, icon_color))
             self.stats_btn.setIcon(stats_icon)
 
-            settings_icon = QIcon(_render_svg_outline_tinted(str(APP_DIR / 'icons/settings.svg'), icon_size, icon_color))
+            settings_icon = QIcon(_render_svg_tinted(str(APP_DIR / 'icons/settings.svg'), icon_size, icon_color))
             self.settings_btn.setIcon(settings_icon)
 
-            minimize_icon = QIcon(_render_svg_outline_tinted(str(APP_DIR / 'icons/minimize.svg'), icon_size, icon_color))
+            minimize_icon = QIcon(_render_svg_tinted(str(APP_DIR / 'icons/minimize.svg'), icon_size, icon_color))
             self.mini_player_btn.setIcon(minimize_icon)
 
-            theme_icon = QIcon(_render_svg_outline_tinted(str(APP_DIR / 'icons/theme.svg'), icon_size, icon_color))
+            theme_icon = QIcon(_render_svg_tinted(str(APP_DIR / 'icons/palette.svg'), icon_size, icon_color))
             self.theme_btn.setIcon(theme_icon)
 
         except Exception as e:
-            logger.error(f"Failed to update top bar icons: {e}")
-
+            logger.error(f"Failed to update top bar icons: {e}")    
 
     def on_silence_detected(self):
         """
@@ -3955,144 +3741,76 @@ class MediaPlayer(QMainWindow):
             event.ignore()
 
     def dropEvent(self, event):
-        """Handle drop events for both internal reordering and external files/URLs."""
-        
-        # --- CASE 1: Internal move (reordering items within the playlist) ---
-        if event.source() == self and event.proposedAction() == Qt.MoveAction:
-            try:
-                # Store undo data BEFORE making changes
-                old_playlist_for_undo = [item.copy() for item in self.player.playlist]
-                old_index_for_undo = self.player.current_index
-                was_playing_for_undo = self.player._is_playing()
-                expansion_state = self.player._get_tree_expansion_state()
+        """Handle drop events for files and URLs with duplicate guard and preserved expansion state."""
+        try:
+            mime_data = event.mimeData()
 
-                # Get the target item and drop position
-                target_item = self.itemAt(event.pos())
-                drop_indicator = self.dropIndicatorPosition()
+            # Preserve expansion state so headers don't collapse
+            expansion_state = self._get_tree_expansion_state()
 
-                # --- Get dragged items and their original playlist indices ---
-                dragged_items_data = []
-                selected_nodes = self.selectedItems()
-                for node in selected_nodes:
-                    data = node.data(0, Qt.UserRole)
-                    if isinstance(data, tuple) and data[0] == 'current':
-                        original_index = data[1]
-                        if 0 <= original_index < len(self.player.playlist):
-                           dragged_items_data.append(self.player.playlist[original_index])
+            added = 0
+            skipped = 0
 
+            def _norm_local(u: str) -> str:
+                import os
+                p = _path_from_url_or_path(u or "")
+                try:
+                    return os.path.normcase(os.path.abspath(p))
+                except Exception:
+                    return p
 
-                # Remove dragged items from the main playlist to create a temporary list
-                temp_playlist = [item for item in self.player.playlist if item not in dragged_items_data]
+            if mime_data.hasUrls():
+                # Existing local set (normalized)
+                existing_local = set(
+                    _norm_local(it.get('url'))
+                    for it in self.playlist
+                    if isinstance(it, dict) and it.get('type') == 'local' and it.get('url')
+                )
 
-                # --- Determine the insertion index in the temporary playlist ---
-                insertion_index = -1
-                if target_item:
-                    target_data = target_item.data(0, Qt.UserRole)
-                    if isinstance(target_data, tuple) and target_data[0] == 'current':
-                        target_playlist_item = self.player.playlist[target_data[1]]
-                        try:
-                            # Find the item's new position in the list without the dragged items
-                            insertion_index = temp_playlist.index(target_playlist_item)
-                            if drop_indicator == QAbstractItemView.DropIndicatorPosition.BelowItem:
-                                insertion_index += 1
-                        except ValueError:
-                            insertion_index = len(temp_playlist) # Fallback
-                
-                if insertion_index == -1:
-                    # Dropped in an empty area or on a group, append to the end
-                    insertion_index = len(temp_playlist)
+                for url in mime_data.urls():
+                    file_path = url.toLocalFile()
+                    if file_path:
+                        nf = _norm_local(file_path)
+                        if nf in existing_local:
+                            skipped += 1
+                            continue
 
-                # Insert the dragged items at the calculated position
-                # We need to preserve the original relative order of dragged items
-                for item_to_insert in dragged_items_data:
-                    temp_playlist.insert(insertion_index, item_to_insert)
-                    insertion_index += 1
+                        self.playlist.append({
+                            'title': Path(file_path).name,
+                            'url': file_path,
+                            'type': 'local'
+                        })
+                        existing_local.add(nf)
+                        added += 1
 
+                        # enqueue local duration probe
+                        if hasattr(self, '_local_dur'):
+                            self._local_dur.enqueue(len(self.playlist) - 1, self.playlist[-1])
 
-                # Replace the player's playlist with the newly ordered one
-                self.player.playlist = temp_playlist
-                
-                # Add to undo stack
-                self.player._add_undo_operation('move_items', {
-                    'playlist': old_playlist_for_undo,
-                    'current_index': old_index_for_undo,
-                    'was_playing': was_playing_for_undo
-                })
+                    else:
+                        # Web URL
+                        self._add_url_to_playlist(url.toString())
 
-                # Finalize the move
-                self.player._save_current_playlist()
-                self.player._refresh_playlist_widget(expansion_state=expansion_state)
-                
-                # --- THIS LINE WAS REMOVED TO PREVENT SCROLLING/EXPANDING ---
-                # self.player._highlight_current_row() 
-                
-                event.acceptProposedAction()
-                self.player.status.showMessage("Reordered playlist (Ctrl+Z to undo)", 3000)
+            elif mime_data.hasText():
+                # URLs or local path as text
+                text = (mime_data.text() or "").strip().strip('"').strip("'")
+                if text:
+                    self._add_url_to_playlist(text)
 
-            except Exception as e:
-                print(f"Internal drop event error: {e}")
-                event.ignore()
+            # Save and refresh while keeping previous expansion state
+            self._save_current_playlist()
+            self._refresh_playlist_widget(expansion_state=expansion_state)
+            event.acceptProposedAction()
 
-        # --- CASE 2: External drop (files/URLs from outside the app) ---
-        else:
-            # This is your original, working logic for external drops
-            try:
-                mime_data = event.mimeData()
-                expansion_state = self.player._get_tree_expansion_state()
-                added, skipped = 0, 0
+            if added or skipped:
+                msg = f"Added {added} item(s)"
+                if skipped:
+                    msg += f", skipped {skipped} duplicate(s)"
+                self.status.showMessage(msg, 4000)
 
-                def _norm_local(u: str) -> str:
-                    import os
-                    p = _path_from_url_or_path(u or "")
-                    try:
-                        return os.path.normcase(os.path.abspath(p))
-                    except Exception:
-                        return p
-
-                new_items = []
-                if mime_data.hasUrls():
-                    existing_local = {_norm_local(it.get('url')) for it in self.player.playlist if it.get('type') == 'local'}
-                    for url in mime_data.urls():
-                        file_path = url.toLocalFile()
-                        if file_path:
-                            nf = _norm_local(file_path)
-                            if nf in existing_local:
-                                skipped += 1
-                                continue
-                            item = {'title': Path(file_path).name, 'url': file_path, 'type': 'local'}
-                            self.player.playlist.append(item)
-                            new_items.append({'index': len(self.player.playlist) - 1, 'item': item})
-                            existing_local.add(nf)
-                            added += 1
-                            if hasattr(self.player, '_local_dur'):
-                                self.player._local_dur.enqueue(len(self.player.playlist) - 1, self.player.playlist[-1])
-                        else:
-                            self.player._add_url_to_playlist(url.toString())
-                elif mime_data.hasText():
-                    text = (mime_data.text() or "").strip().strip('"\'')
-                    if text:
-                        before_len = len(self.player.playlist)
-                        self.player._add_url_to_playlist(text)
-                        if len(self.player.playlist) > before_len:
-                            new_items.append({'index': len(self.player.playlist) - 1, 'item': self.player.playlist[-1]})
-                
-                self.player._save_current_playlist()
-                self.player._refresh_playlist_widget(expansion_state=expansion_state)
-                event.acceptProposedAction()
-
-                if new_items:
-                    self.player._add_undo_operation('add_items', {
-                        'items': new_items,
-                        'was_playing': self.player._is_playing(),
-                        'old_current_index': self.player.current_index
-                    })
-                if added or skipped:
-                    msg = f"Added {added} item(s)"
-                    if skipped: msg += f", skipped {skipped} duplicate(s)"
-                    self.player.status.showMessage(msg, 4000)
-            except Exception as e:
-                print(f"External drop event error: {e}")
-                event.ignore()
+        except Exception as e:
+            print(f"Drop event error: {e}")
+            event.ignore()
 
     def _flash_button_color(self, button, color, duration=100):
         """Flash button with a color tint - safer version"""
@@ -4978,17 +4696,26 @@ class MediaPlayer(QMainWindow):
         root = QVBoxLayout(central); root.setContentsMargins(8, 8, 8, 8); root.setSpacing(8)
         icon_size = QSize(22, 22)
 
-        self.top_bar_icon_size = QSize(32, 32)      # Much more visible top bar icons
-        self.sidebar_icon_size = QSize(30, 30)      # Large, easy-to-click sidebar buttons  
-        self.playlist_icon_size = QSize(32, 32)     # Clearly visible playlist icons
-        self.control_icon_size = QSize(24, 24)      # Standard control button icons (keep these medium)
-
         # Top bar
         top = QHBoxLayout(); top.setSpacing(8)
         title = QLabel("Silence Suzuka Player"); title.setObjectName('titleLabel'); title.setFont(self._font_serif(20, italic=True, bold=True))
-        top.addWidget(title)
-        top.addStretch()
+        # Dropdown for Scope Selection - COMMENTED OUT FOR SIMPLICITY
+        # self.scope_dropdown = QComboBox()
+        # self.scope_dropdown.setObjectName('scopeDropdown')
+        # self.scope_dropdown.addItem("Library", None)  # Default scope
+        # self.scope_dropdown.addItem("Playlist 1", "playlist1")
+        # self.scope_dropdown.addItem("Playlist 2", "playlist2")
+        # self.scope_dropdown.addItem("YouTube", "youtube")
+        # self.scope_dropdown.addItem("Bilibili", "bilibili")  # Add Bilibili as its own option
+        # self.scope_dropdown.addItem("Local Media", "local-media")
+        # self.scope_dropdown.setCurrentIndex(0)  # Default to Library
+        # self.scope_dropdown.currentIndexChanged.connect(lambda idx: self._on_scope_changed(idx))
 
+        # Add title to the top layout
+        top.addWidget(title)  # Add the title on the far left
+        # top.addWidget(self.scope_dropdown)  # Add the dropdown to the right of the title - COMMENTED OUT
+        top.addStretch()  # Push remaining items to the right
+        
         # Right: Today badge • Silence • Stats • Settings • Theme
         self.today_badge = QLabel("0s"); self.today_badge.setObjectName('statsBadge'); self.today_badge.setToolTip("Total listening time today")
         self.today_badge.setVisible(getattr(self, 'show_today_badge', True))
@@ -4997,44 +4724,31 @@ class MediaPlayer(QMainWindow):
         self.silence_indicator = QLabel("🔇"); self.silence_indicator.setObjectName('silenceIndicator'); self.silence_indicator.setToolTip("System silence indicator — shows when no system audio is detected (configurable in Settings → Audio Monitor)")
         top.addWidget(self.silence_indicator)
         
-        # Initialize buttons without emoji text
-        self.stats_btn = QPushButton() 
+        self.stats_btn = QPushButton("📊")
         self.stats_btn.setObjectName('settingsBtn')
         self.stats_btn.setToolTip("Listening Statistics")
-        self.stats_btn.setIconSize(self.top_bar_icon_size)
-        self.stats_btn.setFixedSize(48, 44)  # Much larger button container
         self.stats_btn.clicked.connect(self.open_stats)
         
-        self.settings_btn = QPushButton()
+        self.settings_btn = QPushButton("⚙")
         self.settings_btn.setObjectName('settingsBtn')
         self.settings_btn.setToolTip("Settings")
-        self.settings_btn.setIconSize(self.top_bar_icon_size)
-        self.stats_btn.setFixedSize(48, 44)  # Much larger button container
         self.settings_btn.clicked.connect(self.open_settings_tabs)
     
         top.addWidget(self.stats_btn)
         top.addWidget(self.settings_btn)
         
-        self.mini_player_btn = QPushButton()
+        self.mini_player_btn = QPushButton("🗔️") # A picture-in-picture style icon
         self.mini_player_btn.setObjectName('settingsBtn')
         self.mini_player_btn.setToolTip("Switch to Mini Player")
-        self.mini_player_btn.setIconSize(self.top_bar_icon_size)
-        self.stats_btn.setFixedSize(48, 44)  # Much larger button container
         self.mini_player_btn.clicked.connect(self._toggle_mini_player)
         top.addWidget(self.mini_player_btn)
 
-        self.theme_btn = QPushButton()
-        self.theme_btn.setObjectName('settingsBtn')
-        self.theme_btn.setToolTip("Toggle Theme")
-        self.theme_btn.setIconSize(self.top_bar_icon_size)
-        self.stats_btn.setFixedSize(48, 44)  # Much larger button container
+        self.theme_btn = QPushButton("🎨"); self.theme_btn.setObjectName('settingsBtn'); self.theme_btn.setToolTip("Dark mode coming soon!"); self.theme_btn.setEnabled(False)  
         # self.theme_btn.clicked.connect(self.toggle_theme)
         top.addWidget(self.theme_btn)
         
-        self._update_top_bar_icons()
-        if hasattr(self, 'mini_player') and self.mini_player: self.mini_player._apply_theme()
-        
-        root.addLayout(top)
+        # Add the top layout to the root layout
+        root.addLayout(top)    
         
         # Content
         content = QHBoxLayout(); content.setSpacing(8); root.addLayout(content, 1)
@@ -5055,21 +4769,24 @@ class MediaPlayer(QMainWindow):
         add_media_container = QWidget()
         add_media_container.setObjectName("addMediaContainer")
         add_media_container.setFixedHeight(44)
-        add_media_container.setMaximumWidth(220)
+        add_media_container.setMaximumWidth(220)  # Constrain width
 
         add_media_layout = QHBoxLayout(add_media_container)
         add_media_layout.setContentsMargins(0, 0, 0, 0)
         add_media_layout.setSpacing(0)
 
+        # Main button (most of the width)
         self.add_media_main = QPushButton("Add Media")
         self.add_media_main.setObjectName("addMediaMain")
         self.add_media_main.setFixedHeight(44)
         self.add_media_main.clicked.connect(self._on_add_media_clicked)
 
+        # Dropdown button (small arrow)
         self.add_media_dropdown = QPushButton("▼")
         self.add_media_dropdown.setObjectName("addMediaDropdown")
         self.add_media_dropdown.setFixedSize(32, 44)
 
+        # Create the menu
         menu = QMenu(self)
         menu.addAction("🔗 Add Link...", self.add_link_dialog)
         menu.addAction("📁 Add Files...", self.add_local_files)
@@ -5077,92 +4794,109 @@ class MediaPlayer(QMainWindow):
         def show_add_media_menu():
             try:
                 self._apply_menu_theme(menu)
+                # Position menu below the dropdown button
                 pos = self.add_media_dropdown.mapToGlobal(self.add_media_dropdown.rect().bottomRight())
-                pos.setX(pos.x() - menu.sizeHint().width())
+                pos.setX(pos.x() - menu.sizeHint().width())  # Right-align the menu
                 menu.exec(pos)
             except Exception:
+                # Fallback positioning
                 menu.exec(self.add_media_dropdown.mapToGlobal(self.add_media_dropdown.rect().bottomLeft()))
 
+        # Connect the dropdown button OUTSIDE the function definition
         self.add_media_dropdown.clicked.connect(show_add_media_menu)
 
+        # Add to layout
         add_media_layout.addWidget(self.add_media_main, 1)
         add_media_layout.addWidget(self.add_media_dropdown, 0)
 
         side_layout.addWidget(add_media_container)
-        
+        # ---- end Split Add Media Button ----
+
         opts = QHBoxLayout()
+        # Front page toggles removed; configure in Settings
         side_layout.addLayout(opts)
 
-        # Playlist controls
+        # Playlist controls (save/load) — Unwatched toggle with icon swap (eye / eye-off)
         controls = QHBoxLayout()
-        self.save_btn = QPushButton()
-        self.save_btn.setIcon(load_svg_icon(str(APP_DIR / 'icons/save.svg'), self.sidebar_icon_size)) 
+        self.save_btn = QPushButton("💾")
         self.save_btn.setObjectName('miniBtn')
         self.save_btn.setToolTip("Save current playlist")
         self.save_btn.clicked.connect(self.save_playlist)
-        self.save_btn.setIconSize(self.sidebar_icon_size) 
-        self.save_btn.setFixedSize(52, 44)  # Much larger for easier clicking
-
-        self.load_btn = QPushButton()
-        self.load_btn.setIcon(load_svg_icon(str(APP_DIR / 'icons/load.svg'), self.sidebar_icon_size))
+        self.save_btn.setFixedSize(36, 28)
+        self.load_btn = QPushButton("📂")
         self.load_btn.setObjectName('miniBtn')
         self.load_btn.setToolTip("Load saved playlist")
         self.load_btn.clicked.connect(self.load_playlist_dialog) 
-        self.load_btn.setIconSize(self.sidebar_icon_size)
-        self.load_btn.setFixedSize(52, 44)                  
+        self.load_btn.setFixedSize(36, 28)
 
-        self.duration_btn = QPushButton()
-        self.duration_btn.setIcon(load_svg_icon(str(APP_DIR / 'icons/duration.svg'), self.sidebar_icon_size))
+        self.duration_btn = QPushButton("⏱️")
         self.duration_btn.setObjectName('miniBtn')
         self.duration_btn.setToolTip("Fetch all durations")
         self.duration_btn.clicked.connect(self._fetch_all_durations)
-        self.duration_btn.setIconSize(self.sidebar_icon_size) 
-        self.duration_btn.setFixedSize(52, 44)                  
+        self.duration_btn.setFixedSize(36, 28)
 
+        # New: icon-only Unwatched toggle (prefers icons/eye.svg + icons/eye-off.svg)
         self.unwatched_btn = QPushButton()
         self.unwatched_btn.setObjectName('miniBtn')
         self.unwatched_btn.setCheckable(True)
-        self.unwatched_btn.setFixedSize(36, 28)
-        self.unwatched_btn.setIconSize(self.sidebar_icon_size) 
-        self.unwatched_btn.setFixedSize(52, 44)                  
-
-        self.unwatched_btn = QPushButton()
-        self.unwatched_btn.setObjectName('miniBtn')
-        self.unwatched_btn.setCheckable(True)
-
         try:
-            # CORRECT FILENAMES for eye icons
-            eye_on_path = APP_DIR / 'icons/icons_eye_Version10.svg'
-            eye_off_path = APP_DIR / 'icons/icons_eye-off_Version10.svg'
-            if eye_on_path.exists() and eye_off_path.exists():
-                self._unwatched_icon_on = QIcon(str(eye_on_path))
-                self._unwatched_icon_off = QIcon(str(eye_off_path))
-                self.unwatched_btn.setText("")
-            else:
-                raise FileNotFoundError("Eye icons not found")
-        except Exception:
-            self._unwatched_icon_on = None
-            self._unwatched_icon_off = None
-            self.unwatched_btn.setText("👁")
-        
-        # --- ADD THESE LINES FOR CONSISTENT SIZING ---
-        self.unwatched_btn.setIconSize(self.sidebar_icon_size)
-        self.unwatched_btn.setFixedSize(52, 44)
-
-        self.unwatched_btn.setToolTip("")
-        self.unwatched_btn.toggled.connect(self._toggle_unwatched_only)
-        self.unwatched_btn.toggled.connect(self._update_unwatched_btn_visual)
-
-        self.setAcceptDrops(True)
-
-        try:
-            self.unwatched_btn.setChecked(bool(getattr(self, 'unwatched_only', False)))
-            self._update_unwatched_btn_visual(bool(getattr(self, 'unwatched_only', False)))
-            initial_txt = "Unwatched only: ON (click to turn off)" if getattr(self, 'unwatched_only', False) else "Show unwatched items only (OFF)"
-            self._install_themed_tooltip(self.unwatched_btn, initial_txt)
+            self.unwatched_btn.setFixedSize(36, 28)
         except Exception:
             pass
 
+        # Resolve SVG icons if present; otherwise fallback to emoji
+        try:
+            eye_on_path = APP_DIR / 'icons' / 'eye.svg'
+            eye_off_path = APP_DIR / 'icons' / 'eye-off.svg'
+            if eye_on_path.exists() and eye_off_path.exists():
+                self._unwatched_icon_on = QIcon(str(eye_on_path))
+                self._unwatched_icon_off = QIcon(str(eye_off_path))
+                # icon-only, set icon size for alignment
+                self.unwatched_btn.setIconSize(QSize(18, 18))
+                self.unwatched_btn.setText("")  # icon-only
+            else:
+                self._unwatched_icon_on = None
+                self._unwatched_icon_off = None
+                # Emoji fallback: OFF shows 👁 (meaning show) and ON shows 🙈 (hidden)
+                # set a compact emoji so button width matches others
+                self.unwatched_btn.setText("👁" if not getattr(self, 'unwatched_only', False) else "🙈")
+        except Exception:
+            self._unwatched_icon_on = None
+            self._unwatched_icon_off = None
+            self.unwatched_btn.setText("👁" if not getattr(self, 'unwatched_only', False) else "🙈")
+
+                # use themed tooltip instead of native QToolTip (keep accessible description)
+        try:
+            self.unwatched_btn.setAccessibleDescription("Show unwatched items only (toggle)")
+        except Exception:
+            pass
+        self.unwatched_btn.setToolTip("")
+        # Reuse existing logic
+        self.unwatched_btn.toggled.connect(self._toggle_unwatched_only)
+        # Update visuals (icon/text and styling)
+        self.unwatched_btn.toggled.connect(self._update_unwatched_btn_visual)
+
+        # Enable drag and drop
+        self.setAcceptDrops(True)
+
+        # initialize state from persisted flag (set in _load_files)
+        try:
+            self.unwatched_btn.setChecked(bool(getattr(self, 'unwatched_only', False)))
+        except Exception:
+            pass
+        try:
+            # ensure correct initial appearance
+            self._update_unwatched_btn_visual(bool(getattr(self, 'unwatched_only', False)))
+        except Exception:
+            pass
+        try:
+            # Install themed tooltip (shows app-styled tooltip and is updated by _update_unwatched_btn_visual)
+            initial_txt = "Unwatched only: ON (click to turn off)" if getattr(self, 'unwatched_only', False) else "Show unwatched items only (OFF)"
+            self._install_themed_tooltip(self.unwatched_btn, initial_txt)
+        except Exception:
+            pass   
+
+        # Layout: Save | Load | Unwatched-icon | spacer | Group
         controls.addWidget(self.save_btn)
         controls.addWidget(self.load_btn)
         controls.addWidget(self.duration_btn)
@@ -5175,6 +4909,7 @@ class MediaPlayer(QMainWindow):
         except Exception:
             pass
 
+        # Search bar container for width control
         search_container = QWidget()
         search_layout = QHBoxLayout(search_container)
         search_layout.setContentsMargins(0, 0, 0, 0)
@@ -5184,25 +4919,37 @@ class MediaPlayer(QMainWindow):
         self.search_bar.setObjectName('searchBar')
         self.search_bar.setClearButtonEnabled(True)
 
+        # Constrain search bar width
         self.search_bar.setMaximumWidth(280)
         self.search_bar.setMinimumWidth(150)
 
         search_layout.addWidget(self.search_bar)
-        search_layout.addStretch()
+        search_layout.addStretch()  # Push search bar to the left
 
+        self.search_bar.setObjectName('searchBar')
+        self.search_bar.setClearButtonEnabled(True)  # This enables the X button
+
+        # Install event filter to handle IME events
         self.search_bar.installEventFilter(self)
+        
+        # Replace textChanged with improved Japanese IME support
         self.search_bar.textChanged.connect(self._on_search_text_changed)
         self.search_bar.returnPressed.connect(lambda: self.filter_playlist(self.search_bar.text()))
 
+        # Initialize search timer
         self._search_timer = QTimer()
         self._search_timer.setSingleShot(True)
 
         def do_filter():
+            # # DEBUG removed
             self.filter_playlist(self.search_bar.text())
 
         self._search_timer.timeout.connect(do_filter)
+        
+        # Track IME composition state
         self._ime_composing = False
 
+        # Clear with Escape key
         QShortcut(QKeySequence(Qt.Key_Escape), self.search_bar, self.search_bar.clear)
         side_layout.addWidget(search_container)
 
@@ -5210,14 +4957,22 @@ class MediaPlayer(QMainWindow):
         self.library_header_label.setObjectName('libraryHeader')
         self.library_header_label.setToolTip("Double-click to play all")
         self.library_header_label.mouseDoubleClickEvent = lambda e: self._play_all_library()
+
         self.library_header_label.setContextMenuPolicy(Qt.CustomContextMenu)
         self.library_header_label.customContextMenuRequested.connect(self._show_library_header_context_menu)
+
+        # ADD THIS DEBUG:
+        # print(f"[HEADER DEBUG] Library header context menu policy set: {self.library_header_label.contextMenuPolicy()}")
+        # print(f"[HEADER DEBUG] Signal connected: customContextMenuRequested")
+
         side_layout.addWidget(self.library_header_label)
 
+        # Create a container widget to hold either the playlist or the empty state view
         self.playlist_container = QWidget()
         self.playlist_stack = QStackedLayout(self.playlist_container)
         self.playlist_stack.setContentsMargins(0, 0, 0, 0)
 
+        # 1. The Playlist Tree (Index 0)
         self.playlist_tree = PlaylistTree(self)
         self.playlist_tree.setObjectName('playlistTree')
         self.playlist_tree.setAlternatingRowColors(True)
@@ -5227,12 +4982,27 @@ class MediaPlayer(QMainWindow):
         self.playlist_tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.playlist_tree.customContextMenuRequested.connect(self._show_playlist_context_menu)
         self.playlist_tree.mousePressEvent = self._create_mouse_press_handler()
+    
+
+        # Set playlist font: Lora, italic, bold (size set dynamically)
         self.playlist_tree.setFont(self._font_serif_no_size(italic=True, bold=True))
-        self.playlist_tree.setIconSize(QSize(24, 24))
+
+        # --- ADD THESE LINES FOR ICON SIZE AND ROW HEIGHT ---
+        self.playlist_tree.setIconSize(QSize(24, 24))  
+
+        # Apply custom style ONLY for dark theme (let vinyl use system default)
+        # We'll apply this properly after theme loads in _load_files()
+        pass  # Remove the style application here for now
+
         self.playlist_stack.addWidget(self.playlist_tree)
+
+         # --- ADD THESE LINES FOR ICON SIZE AND ROW HEIGHT ---
+        self.playlist_tree.setIconSize(QSize(24, 24))  
+
         self.playing_delegate = PlayingItemDelegate(self)
         self.playlist_tree.setItemDelegate(self.playing_delegate)
 
+        # 2. The Empty State Widget (Index 1)
         self.empty_state_widget = QWidget()
         empty_layout = QVBoxLayout(self.empty_state_widget)
         empty_layout.addStretch()
@@ -5251,37 +5021,60 @@ class MediaPlayer(QMainWindow):
         empty_layout.addWidget(self.empty_state_subheading)
         empty_layout.addStretch()
         self.playlist_stack.addWidget(self.empty_state_widget)
+
+        # Add the container to the sidebar
         side_layout.addWidget(self.playlist_container, 1)
 
+        # Video frame (now in the left compact area)
         self.video_frame = QWidget(); self.video_frame.setObjectName('videoWidget')
         self.video_frame.setStyleSheet("background:#000; border-radius: 6px"); main_col.addWidget(self.video_frame, 3)
 
+        # Now Playing and Progress Bar Layout
         now_playing_layout = QVBoxLayout()
+
+        # Track Title Label
         self.track_label = QLabel("No track playing")
         self.track_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed) 
         self.track_label.setObjectName('trackLabel')
         self.track_label.setFont(self._font_serif_no_size(italic=True, bold=True))
-        self.track_label.setWordWrap(False)
+        self.track_label.setWordWrap(False)  # Disable word wrap for eliding
         self.track_label.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
-        self.track_label.setStyleSheet("color: #4a2c2a; background: transparent; margin-top: 14px; margin-bottom: 12px; letter-spacing: 0.5px;")
-        self._track_title_full = "No track playing"
+        self.track_label.setStyleSheet("""
+            color: #4a2c2a;
+            background: transparent;
+            margin-top: 14px;
+            margin-bottom: 12px;
+            letter-spacing: 0.5px;
+        """)
+        self._track_title_full = "No track playing"  # Store full text for eliding
 
+        # Initialize track title scrolling components
         self._track_scroll_timer = None
         self._track_scroll_pos = 0
         self._track_original_text = ""
 
+        # FIXED: Proper event handler setup
         def track_enter_handler(event):
+            # # DEBUG removed
             self._start_track_title_scrolling()
+
         def track_leave_handler(event):
+            # # DEBUG removed
             self._stop_track_title_scrolling()
 
+        # Enable mouse tracking and set event handlers
         self.track_label.setMouseTracking(True)
         self.track_label.enterEvent = track_enter_handler
         self.track_label.leaveEvent = track_leave_handler
+
+        # Add mouse tracking for track title scrolling
+        self.track_label.setMouseTracking(True)
         self.track_label.enterEvent = self._on_track_title_enter
         self.track_label.leaveEvent = self._on_track_title_leave
+
         now_playing_layout.addWidget(self.track_label)
 
+        # Progress Bar and Time Labels
         progress_layout = QHBoxLayout()
         self.time_label = QLabel("0:00")
         self.time_label.setObjectName('timeLabel')
@@ -5300,20 +5093,28 @@ class MediaPlayer(QMainWindow):
         progress_layout.addWidget(self.dur_label)
         now_playing_layout.addLayout(progress_layout)
 
+
+        # Up Next panel (toggle via Settings)
         try:
             self.up_next_container = QWidget()
             up_layout = QVBoxLayout(self.up_next_container)
             up_layout.setContentsMargins(0,0,0,0)
+
             self.up_next_header = QPushButton("▼ Up Next")
             self.up_next_header.setCheckable(True)
             self.up_next_header.setChecked(True)
             self.up_next_header.setObjectName('upNextHeader')
             self.up_next_header.clicked.connect(self._on_up_next_header_clicked)
             up_layout.addWidget(self.up_next_header)
+
+            # Create a stacked layout to switch between the list and a message
             self.up_next_stack = QStackedLayout()
+
+            # 1. The song list (index 0)
             self.up_next = ScrollingTreeWidget()
             self.up_next.setHeaderHidden(True)
             self.up_next.setObjectName('upNext')
+            # self.up_next.setFixedHeight(140)  <-- REMOVED THIS LINE
             self.up_next.setFont(self._font_serif_no_size(italic=True, bold=True))
             self.up_next.setAlternatingRowColors(True)
             self.up_next.setIndentation(12)
@@ -5322,6 +5123,8 @@ class MediaPlayer(QMainWindow):
             self.up_next.customContextMenuRequested.connect(self._show_up_next_menu)
             self.up_next.itemDoubleClicked.connect(self._on_up_next_double_clicked)
             self.up_next_stack.addWidget(self.up_next)
+
+            # 2. The shuffle message (index 1)
             shuffle_msg_widget = QWidget()
             shuffle_msg_layout = QVBoxLayout(shuffle_msg_widget)
             shuffle_msg_layout.setAlignment(Qt.AlignCenter)
@@ -5330,6 +5133,8 @@ class MediaPlayer(QMainWindow):
             shuffle_msg_label.setAlignment(Qt.AlignCenter)
             shuffle_msg_layout.addWidget(shuffle_msg_label)
             self.up_next_stack.addWidget(shuffle_msg_widget)
+
+            # 3. The repeat message (index 2) - ADD THIS NEW BLOCK
             repeat_msg_widget = QWidget()
             repeat_msg_layout = QVBoxLayout(repeat_msg_widget)
             repeat_msg_layout.setAlignment(Qt.AlignCenter)
@@ -5338,11 +5143,13 @@ class MediaPlayer(QMainWindow):
             repeat_msg_label.setAlignment(Qt.AlignCenter)
             repeat_msg_layout.addWidget(repeat_msg_label)
             self.up_next_stack.addWidget(repeat_msg_widget)
-            up_layout.addLayout(self.up_next_stack)
-            main_col.addWidget(self.up_next_container, 1)
+
+            up_layout.addLayout(self.up_next_stack) # Add the stack to the panel
+            main_col.addWidget(self.up_next_container, 1) # <-- MODIFIED THIS LINE
         except Exception:
             pass
         
+        # Shuffle button
         self.shuffle_btn = QPushButton()
         self.shuffle_btn.setCheckable(True)
         self.shuffle_btn.setIconSize(self.icon_size)
@@ -5351,6 +5158,7 @@ class MediaPlayer(QMainWindow):
         self.shuffle_btn.clicked.connect(self._toggle_shuffle)
         self.shuffle_btn.setFixedSize(40, 40) 
         
+        # Prev button
         self.prev_btn = QPushButton()
         self.prev_btn.setIconSize(self.icon_size)
         self.prev_btn.setObjectName('controlBtn')
@@ -5358,14 +5166,38 @@ class MediaPlayer(QMainWindow):
         self.prev_btn.clicked.connect(self.previous_track)
         self.shuffle_btn.setFixedSize(40, 40) 
 
+        # Play/Pause button
         self.play_pause_btn = QPushButton()
         self.play_pause_btn.setIconSize(QSize(50, 50))
         self.play_pause_btn.setObjectName('playPauseBtn')
         self.play_pause_btn.setToolTip("Play/Pause (Space)")
         self.play_pause_btn.clicked.connect(self.toggle_play_pause)
 
+        # Add this test:
+        def simple_test():
+            # print("Play button was clicked!")
+            try:
+                current_size = self.play_pause_btn.iconSize()
+                # print(f"Current icon size: {current_size.width()}x{current_size.height()}")
+                # Test if we can change icon size
+                self.play_pause_btn.setIconSize(QSize(45, 45))
+                QTimer.singleShot(200, lambda: self.play_pause_btn.setIconSize(QSize(50, 50)))
+            except Exception as e:
+                print(f"Size test failed: {e}")
+
+        self.play_pause_btn.clicked.connect(simple_test)
+
+        # Test simple press feedback
+        def test_press():
+            pass # print("Button pressed - animation should trigger")
+        def test_release():
+            pass # print("Button released - animation should trigger")
+        self.play_pause_btn.pressed.connect(test_press)
+        self.play_pause_btn.released.connect(test_release)
+
         self.play_pause_btn.setFixedSize(60, 60)
         
+        # Next button
         self.next_btn = QPushButton()
         self.next_btn.setIconSize(self.icon_size)
         self.next_btn.setObjectName('controlBtn')
@@ -5373,6 +5205,7 @@ class MediaPlayer(QMainWindow):
         self.next_btn.clicked.connect(self.next_track)
         self.next_btn.setFixedSize(40, 40)
 
+        # Repeat button
         self.repeat_btn = QPushButton()
         self.repeat_btn.setCheckable(True)
         self.repeat_btn.setIconSize(self.icon_size)
@@ -5381,11 +5214,14 @@ class MediaPlayer(QMainWindow):
         self.repeat_btn.clicked.connect(self._toggle_repeat)
         self.repeat_btn.setFixedSize(40, 40)
         
+        # --- Volume icon: prefer icons/volume.svg rendered with QSvgRenderer (hi-dpi aware) ---
+        # --- Volume icon: prefer icons/volume.svg rendered with QSvgRenderer (hi-dpi aware) ---
         try:
             from PySide6.QtCore import QRectF
+            # create label
             self.volume_icon_label = QLabel()
             self.volume_icon_label.setObjectName('volumeIconLabel')
-            self.volume_icon_label.setFixedSize(icon_size)
+            self.volume_icon_label.setFixedSize(icon_size)  # icon_size defined earlier (QSize(22,22))
             self.volume_icon_label.setToolTip("Volume")
             try:
                 self.volume_icon_label.setAccessibleDescription("Volume")
@@ -5395,12 +5231,15 @@ class MediaPlayer(QMainWindow):
             svg_path = APP_DIR / 'icons' / 'volume.svg'
             rendered = False
             try:
+                # If QtSvg (QSvgRenderer) is available and the SVG exists, render it into a QPixmap
                 if svg_path.exists() and ('QSvgRenderer' in globals()) and (QSvgRenderer is not None):
+                    # Use theme-appropriate color
                     if getattr(self, 'theme', 'dark') == 'dark':
-                        color = "#d0d0d0"
+                        color = "#d0d0d0"  # off-white grey for dark theme
                     else:
-                        color = "#4a2c2a"
+                        color = "#4a2c2a"  # brown for vinyl theme
                     
+                    # Use the existing _render_svg_tinted function to color the icon
                     pm = _render_svg_tinted(str(svg_path), icon_size, color)
                     if not pm.isNull():
                         self.volume_icon_label.setPixmap(pm)
@@ -5408,6 +5247,7 @@ class MediaPlayer(QMainWindow):
             except Exception:
                 rendered = False
 
+            # Fallback: use previously loaded QIcon (self.volume_icon) if available
             if not rendered:
                 try:
                     if hasattr(self, 'volume_icon') and not self.volume_icon.isNull():
@@ -5416,10 +5256,12 @@ class MediaPlayer(QMainWindow):
                 except Exception:
                     rendered = False
 
+            # Final fallback: emoji
             if not rendered:
                 self.volume_icon_label.setText("🔇")
                 self.volume_icon_label.setAlignment(Qt.AlignCenter)
 
+            # Optional: click-to-toggle-mute handler (uncomment assignment line below to enable)
             try:
                 def _vol_clicked(ev):
                     try:
@@ -5434,21 +5276,25 @@ class MediaPlayer(QMainWindow):
                 self.volume_icon_label.mousePressEvent = _vol_clicked
             except Exception:
                 pass
+
+            
         except Exception:
             controls_bar.addWidget(QLabel("🔊"))
-            
+        # --- end volume icon block ---
         self.volume_slider = ClickableSlider(Qt.Horizontal)
         self.volume_slider.setObjectName('volumeSlider')
         self.volume_slider.setRange(0, 100)
         self.volume_slider.setValue(80)
         self.volume_slider.setFixedWidth(120)
-        self.volume_slider.setToolTip(f"Volume: 80%")
+        self.volume_slider.setToolTip(f"Volume: 80%")  # Initial tooltip
         self.volume_slider.valueChanged.connect(self.set_volume)
+        # Update tooltip on any value change
         self.volume_slider.valueChanged.connect(lambda v: self.volume_slider.setToolTip(f"Volume: {v}%"))
-        
+        # --- Corrected Centered Control Bar Layout ---
         controls_row = QGridLayout()
         controls_row.setContentsMargins(0, 0, 0, 0)
 
+        # 1. Define the center button group
         center_controls = QHBoxLayout()
         center_controls.setSpacing(12)
         center_controls.addWidget(self.shuffle_btn)
@@ -5459,6 +5305,7 @@ class MediaPlayer(QMainWindow):
         center_widget = QWidget()
         center_widget.setLayout(center_controls)
 
+        # 2. Define the volume control group
         volume_controls = QHBoxLayout()
         volume_controls.setSpacing(6)
         volume_controls.addWidget(self.volume_icon_label)
@@ -5466,18 +5313,27 @@ class MediaPlayer(QMainWindow):
         volume_widget = QWidget()
         volume_widget.setLayout(volume_controls)
 
+        # 3. Add both groups to the layout
+        # The button group spans all 3 columns and is centered within them.
         controls_row.addWidget(center_widget, 0, 0, 1, 3, alignment=Qt.AlignHCenter)
+        # The volume group is placed in the 3rd column (index 2) and aligned to the right.
         controls_row.addWidget(volume_widget, 0, 2, alignment=Qt.AlignRight)
 
+        # Make the outer columns stretchable to push the volume slider to the edge.
         controls_row.setColumnStretch(0, 1)
         controls_row.setColumnStretch(2, 1)
 
-        root.addLayout(now_playing_layout)
+        # Add the full-width Now Playing panel just above the controls
+        root.addLayout(now_playing_layout) # <--- ADD THIS LINE
+
+        # Add controls to root layout for full-width span
         root.addLayout(controls_row)
 
         self.status = QStatusBar(); self.setStatusBar(self.status)
 
+        # UI timers
         self.badge_timer = QTimer(self); self.badge_timer.timeout.connect(self.update_badge); self.badge_timer.start(5000)
+        # Apply Up Next initial visibility from settings
         try:
             _show_up = bool(getattr(self, 'show_up_next', True))
             if hasattr(self, 'up_next_container'):
@@ -5491,41 +5347,28 @@ class MediaPlayer(QMainWindow):
                     pass
         except Exception:
             pass
+        # Note: Up Next now uses ScrollingTreeWidget, so no custom scrolling setup needed
+        # self._setup_up_next_scrolling()    
+
+        # DEBUG: Test if undo system is set up
+        # print("=== UNDO SYSTEM CHECK ===")
+        # print(f"_add_undo_operation exists: {hasattr(self, '_add_undo_operation')}")
+        # print(f"_perform_undo exists: {hasattr(self, '_perform_undo')}")  
+        # print(f"_undo_stack exists: {hasattr(self, '_undo_stack')}")
+        # print(f"Undo stack size: {len(getattr(self, '_undo_stack', []))}")
+        # print("========================")
 
 
     def _toggle_mini_player(self):
         """Hides the main window and shows the mini-player."""
+        # Create the mini-player instance on the first click
         if not hasattr(self, 'mini_player') or not self.mini_player:
             self.mini_player = MiniPlayer(main_player_instance=self)
 
-            # Connect buttons
-            self.mini_player.play_pause_btn.clicked.connect(self.toggle_play_pause)
-            self.mini_player.next_btn.clicked.connect(self.next_track)
-            self.mini_player.prev_btn.clicked.connect(self.previous_track)
+            # --- Connect the mini-player's buttons back to our main player ---
+            # This allows the mini-player to control the main app
             self.mini_player.show_main_btn.clicked.connect(self._show_main_player_from_mini)
-
-            # Connect state signals
-            self.playbackStateChanged.connect(self.mini_player.update_playback_state)
-            self.trackChanged.connect(self.mini_player.update_track_title)
-            self.trackThumbnailReady.connect(self.mini_player.update_thumbnail) # <-- ADD THIS LINE
-
-        # Immediately sync the mini-player with the current state
-        self.mini_player.update_playback_state(self._is_playing())
-        if 0 <= self.current_index < len(self.playlist):
-            item = self.playlist[self.current_index]
-            self.mini_player.update_track_title(item.get('title', 'Unknown'))
-            # --- Trigger initial thumbnail update ---
-            thumb_url = item.get('thumbnail')
-            if thumb_url:
-                fetcher = ThumbnailFetcher(thumb_url, self)
-                fetcher.thumbnailReady.connect(self.mini_player.update_thumbnail)
-                fetcher.start()
-            else:
-                self.mini_player.update_thumbnail(QPixmap())
-            # --- End initial thumbnail update ---
-        else:
-            self.mini_player.update_track_title("No Track Playing")
-            self.mini_player.update_thumbnail(QPixmap())
+            # We will connect the other buttons (play, next, etc.) later.
 
         self.hide()
         self.mini_player.show()
@@ -5714,7 +5557,7 @@ class MediaPlayer(QMainWindow):
                 self.unwatched_btn.setText("")  # icon-only
                 # Ensure icon is sized for alignment
                 try:
-                    self.unwatched_btn.setIconSize(self.sidebar_icon_size)
+                    self.unwatched_btn.setIconSize(QSize(18, 18))
                 except Exception:
                     pass
             else:
@@ -6936,9 +6779,6 @@ class MediaPlayer(QMainWindow):
                 except Exception:
                     pass    
 
-                if hasattr(self, 'icon_manager') and self.icon_manager:
-                    self._update_dynamic_icons()    
-
                 # Apply text colors to labels
                 if hasattr(self, 'track_label'):
                     self.track_label.setStyleSheet(f"color: {text_color}; background: transparent; margin-top: 14px; margin-bottom: 12px; letter-spacing: 0.5px; font-weight: bold; font-style: italic; font-family: '{self._serif_font}';")
@@ -6983,7 +6823,6 @@ class MediaPlayer(QMainWindow):
 
             except Exception as e:
                 logger.warning(f"Failed to force-apply theme to widgets: {e}")
-                
 
     def _play_all_library(self):
         """Plays the entire library from the beginning."""
@@ -7011,10 +6850,6 @@ class MediaPlayer(QMainWindow):
                 bg.setPalette(pal)
         except Exception:
             pass
-
-        if hasattr(self, 'icon_manager') and self.icon_manager:
-            self._migrate_all_ui_icons()
-            self._update_dynamic_icons()
         
         # Apply the new theme
         if self.theme == 'vinyl':
@@ -7175,35 +7010,35 @@ class MediaPlayer(QMainWindow):
 
 
     def _update_silence_indicator(self, is_silent: bool = None):
-        """Update the silence indicator using themed SVG icons."""
+        """Update the silence indicator - simplified version."""
         if is_silent is not None:
             self._last_system_is_silent = bool(is_silent)
         
+        # Always keep visible to prevent layout shifts
         self.silence_indicator.setVisible(True)
         
+        # Simple check: if we have a current track, assume we're active
         has_track = (self.current_index >= 0 and self.current_index < len(self.playlist))
-        icon_size = QSize(30, 30)  # Much larger silence indicator icon
-        icon_color = "#f3f3f3" if getattr(self, 'theme', 'dark') == 'dark' else "#4a2c2a"
-
-        self.silence_indicator.setText("")
         
-        pixmap = QPixmap()
-        tooltip = ""
-
         if has_track:
+            # Any time we have a loaded track, show playing icon
+            icon_text = "🎵"
             tooltip = "Media player is active"
-            pixmap = _render_svg_outline_tinted(str(APP_DIR / 'icons/music.svg'), icon_size, icon_color)
+            # Reset timer when we have an active track
             self._reset_silence_counter()
         else:
+            # No track loaded: show system audio state
             if self._last_system_is_silent:
+                icon_text = "🔇"
                 remaining = max(0, self.audio_monitor.silence_duration_s - self.audio_monitor._silence_counter)
                 tooltip = f"System is silent. Auto-play in {human_duration(remaining)}."
-                pixmap = _render_svg_outline_tinted(str(APP_DIR / 'icons/volume-mute.svg'), icon_size, "#e76f51") 
             else:
+                icon_text = "🔊"
                 tooltip = "System audio is active."
-                pixmap = _render_svg_outline_tinted(str(APP_DIR / 'icons/volume.svg'), icon_size, icon_color)
         
-        self.silence_indicator.setPixmap(pixmap)
+        # Always update
+        self.silence_indicator.setPixmap(QPixmap())
+        self.silence_indicator.setText(icon_text)
         self.silence_indicator.setToolTip(tooltip)
         
     def _force_update_silence_indicator_after_delay(self):
@@ -7262,45 +7097,41 @@ class MediaPlayer(QMainWindow):
         self.tray_icon.show()
 
     def _on_tray_activated(self, reason):
-        # On a single-click, don't act immediately. Start a timer instead.
-        if reason == QSystemTrayIcon.Trigger:
-            # --- THIS IS THE FIX ---
-            # Use the direct and reliable method to get the double-click interval
-            delay = QApplication.doubleClickInterval()
-            self.tray_click_timer.start(delay)
+        # NEW: Handle single-click to toggle play/pause
+        if reason == QSystemTrayIcon.Trigger: # This is a single left-click
+            self.toggle_play_pause()
 
-        # On a double-click, cancel the pending single-click action and do the double-click action.
+        # Keep the existing double-click logic to show/hide the window
         elif reason == QSystemTrayIcon.DoubleClick:
-            self.tray_click_timer.stop() # This prevents the play/pause
-            # Now, show or hide the window
             if self.isVisible():
                 self.hide()
             else:
                 self._show_player()
-                
+
     def _setup_button_animations(self):
         """Button feedback with proper circular glow"""
         try:
             buttons = [
-                # Main controls (keep these existing sizes)
+                # Main controls
                 (self.play_pause_btn, QSize(50, 50)),
                 (self.prev_btn, QSize(22, 22)),
                 (self.next_btn, QSize(22, 22)),
                 (self.shuffle_btn, QSize(22, 22)),
                 (self.repeat_btn, QSize(22, 22)),
                 
-                # Top bar buttons - MUCH larger
-                (self.stats_btn, QSize(32, 32)),
-                (self.settings_btn, QSize(32, 32)),
-                (self.theme_btn, QSize(32, 32)),
-                (self.mini_player_btn, QSize(32, 32)),
+                # Top bar buttons
+                (self.stats_btn, QSize(18, 18)),
+                (self.settings_btn, QSize(18, 18)),
+                (self.theme_btn, QSize(18, 18)),  # Remove the duplicate
                 
-                # Playlist controls - larger
-                (self.save_btn, QSize(30, 30)),
-                (self.load_btn, QSize(30, 30)),
-                (self.duration_btn, QSize(30, 30)),
-                (self.unwatched_btn, QSize(24, 24)),
+                # Playlist controls
+                (self.save_btn, QSize(16, 16)),
+                (self.load_btn, QSize(16, 16)),
+                (self.duration_btn, QSize(16, 16)),
+                (self.unwatched_btn, QSize(16, 16)),
+                (self.duration_btn, QSize(16, 16)),
             ]
+            
             # Icon button animations
             for btn, normal_size in buttons:
                 def make_press_handler(button, n_size):
@@ -8104,21 +7935,6 @@ class MediaPlayer(QMainWindow):
         except Exception as e:
             print(f"Failed to apply dialog theme: {e}")
 
-    def _create_icon_action(self, text, icon_name, callback):
-        """Creates a QAction with an icon from the icons folder."""
-        try:
-            icon_path = APP_DIR / 'icons' / icon_name
-            icon = QIcon(str(icon_path)) if icon_path.exists() else QIcon()
-            action = QAction(icon, text, self)
-            action.triggered.connect(callback)
-            return action
-        except Exception as e:
-            logger.error(f"Failed to create icon action '{text}': {e}")
-            # Fallback to a text-only action
-            action = QAction(text, self)
-            action.triggered.connect(callback)
-            return action
-
     def _is_completed_url(self, url):
         try:
             if not url:
@@ -8390,8 +8206,8 @@ class MediaPlayer(QMainWindow):
         except Exception:
             pass
 
-    def _highlight_current_row(self, scroll_to_item=True):
-        """Highlight the currently playing item with icon and bold text."""
+    def _highlight_current_row(self):
+        """Highlight the currently playing item with icon and bold text"""
         try:
             # Get fonts
             default_font = self._font_serif_no_size(italic=True, bold=True)
@@ -8409,13 +8225,18 @@ class MediaPlayer(QMainWindow):
                     idx = data[1]
                     
                     # Get the original text without any playing indicators
-                    original_text = self.playlist[idx].get('title', 'Unknown')
+                    original_text = item.text(0)
+                    if original_text.startswith('▶ '):
+                        original_text = original_text[2:]
 
                     if idx == self.current_index:
-                        # This is the currently playing item
                         item.setText(0, f"▶ {original_text}")
                         item.setFont(0, playing_font)
-                        
+                        text_color = QColor("#d1603f")      # Slightly deeper orange
+                        item.setForeground(0, text_color)
+                        # Add subtle background highlight
+                        item.setBackground(0, QColor(231, 111, 81, 25))  # Very subtle orange background
+
                         # Set the theme-appropriate highlight color
                         text_color = QColor("#e76f51") # Same for both themes
                         item.setForeground(0, text_color)
@@ -8431,9 +8252,8 @@ class MediaPlayer(QMainWindow):
 
                 iterator += 1
 
-            # --- THIS IS THE FIX ---
-            # Only scroll if requested and an item was found
-            if item_to_scroll_to and scroll_to_item:
+            # Scroll to the highlighted item after all styling is applied
+            if item_to_scroll_to:
                 self.playlist_tree.scrollToItem(item_to_scroll_to, QAbstractItemView.PositionAtCenter)
 
         except Exception as e:
@@ -9997,9 +9817,11 @@ class MediaPlayer(QMainWindow):
                 menu.addAction("▶ Play").triggered.connect(lambda: self._play_index(idx))
                 menu.addAction("⭐ Play Next").triggered.connect(lambda i=idx: self._queue_item_next(i))
                 copy_action = menu.addAction("🔗 Copy URL")
-                copy_action.triggered.connect(lambda checked=False, u=url: self._copy_url(u))
-                remove_action = self._create_icon_action("Remove", "trash.svg", lambda: self._remove_index(idx))
-                menu.addAction(remove_action)
+                copy_action.triggered.connect(lambda checked=False, u=url: (
+                    # DEBUG removed,
+                    self._copy_url(u)
+                )[1])
+                menu.addAction("🗑️ Remove").triggered.connect(lambda: self._remove_index(idx))
                 menu.addSeparator()
                 menu.addAction("⏮️ Reset Playback Position").triggered.connect(lambda: self._clear_resume_for_url(url))
                 menu.addAction("✅ Mark as Unwatched").triggered.connect(lambda u=url: self._mark_item_unwatched(u))
@@ -10691,33 +10513,6 @@ class MediaPlayer(QMainWindow):
             if not (0 <= self.current_index < len(self.playlist)):
                 return
             
-            item = self.playlist[self.current_index]
-
-            # --- ADD THIS ENTIRE BLOCK TO FETCH METADATA ON-DEMAND ---
-            title = item.get('title', '')
-            url = item.get('url', '')
-            duration = item.get('duration')
-
-            # Check if we need to fetch more info (no duration, or generic title)
-            if item.get('type') != 'local' and (not duration or not title or title == url):
-                self.status.showMessage(f"Fetching info: {Path(url).name}...", 2000)
-                QApplication.processEvents() # Keep UI responsive
-                try:
-                    new_title, new_duration = self._get_title_and_duration_sync(url, item.get('type'))
-                    if new_title:
-                        item['title'] = new_title
-                        self._set_track_title(new_title)
-                        self._update_tree_item_title(url, new_title)
-                    if new_duration:
-                        item['duration'] = new_duration
-                        # This will also trigger a UI update for the duration column
-                        self._on_duration_ready(self.current_index, new_duration)
-                    
-                    self._schedule_save_current_playlist()
-                except Exception as e:
-                    logger.warning(f"Failed to resolve metadata on play for {url}: {e}")
-            # --- END OF NEW BLOCK ---
-
             # --- Handle skipping completed videos ---
             if getattr(self, '_force_play_ignore_completed', False):
                 self._force_play_ignore_completed = False
@@ -10742,20 +10537,6 @@ class MediaPlayer(QMainWindow):
             
             # --- Determine resume position ---
             item = self.playlist[self.current_index]
-            self.trackChanged.emit(item.get('title', 'Unknown'))
-            try:
-                thumb_url = item.get('thumbnail')
-                if thumb_url:
-                    fetcher = ThumbnailFetcher(thumb_url, self)
-                    # When the fetcher is done, it will emit its own signal.
-                    # We connect that to our new main player signal.
-                    fetcher.thumbnailReady.connect(self.trackThumbnailReady.emit)
-                    fetcher.start()
-                else:
-                    # If there's no thumbnail, emit an empty pixmap to clear the old one
-                    self.trackThumbnailReady.emit(QPixmap())
-            except Exception as e:
-                logger.error(f"Failed to start thumbnail fetcher: {e}")
             url = item.get('url')
             key = self._canonical_url_key(url) if url else None
             resume_ms = int(self.playback_positions.get(key, self.playback_positions.get(url, 0))) if url else 0
@@ -10868,7 +10649,6 @@ class MediaPlayer(QMainWindow):
             # # DEBUG removed
             self._update_silence_indicator()
         self._update_tray()
-        self.playbackStateChanged.emit(self._is_playing())
 
     def _toggle_shuffle(self):
         self.shuffle_mode = self.shuffle_btn.isChecked()
@@ -11422,7 +11202,7 @@ class MediaPlayer(QMainWindow):
 
             # --- PREPARATION ---
             # 1. Deduplicate against the entire existing playlist
-            existing_urls = {it.get('url') for it in self.player.playlist if it.get('url')}
+            existing_urls = {it.get('url') for it in self.playlist if it.get('url')}
             new_items = [it for it in items if it.get('url') and it.get('url') not in existing_urls]
             
             if not new_items:
@@ -11430,10 +11210,10 @@ class MediaPlayer(QMainWindow):
                 return
 
             # 2. Keep track of the starting index for new items
-            base_index = len(self.player.playlist)
+            base_index = len(self.playlist)
             
             # 3. Update the internal playlist data structure first
-            self.player.playlist.extend(new_items)
+            self.playlist.extend(new_items)
             
             # --- BATCHED UI UPDATE ---
             # 4. Define the function that will process one batch of new items
@@ -11454,6 +11234,12 @@ class MediaPlayer(QMainWindow):
             # 6. Schedule a single save operation after all items are added
             self._schedule_save_current_playlist()
             self._hide_loading(f"Added {len(new_items)} new entries", 5000)
+            
+            # 7. Resolve titles in the background for items that need it
+            items_needing_titles = [it for it in new_items if not it.get('title') or it['title'] == it.get('url')]
+            if items_needing_titles:
+                for item in items_needing_titles:
+                    self._resolve_title_parallel(item.get('url'), item.get('type', 'local'))
             
     def _restart_audio_monitor(self):
         """Restart the audio monitor with new settings"""

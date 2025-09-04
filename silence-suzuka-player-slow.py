@@ -954,7 +954,7 @@ class PlaylistManagerDialog(QDialog):
             self.sort_field_combo.addItem("📅 Date Created", "created")
             self.sort_field_combo.addItem("📝 Name", "name")
             self.sort_field_combo.addItem("📊 Item Count", "items")
-            self.sort_field_combo.activated.connect(self._on_sort_changed)
+            self.sort_field_combo.currentDataChanged.connect(self._on_sort_changed)
             self.sort_field_combo.setStyleSheet("""
                 QComboBox {
                     background-color: #f9f6f0;
@@ -1061,10 +1061,9 @@ class PlaylistManagerDialog(QDialog):
         except Exception as e:
             print(f"Filter changed error: {e}")
     
-    def _on_sort_changed(self, index):
+    def _on_sort_changed(self, field):
         """Handle sort field changes"""
         try:
-            field = self.sort_field_combo.itemData(index)
             self._current_sort['field'] = field
             self._apply_filters_and_sort()
         except Exception as e:
@@ -2726,7 +2725,7 @@ class PlaylistLoaderThread(QThread):
         ydl_opts = {
             'quiet': True,
             'no_warnings': True,
-            'extract_flat': True,      # THIS IS THE KEY CHANGE FOR PERFORMANCE
+            'extract_flat': False,
             'skip_download': True,
             'socket_timeout': 60,
             'retries': 3,
@@ -2755,7 +2754,7 @@ class PlaylistLoaderThread(QThread):
         try:
             if info is None:
                 self.itemsReady.emit([]); return
-            
+            # If this is a playlist with 'entries'
             if isinstance(info, dict) and info.get('entries'):
                 playlist_title = info.get('title') or self.url
                 entries = list(info.get('entries') or [])
@@ -2767,25 +2766,23 @@ class PlaylistLoaderThread(QThread):
                     u = entry.get('webpage_url') or entry.get('url') or idv
                     if not u:
                         continue
-                    
+                    # Normalize to full URL when extractor returns IDs only
                     if self.kind == 'bilibili' and not (u.startswith('http://') or u.startswith('https://')):
                         u = f"https://www.bilibili.com/video/{idv or u}"
                     if self.kind == 'youtube' and not (u.startswith('http://') or u.startswith('https://')):
                         u = f"https://www.youtube.com/watch?v={idv or u}"
                     title = entry.get('title') or u
-                    
-                    item = {'title': title, 'url': u, 'type': self.kind, 'playlist': playlist_title, 'playlist_key': info.get('id') or self.url}
-                    if 'thumbnail' in entry:
-                        item['thumbnail'] = entry['thumbnail']
-                    chunk.append(item)
-
+                    chunk.append({'title': title, 'url': u, 'type': self.kind, 'playlist': playlist_title, 'playlist_key': info.get('id') or self.url})
+                    if len(chunk) >= 25:
+                        self.itemsReady.emit(chunk); chunk = []
                 if chunk:
                     self.itemsReady.emit(chunk)
             else:
+                # Single video fallback
                 self.itemsReady.emit([{'title': info.get('title') or self.url, 'url': self.url, 'type': self.kind}])
         except Exception as e:
             self.error.emit(str(e)); return
-        
+
 class YtdlManager(QThread):
     """A persistent background thread to manage and reuse expensive yt-dlp instances."""
     titleResolved = Signal(str, str)  # url, title
@@ -3393,86 +3390,85 @@ class PlaylistTree(QTreeWidget):
         print("Column 1 width (Duration):", self.columnWidth(1))
 
     def dropEvent(self, event):
-        """Handle drop events for both internal reordering and external files/URLs."""
-        
-        # --- CASE 1: Internal move (reordering items within the playlist) ---
-        if event.source() == self and event.proposedAction() == Qt.MoveAction:
-            try:
-                # Store undo data BEFORE making changes
-                old_playlist_for_undo = [item.copy() for item in self.player.playlist]
-                old_index_for_undo = self.player.current_index
-                was_playing_for_undo = self.player._is_playing()
-                expansion_state = self.player._get_tree_expansion_state()
+        """Handle drop events for files and URLs with duplicate guard and preserved expansion state."""
+        try:
+            mime_data = event.mimeData()
+            expansion_state = self._get_tree_expansion_state()
 
-                # Get the target item and drop position
-                target_item = self.itemAt(event.pos())
-                drop_indicator = self.dropIndicatorPosition()
+            added = 0
+            skipped = 0
 
-                # Get dragged items and their original data
-                dragged_items_data = []
-                selected_nodes = self.selectedItems()
-                for node in selected_nodes:
-                    data = node.data(0, Qt.UserRole)
-                    if isinstance(data, tuple) and data[0] == 'current':
-                        original_index = data[1]
-                        if 0 <= original_index < len(self.player.playlist):
-                           dragged_items_data.append(self.player.playlist[original_index])
+            def _norm_local(u: str) -> str:
+                import os
+                p = _path_from_url_or_path(u or "")
+                try:
+                    return os.path.normcase(os.path.abspath(p))
+                except Exception:
+                    return p
 
-                # Remove dragged items from the main playlist to create a temporary list
-                temp_playlist = [item for item in self.player.playlist if item not in dragged_items_data]
+            new_items = []  # for undo
 
-                # Determine the insertion index in the temporary playlist
-                insertion_index = -1
-                if target_item:
-                    target_data = target_item.data(0, Qt.UserRole)
-                    if isinstance(target_data, tuple) and target_data[0] == 'current':
-                        target_playlist_item = self.player.playlist[target_data[1]]
-                        try:
-                            insertion_index = temp_playlist.index(target_playlist_item)
-                            if drop_indicator == QAbstractItemView.DropIndicatorPosition.BelowItem:
-                                insertion_index += 1
-                        except ValueError:
-                            insertion_index = len(temp_playlist)
-                
-                if insertion_index == -1:
-                    insertion_index = len(temp_playlist)
+            if mime_data.hasUrls():
+                existing_local = set(
+                    _norm_local(it.get('url'))
+                    for it in self.playlist
+                    if isinstance(it, dict) and it.get('type') == 'local' and it.get('url')
+                )
 
-                # Insert the dragged items at the calculated position
-                for item_to_insert in dragged_items_data:
-                    temp_playlist.insert(insertion_index, item_to_insert)
-                    insertion_index += 1
+                for url in mime_data.urls():
+                    file_path = url.toLocalFile()
+                    if file_path:
+                        nf = _norm_local(file_path)
+                        if nf in existing_local:
+                            skipped += 1
+                            continue
 
-                # Replace the player's playlist with the newly ordered one
-                self.player.playlist = temp_playlist
-                
-                # Add to undo stack
-                self.player._add_undo_operation('move_items', {
-                    'playlist': old_playlist_for_undo,
-                    'current_index': old_index_for_undo,
-                    'was_playing': was_playing_for_undo
+                        item = {
+                            'title': Path(file_path).name,
+                            'url': file_path,
+                            'type': 'local'
+                        }
+                        self.playlist.append(item)
+                        new_items.append({'index': len(self.playlist) - 1, 'item': item})
+                        existing_local.add(nf)
+                        added += 1
+
+                        if hasattr(self, '_local_dur'):
+                            self._local_dur.enqueue(len(self.playlist) - 1, self.playlist[-1])
+                    else:
+                        # Web URL (no dedupe here; handled inside _add_url_to_playlist)
+                        self._add_url_to_playlist(url.toString())
+
+            elif mime_data.hasText():
+                text = (mime_data.text() or "").strip().strip('"').strip("'")
+                if text:
+                    # Route through the unified path handler (it dedupes and enqueues)
+                    before_len = len(self.playlist)
+                    self._add_url_to_playlist(text)
+                    if len(self.playlist) > before_len:
+                        new_items.append({'index': len(self.playlist) - 1, 'item': self.playlist[-1]})
+
+            # Save, refresh, and record undo for added items
+            self._save_current_playlist()
+            self._refresh_playlist_widget(expansion_state=expansion_state)
+            event.acceptProposedAction()
+
+            if new_items:
+                self._add_undo_operation('add_items', {
+                    'items': new_items,
+                    'was_playing': self._is_playing(),
+                    'old_current_index': self.current_index
                 })
 
-                # Finalize the move
-                self.player._save_current_playlist()
-                self.player._refresh_playlist_widget(expansion_state=expansion_state)
-                
-                # --- THIS IS THE FIX ---
-                # Highlight the current row BUT disable the auto-scroll
-                self.player._highlight_current_row(scroll_to_item=False)
-                
-                event.acceptProposedAction()
-                self.player.status.showMessage("Reordered playlist (Ctrl+Z to undo)", 3000)
+            if added or skipped:
+                msg = f"Added {added} item(s)"
+                if skipped:
+                    msg += f", skipped {skipped} duplicate(s)"
+                self.status.showMessage(msg, 4000)
 
-            except Exception as e:
-                print(f"Internal drop event error: {e}")
-                import traceback
-                traceback.print_exc()
-                event.ignore()
-
-        # --- CASE 2: External drop (files/URLs from outside the app) ---
-        else:
-            # (The rest of the external drop logic remains unchanged)
-            super().dropEvent(event) # Let the original handler manage external drops
+        except Exception as e:
+            print(f"Drop event error: {e}")
+            event.ignore()
 
 class ScrollingTreeWidget(QTreeWidget):
     def __init__(self, parent=None):
@@ -3779,77 +3775,7 @@ class MediaPlayer(QMainWindow):
         self._undo_stack = []  # Stack of undo operations
         self._max_undo_operations = 10  # Limit undo history
 
-    def _get_title_and_duration_sync(self, url, kind):
-        """Synchronously fetches a video's title and duration."""
-        try:
-            import yt_dlp
-            opts = {
-                'quiet': True,
-                'no_warnings': True,
-                'skip_download': True,
-                'extract_flat': 'in_playlist',
-                'socket_timeout': 10,
-            }
-            if kind == 'bilibili':
-                opts['cookiefile'] = str(COOKIES_BILI)
-            
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                if isinstance(info, dict):
-                    title = info.get('title')
-                    duration = info.get('duration')
-                    return title, duration
-                return None, None
-        except Exception as e:
-            logger.warning(f"Sync title/duration fetch failed for {url}: {e}")
-            return None, None
 
-    def _get_title_sync(self, url, kind):
-        """Synchronously fetches a single video's title. Used for on-demand resolution."""
-        try:
-            import yt_dlp
-            opts = {
-                'quiet': True,
-                'no_warnings': True,
-                'skip_download': True,
-                'extract_flat': 'in_playlist', # Don't extract playlist if it's a single video
-                'socket_timeout': 10,
-            }
-            if kind == 'bilibili':
-                opts['cookiefile'] = str(COOKIES_BILI)
-            
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                return info.get('title') if isinstance(info, dict) else None
-        except Exception as e:
-            logger.warning(f"Synchronous title fetch failed for {url}: {e}")
-            return None
-
-    def _process_with_yield(self, items: list, processor_func, batch_size: int = 25, progress_callback=None):
-            """Process a large list in batches to keep UI responsive."""
-            total_items = len(items)
-            processed = 0
-            
-            def process_batch():
-                nonlocal processed
-                batch_end = min(processed + batch_size, total_items)
-                batch = items[processed:batch_end]
-                
-                try:
-                    processor_func(batch, processed)
-                    processed = batch_end
-                    
-                    if progress_callback:
-                        progress_callback(processed, total_items)
-                    
-                    if processed < total_items:
-                        # Schedule next batch
-                        QTimer.singleShot(1, process_batch)
-                    
-                except Exception as e:
-                    print(f"Batch processing error: {e}")
-            
-            process_batch()
 
     def _update_top_bar_icons(self):
         """Loads and tints the top bar icons to match the current theme."""
@@ -3955,144 +3881,76 @@ class MediaPlayer(QMainWindow):
             event.ignore()
 
     def dropEvent(self, event):
-        """Handle drop events for both internal reordering and external files/URLs."""
-        
-        # --- CASE 1: Internal move (reordering items within the playlist) ---
-        if event.source() == self and event.proposedAction() == Qt.MoveAction:
-            try:
-                # Store undo data BEFORE making changes
-                old_playlist_for_undo = [item.copy() for item in self.player.playlist]
-                old_index_for_undo = self.player.current_index
-                was_playing_for_undo = self.player._is_playing()
-                expansion_state = self.player._get_tree_expansion_state()
+        """Handle drop events for files and URLs with duplicate guard and preserved expansion state."""
+        try:
+            mime_data = event.mimeData()
 
-                # Get the target item and drop position
-                target_item = self.itemAt(event.pos())
-                drop_indicator = self.dropIndicatorPosition()
+            # Preserve expansion state so headers don't collapse
+            expansion_state = self._get_tree_expansion_state()
 
-                # --- Get dragged items and their original playlist indices ---
-                dragged_items_data = []
-                selected_nodes = self.selectedItems()
-                for node in selected_nodes:
-                    data = node.data(0, Qt.UserRole)
-                    if isinstance(data, tuple) and data[0] == 'current':
-                        original_index = data[1]
-                        if 0 <= original_index < len(self.player.playlist):
-                           dragged_items_data.append(self.player.playlist[original_index])
+            added = 0
+            skipped = 0
 
+            def _norm_local(u: str) -> str:
+                import os
+                p = _path_from_url_or_path(u or "")
+                try:
+                    return os.path.normcase(os.path.abspath(p))
+                except Exception:
+                    return p
 
-                # Remove dragged items from the main playlist to create a temporary list
-                temp_playlist = [item for item in self.player.playlist if item not in dragged_items_data]
+            if mime_data.hasUrls():
+                # Existing local set (normalized)
+                existing_local = set(
+                    _norm_local(it.get('url'))
+                    for it in self.playlist
+                    if isinstance(it, dict) and it.get('type') == 'local' and it.get('url')
+                )
 
-                # --- Determine the insertion index in the temporary playlist ---
-                insertion_index = -1
-                if target_item:
-                    target_data = target_item.data(0, Qt.UserRole)
-                    if isinstance(target_data, tuple) and target_data[0] == 'current':
-                        target_playlist_item = self.player.playlist[target_data[1]]
-                        try:
-                            # Find the item's new position in the list without the dragged items
-                            insertion_index = temp_playlist.index(target_playlist_item)
-                            if drop_indicator == QAbstractItemView.DropIndicatorPosition.BelowItem:
-                                insertion_index += 1
-                        except ValueError:
-                            insertion_index = len(temp_playlist) # Fallback
-                
-                if insertion_index == -1:
-                    # Dropped in an empty area or on a group, append to the end
-                    insertion_index = len(temp_playlist)
+                for url in mime_data.urls():
+                    file_path = url.toLocalFile()
+                    if file_path:
+                        nf = _norm_local(file_path)
+                        if nf in existing_local:
+                            skipped += 1
+                            continue
 
-                # Insert the dragged items at the calculated position
-                # We need to preserve the original relative order of dragged items
-                for item_to_insert in dragged_items_data:
-                    temp_playlist.insert(insertion_index, item_to_insert)
-                    insertion_index += 1
+                        self.playlist.append({
+                            'title': Path(file_path).name,
+                            'url': file_path,
+                            'type': 'local'
+                        })
+                        existing_local.add(nf)
+                        added += 1
 
+                        # enqueue local duration probe
+                        if hasattr(self, '_local_dur'):
+                            self._local_dur.enqueue(len(self.playlist) - 1, self.playlist[-1])
 
-                # Replace the player's playlist with the newly ordered one
-                self.player.playlist = temp_playlist
-                
-                # Add to undo stack
-                self.player._add_undo_operation('move_items', {
-                    'playlist': old_playlist_for_undo,
-                    'current_index': old_index_for_undo,
-                    'was_playing': was_playing_for_undo
-                })
+                    else:
+                        # Web URL
+                        self._add_url_to_playlist(url.toString())
 
-                # Finalize the move
-                self.player._save_current_playlist()
-                self.player._refresh_playlist_widget(expansion_state=expansion_state)
-                
-                # --- THIS LINE WAS REMOVED TO PREVENT SCROLLING/EXPANDING ---
-                # self.player._highlight_current_row() 
-                
-                event.acceptProposedAction()
-                self.player.status.showMessage("Reordered playlist (Ctrl+Z to undo)", 3000)
+            elif mime_data.hasText():
+                # URLs or local path as text
+                text = (mime_data.text() or "").strip().strip('"').strip("'")
+                if text:
+                    self._add_url_to_playlist(text)
 
-            except Exception as e:
-                print(f"Internal drop event error: {e}")
-                event.ignore()
+            # Save and refresh while keeping previous expansion state
+            self._save_current_playlist()
+            self._refresh_playlist_widget(expansion_state=expansion_state)
+            event.acceptProposedAction()
 
-        # --- CASE 2: External drop (files/URLs from outside the app) ---
-        else:
-            # This is your original, working logic for external drops
-            try:
-                mime_data = event.mimeData()
-                expansion_state = self.player._get_tree_expansion_state()
-                added, skipped = 0, 0
+            if added or skipped:
+                msg = f"Added {added} item(s)"
+                if skipped:
+                    msg += f", skipped {skipped} duplicate(s)"
+                self.status.showMessage(msg, 4000)
 
-                def _norm_local(u: str) -> str:
-                    import os
-                    p = _path_from_url_or_path(u or "")
-                    try:
-                        return os.path.normcase(os.path.abspath(p))
-                    except Exception:
-                        return p
-
-                new_items = []
-                if mime_data.hasUrls():
-                    existing_local = {_norm_local(it.get('url')) for it in self.player.playlist if it.get('type') == 'local'}
-                    for url in mime_data.urls():
-                        file_path = url.toLocalFile()
-                        if file_path:
-                            nf = _norm_local(file_path)
-                            if nf in existing_local:
-                                skipped += 1
-                                continue
-                            item = {'title': Path(file_path).name, 'url': file_path, 'type': 'local'}
-                            self.player.playlist.append(item)
-                            new_items.append({'index': len(self.player.playlist) - 1, 'item': item})
-                            existing_local.add(nf)
-                            added += 1
-                            if hasattr(self.player, '_local_dur'):
-                                self.player._local_dur.enqueue(len(self.player.playlist) - 1, self.player.playlist[-1])
-                        else:
-                            self.player._add_url_to_playlist(url.toString())
-                elif mime_data.hasText():
-                    text = (mime_data.text() or "").strip().strip('"\'')
-                    if text:
-                        before_len = len(self.player.playlist)
-                        self.player._add_url_to_playlist(text)
-                        if len(self.player.playlist) > before_len:
-                            new_items.append({'index': len(self.player.playlist) - 1, 'item': self.player.playlist[-1]})
-                
-                self.player._save_current_playlist()
-                self.player._refresh_playlist_widget(expansion_state=expansion_state)
-                event.acceptProposedAction()
-
-                if new_items:
-                    self.player._add_undo_operation('add_items', {
-                        'items': new_items,
-                        'was_playing': self.player._is_playing(),
-                        'old_current_index': self.player.current_index
-                    })
-                if added or skipped:
-                    msg = f"Added {added} item(s)"
-                    if skipped: msg += f", skipped {skipped} duplicate(s)"
-                    self.player.status.showMessage(msg, 4000)
-            except Exception as e:
-                print(f"External drop event error: {e}")
-                event.ignore()
+        except Exception as e:
+            print(f"Drop event error: {e}")
+            event.ignore()
 
     def _flash_button_color(self, button, color, duration=100):
         """Flash button with a color tint - safer version"""
@@ -8104,21 +7962,6 @@ class MediaPlayer(QMainWindow):
         except Exception as e:
             print(f"Failed to apply dialog theme: {e}")
 
-    def _create_icon_action(self, text, icon_name, callback):
-        """Creates a QAction with an icon from the icons folder."""
-        try:
-            icon_path = APP_DIR / 'icons' / icon_name
-            icon = QIcon(str(icon_path)) if icon_path.exists() else QIcon()
-            action = QAction(icon, text, self)
-            action.triggered.connect(callback)
-            return action
-        except Exception as e:
-            logger.error(f"Failed to create icon action '{text}': {e}")
-            # Fallback to a text-only action
-            action = QAction(text, self)
-            action.triggered.connect(callback)
-            return action
-
     def _is_completed_url(self, url):
         try:
             if not url:
@@ -8390,8 +8233,8 @@ class MediaPlayer(QMainWindow):
         except Exception:
             pass
 
-    def _highlight_current_row(self, scroll_to_item=True):
-        """Highlight the currently playing item with icon and bold text."""
+    def _highlight_current_row(self):
+        """Highlight the currently playing item with icon and bold text"""
         try:
             # Get fonts
             default_font = self._font_serif_no_size(italic=True, bold=True)
@@ -8409,13 +8252,18 @@ class MediaPlayer(QMainWindow):
                     idx = data[1]
                     
                     # Get the original text without any playing indicators
-                    original_text = self.playlist[idx].get('title', 'Unknown')
+                    original_text = item.text(0)
+                    if original_text.startswith('▶ '):
+                        original_text = original_text[2:]
 
                     if idx == self.current_index:
-                        # This is the currently playing item
                         item.setText(0, f"▶ {original_text}")
                         item.setFont(0, playing_font)
-                        
+                        text_color = QColor("#d1603f")      # Slightly deeper orange
+                        item.setForeground(0, text_color)
+                        # Add subtle background highlight
+                        item.setBackground(0, QColor(231, 111, 81, 25))  # Very subtle orange background
+
                         # Set the theme-appropriate highlight color
                         text_color = QColor("#e76f51") # Same for both themes
                         item.setForeground(0, text_color)
@@ -8431,9 +8279,8 @@ class MediaPlayer(QMainWindow):
 
                 iterator += 1
 
-            # --- THIS IS THE FIX ---
-            # Only scroll if requested and an item was found
-            if item_to_scroll_to and scroll_to_item:
+            # Scroll to the highlighted item after all styling is applied
+            if item_to_scroll_to:
                 self.playlist_tree.scrollToItem(item_to_scroll_to, QAbstractItemView.PositionAtCenter)
 
         except Exception as e:
@@ -9997,7 +9844,10 @@ class MediaPlayer(QMainWindow):
                 menu.addAction("▶ Play").triggered.connect(lambda: self._play_index(idx))
                 menu.addAction("⭐ Play Next").triggered.connect(lambda i=idx: self._queue_item_next(i))
                 copy_action = menu.addAction("🔗 Copy URL")
-                copy_action.triggered.connect(lambda checked=False, u=url: self._copy_url(u))
+                copy_action.triggered.connect(lambda checked=False, u=url: (
+                    # DEBUG removed,
+                    self._copy_url(u)
+                )[1])
                 remove_action = self._create_icon_action("Remove", "trash.svg", lambda: self._remove_index(idx))
                 menu.addAction(remove_action)
                 menu.addSeparator()
@@ -10691,33 +10541,6 @@ class MediaPlayer(QMainWindow):
             if not (0 <= self.current_index < len(self.playlist)):
                 return
             
-            item = self.playlist[self.current_index]
-
-            # --- ADD THIS ENTIRE BLOCK TO FETCH METADATA ON-DEMAND ---
-            title = item.get('title', '')
-            url = item.get('url', '')
-            duration = item.get('duration')
-
-            # Check if we need to fetch more info (no duration, or generic title)
-            if item.get('type') != 'local' and (not duration or not title or title == url):
-                self.status.showMessage(f"Fetching info: {Path(url).name}...", 2000)
-                QApplication.processEvents() # Keep UI responsive
-                try:
-                    new_title, new_duration = self._get_title_and_duration_sync(url, item.get('type'))
-                    if new_title:
-                        item['title'] = new_title
-                        self._set_track_title(new_title)
-                        self._update_tree_item_title(url, new_title)
-                    if new_duration:
-                        item['duration'] = new_duration
-                        # This will also trigger a UI update for the duration column
-                        self._on_duration_ready(self.current_index, new_duration)
-                    
-                    self._schedule_save_current_playlist()
-                except Exception as e:
-                    logger.warning(f"Failed to resolve metadata on play for {url}: {e}")
-            # --- END OF NEW BLOCK ---
-
             # --- Handle skipping completed videos ---
             if getattr(self, '_force_play_ignore_completed', False):
                 self._force_play_ignore_completed = False
@@ -11422,7 +11245,7 @@ class MediaPlayer(QMainWindow):
 
             # --- PREPARATION ---
             # 1. Deduplicate against the entire existing playlist
-            existing_urls = {it.get('url') for it in self.player.playlist if it.get('url')}
+            existing_urls = {it.get('url') for it in self.playlist if it.get('url')}
             new_items = [it for it in items if it.get('url') and it.get('url') not in existing_urls]
             
             if not new_items:
@@ -11430,10 +11253,10 @@ class MediaPlayer(QMainWindow):
                 return
 
             # 2. Keep track of the starting index for new items
-            base_index = len(self.player.playlist)
+            base_index = len(self.playlist)
             
             # 3. Update the internal playlist data structure first
-            self.player.playlist.extend(new_items)
+            self.playlist.extend(new_items)
             
             # --- BATCHED UI UPDATE ---
             # 4. Define the function that will process one batch of new items
@@ -11454,6 +11277,12 @@ class MediaPlayer(QMainWindow):
             # 6. Schedule a single save operation after all items are added
             self._schedule_save_current_playlist()
             self._hide_loading(f"Added {len(new_items)} new entries", 5000)
+            
+            # 7. Resolve titles in the background for items that need it
+            items_needing_titles = [it for it in new_items if not it.get('title') or it['title'] == it.get('url')]
+            if items_needing_titles:
+                for item in items_needing_titles:
+                    self._resolve_title_parallel(item.get('url'), item.get('type', 'local'))
             
     def _restart_audio_monitor(self):
         """Restart the audio monitor with new settings"""
