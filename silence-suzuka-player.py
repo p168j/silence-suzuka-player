@@ -64,6 +64,98 @@ from PySide6.QtWidgets import QStyleOptionViewItem, QStyle
 from PySide6.QtCore import QRect
 
 
+class MiniPlayer(QWidget):
+    def __init__(self, main_player_instance, parent=None):
+        super().__init__(parent)
+        self.main_player = main_player_instance  # A reference to the main app
+
+        # --- Window Flags ---
+        # Make it a frameless tool window that stays on top
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+        self.setAttribute(Qt.WA_TranslucentBackground) # Allows for rounded corners
+
+        # --- UI Setup ---
+        self.setWindowTitle("Mini Player")
+        self.resize(300, 60) # A small, compact size
+        self._setup_ui()
+        self._apply_theme()
+
+        # --- Dragging Logic ---
+        self._drag_pos = None
+
+    def _setup_ui(self):
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
+
+        # 1. Track Title (stretches to fill space)
+        self.track_title = QLabel("No Track Playing")
+        self.track_title.setObjectName("miniPlayerTitle")
+        layout.addWidget(self.track_title, 1) # The '1' makes it stretch
+
+        # 2. Control Buttons
+        self.prev_btn = QPushButton("⏮")
+        self.play_pause_btn = QPushButton("▶")
+        self.next_btn = QPushButton("⏭")
+        
+        # A button to return to the main window
+        self.show_main_btn = QPushButton("⏏️") 
+        self.show_main_btn.setToolTip("Show Full Player")
+
+        for btn in [self.prev_btn, self.play_pause_btn, self.next_btn, self.show_main_btn]:
+            btn.setObjectName("miniPlayerButton")
+            btn.setFixedSize(32, 32)
+            layout.addWidget(btn)
+
+    def _apply_theme(self):
+        # We can reuse the main app's theme for consistency
+        theme_style = """
+            QWidget {{
+                background-color: #2a2a2a;
+                color: #f3f3f3;
+                border-radius: 8px;
+            }}
+            #miniPlayerTitle {{
+                font-weight: bold;
+            }}
+            #miniPlayerButton {{
+                background: transparent;
+                border: none;
+                font-size: 16px;
+            }}
+            #miniPlayerButton:hover {{
+                background-color: rgba(255, 255, 255, 0.1);
+                border-radius: 16px;
+            }}
+            #miniPlayerButton:pressed {{
+                background-color: rgba(255, 255, 255, 0.2);
+            }}
+        """
+        self.setStyleSheet(theme_style)
+
+    # --- Methods for dragging the frameless window ---
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_pos = event.globalPosition().toPoint()
+
+    def mouseMoveEvent(self, event):
+        if self._drag_pos:
+            self.move(self.pos() + event.globalPosition().toPoint() - self._drag_pos)
+            self._drag_pos = event.globalPosition().toPoint()
+
+    def mouseReleaseEvent(self, event):
+        self._drag_pos = None
+
+    # --- Placeholder slots for updating the UI ---
+    def update_track_title(self, title):
+        # We'll wire this up later
+        self.track_title.setText(title)
+
+    def update_playback_state(self, is_playing):
+        # We'll wire this up later
+        self.play_pause_btn.setText("❚❚" if is_playing else "▶")
+
+
 class PlaylistMetadataWidget(QWidget):
     """Widget to display playlist metadata in a card-like format"""
     
@@ -3547,6 +3639,29 @@ class MediaPlayer(QMainWindow):
         self._undo_stack = []  # Stack of undo operations
         self._max_undo_operations = 10  # Limit undo history
 
+    def _update_top_bar_icons(self):
+        """Loads and tints the top bar icons to match the current theme."""
+        try:
+            # Determine the correct color based on the current theme
+            icon_color = "#f3f3f3" if self.theme == 'dark' else "#4a2c2a"
+            icon_size = QSize(18, 18) # A good, clean size for the top bar
+
+            # Load, tint, and set the icon for each button
+            stats_icon = QIcon(_render_svg_tinted(str(APP_DIR / 'icons/stats.svg'), icon_size, icon_color))
+            self.stats_btn.setIcon(stats_icon)
+
+            settings_icon = QIcon(_render_svg_tinted(str(APP_DIR / 'icons/settings.svg'), icon_size, icon_color))
+            self.settings_btn.setIcon(settings_icon)
+
+            minimize_icon = QIcon(_render_svg_tinted(str(APP_DIR / 'icons/minimize.svg'), icon_size, icon_color))
+            self.mini_player_btn.setIcon(minimize_icon)
+
+            theme_icon = QIcon(_render_svg_tinted(str(APP_DIR / 'icons/palette.svg'), icon_size, icon_color))
+            self.theme_btn.setIcon(theme_icon)
+
+        except Exception as e:
+            logger.error(f"Failed to update top bar icons: {e}")    
+
     def on_silence_detected(self):
         """
         Plays media only if auto-play is enabled AND the system has been silent
@@ -4622,6 +4737,12 @@ class MediaPlayer(QMainWindow):
         top.addWidget(self.stats_btn)
         top.addWidget(self.settings_btn)
         
+        self.mini_player_btn = QPushButton("🗔️") # A picture-in-picture style icon
+        self.mini_player_btn.setObjectName('settingsBtn')
+        self.mini_player_btn.setToolTip("Switch to Mini Player")
+        self.mini_player_btn.clicked.connect(self._toggle_mini_player)
+        top.addWidget(self.mini_player_btn)
+
         self.theme_btn = QPushButton("🎨"); self.theme_btn.setObjectName('settingsBtn'); self.theme_btn.setToolTip("Dark mode coming soon!"); self.theme_btn.setEnabled(False)  
         # self.theme_btn.clicked.connect(self.toggle_theme)
         top.addWidget(self.theme_btn)
@@ -5236,6 +5357,32 @@ class MediaPlayer(QMainWindow):
         # print(f"_undo_stack exists: {hasattr(self, '_undo_stack')}")
         # print(f"Undo stack size: {len(getattr(self, '_undo_stack', []))}")
         # print("========================")
+
+
+    def _toggle_mini_player(self):
+        """Hides the main window and shows the mini-player."""
+        # Create the mini-player instance on the first click
+        if not hasattr(self, 'mini_player') or not self.mini_player:
+            self.mini_player = MiniPlayer(main_player_instance=self)
+
+            # --- Connect the mini-player's buttons back to our main player ---
+            # This allows the mini-player to control the main app
+            self.mini_player.show_main_btn.clicked.connect(self._show_main_player_from_mini)
+            # We will connect the other buttons (play, next, etc.) later.
+
+        self.hide()
+        self.mini_player.show()
+
+    def _show_main_player_from_mini(self):
+        """Hides the mini-player and shows the main window."""
+        if hasattr(self, 'mini_player') and self.mini_player:
+            # Save the mini-player's position for next time
+            self.mini_player_pos = self.mini_player.pos()
+            self.mini_player.hide()
+
+        # This is your existing helper method to show the main window correctly
+        self._show_player()
+
 
     def _play_selected_group(self):
         """Play the currently selected group when 'B' key is pressed"""
