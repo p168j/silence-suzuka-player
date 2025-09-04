@@ -3499,10 +3499,6 @@ class MediaPlayer(QMainWindow):
             self.repeat_on_icon_dark = QIcon(_render_svg_tinted(str(repeat_on_path), self.icon_size, accent_color_on)) if repeat_on_path.exists() else "🔁"
             self.tray_icon_play = self._play_icon_normal
             self.tray_icon_pause = self._pause_icon_normal
-            if play_path.exists():
-                self.tray_icon_play = QIcon(_render_svg_tinted(play_path, QSize(32, 32), "#FFFFFF"))
-            if pause_path.exists():
-                self.tray_icon_pause = QIcon(_render_svg_tinted(pause_path, QSize(32, 32), "#FFFFFF"))
             self.volume_icon = QIcon(str(APP_DIR / 'icons/volume.svg'))
             mute_path = APP_DIR / 'icons/volume-mute.svg'
             self.volume_mute_icon = QIcon(str(mute_path)) if mute_path.exists() else "🔇"
@@ -6954,7 +6950,12 @@ class MediaPlayer(QMainWindow):
         self.tray_icon.show()
 
     def _on_tray_activated(self, reason):
-        if reason == QSystemTrayIcon.DoubleClick:
+        # NEW: Handle single-click to toggle play/pause
+        if reason == QSystemTrayIcon.Trigger: # This is a single left-click
+            self.toggle_play_pause()
+
+        # Keep the existing double-click logic to show/hide the window
+        elif reason == QSystemTrayIcon.DoubleClick:
             if self.isVisible():
                 self.hide()
             else:
@@ -7110,19 +7111,18 @@ class MediaPlayer(QMainWindow):
     def _update_tray(self):
         if not getattr(self, 'tray_icon', None):
             return
-            
-        # --- 2. ADD THE SWITCHING LOGIC HERE ---
-        # This replaces the entire body of the original _update_tray method.
+
+        # --- STANDARD LOGIC: Show the ACTION, not the state ---
         if self._is_playing():
-            # If playing, set the tray icon to 'pause'
+            # If playing, show the PAUSE icon (action is to pause)
             self.tray_icon.setIcon(self.tray_icon_pause)
             self.tray_play_pause.setText("Pause")
         else:
-            # If not playing, set the tray icon to 'play'
+            # If paused, show the PLAY icon (action is to play)
             self.tray_icon.setIcon(self.tray_icon_play)
             self.tray_play_pause.setText("Play")
-        
-        # Update the tooltip as before
+
+        # Tooltip logic remains the same
         if 0 <= self.current_index < len(self.playlist):
             self.tray_icon.setToolTip(f"Silence Suzuka Player\nNow Playing: {self.playlist[self.current_index].get('title','Unknown')}")
         else:
@@ -10669,236 +10669,172 @@ class MediaPlayer(QMainWindow):
         self.requestTimerSignal.emit(600, lambda: self._restore_saved_position_attempt(url, pos_ms, attempt + 1))
 
     # Settings dialog
+
     def open_settings_tabs(self):
-            dlg = QDialog(self); dlg.setWindowTitle("Settings"); dlg.resize(720, 520)
-            layout = QVBoxLayout(dlg)
-            tabs = QTabWidget(); layout.addWidget(tabs)
+        dlg = QDialog(self); dlg.setWindowTitle("Settings"); dlg.resize(720, 520)
+        self._apply_dialog_theme(dlg)
+        layout = QVBoxLayout(dlg)
+        tabs = QTabWidget(); layout.addWidget(tabs)
 
-            # Playback tab
-            w_play = QWidget(); f_play = QFormLayout(w_play)
-            spn_completed = QSpinBox(); spn_completed.setRange(50, 100); spn_completed.setSuffix("%")
-            spn_completed.setValue(int(getattr(self, 'completed_percent', 95)))
-            spn_completed.setToolTip("Percentage of a video watched to be marked as 'completed'.")
+        # --- Tab 1: Playback ---
+        w_play = QWidget(); f_play = QFormLayout(w_play)
+        spn_completed = QSpinBox(); spn_completed.setRange(50, 100); spn_completed.setSuffix("%")
+        spn_completed.setValue(int(getattr(self, 'completed_percent', 95)))
+        spn_completed.setToolTip("Percentage of a video watched to be marked as 'completed'.")
+        
+        chk_skip_completed = QCheckBox("Skip completed videos"); chk_skip_completed.setChecked(bool(getattr(self, 'skip_completed', False)))
+        chk_skip_completed.setToolTip("Automatically skip to the next unwatched video if the current one is completed.")
+
+        s_afk = QSpinBox(); s_afk.setRange(1, 240); s_afk.setSuffix(" minutes"); s_afk.setValue(int(getattr(self, 'afk_timeout_minutes', 15)))
+        s_afk.setToolTip("Pause playback if there's no mouse or keyboard activity for this duration.")
+
+        f_play.addRow("Completed threshold:", spn_completed)
+        f_play.addRow(chk_skip_completed)
+        f_play.addRow("Auto-pause after inactivity:", s_afk)
+        tabs.addTab(w_play, "Playback")
+
+        # --- Tab 2: Audio Monitor ---
+        w_mon = QWidget(); f_mon = QFormLayout(w_mon)
+        if not getattr(self.audio_monitor, '_sd', None) or self.audio_monitor.last_error:
+            error_msg = self.audio_monitor.last_error or "The 'sounddevice' library is not available or failed to load."
+            error_label = QLabel(f"⚠️ Audio Monitor Disabled\n\n{error_msg}"); error_label.setWordWrap(True); error_label.setStyleSheet("color: #d86a4a; font-weight: bold;")
+            f_mon.addRow(error_label)
+        else:
+            chk_monitor_system = QCheckBox("Monitor system output (speakers/headphones)"); chk_monitor_system.setChecked(bool(getattr(self, 'monitor_system_output', True)))
+            chk_monitor_system.setToolTip("Monitor system audio output (speakers/headphones) instead of microphone.")
+            f_mon.addRow(chk_monitor_system)
             
-            chk_skip_completed = QCheckBox("Skip completed videos"); chk_skip_completed.setChecked(bool(getattr(self, 'skip_completed', False)))
-            chk_skip_completed.setToolTip("Automatically skip to the next unwatched video if the current one is completed.")
+            cmb_device = QComboBox(); cmb_device.setToolTip("Select the audio device to monitor for silence.")
+            try:
+                devs = self.audio_monitor._sd.query_devices()
+                for i, d in enumerate(devs):
+                    if int(d.get('max_input_channels', 0)) > 0:
+                        cmb_device.addItem(f"[{i}] {d.get('name', '')}", i)
+                cur = int(getattr(self, 'monitor_device_id', -1)); idx = cmb_device.findData(cur)
+                if idx >= 0: cmb_device.setCurrentIndex(idx)
+            except Exception:
+                cmb_device.addItem("No devices available"); cmb_device.setEnabled(False)
+            f_mon.addRow("Input device:", cmb_device)
 
-            s_afk = QSpinBox(); s_afk.setRange(1, 240); s_afk.setSuffix(" minutes"); s_afk.setValue(int(getattr(self, 'afk_timeout_minutes', 15)))
-            s_afk.setToolTip("Pause playback if there's no mouse or keyboard activity for this duration.")
+            pb_rms = QProgressBar(); pb_rms.setRange(0, 100); pb_rms.setFormat('RMS: %p%')
+            self.audio_monitor.rmsUpdated.connect(lambda v: pb_rms.setValue(int(max(0.0, min(1.0, float(v))) * 100)))
+            f_mon.addRow("Live level:", pb_rms)
 
-            f_play.addRow("Completed threshold:", spn_completed)
-            f_play.addRow(chk_skip_completed)
-            f_play.addRow("Auto-pause after inactivity:", s_afk)
-            tabs.addTab(w_play, "Playback")
+            s_threshold = QDoubleSpinBox(); s_threshold.setRange(0.001, 1.0); s_threshold.setSingleStep(0.005); s_threshold.setDecimals(4); s_threshold.setValue(float(getattr(self, 'silence_threshold', 0.03)))
+            s_threshold.setToolTip("Sound level below which is considered silence. Lower is more sensitive.")
+            f_mon.addRow("Silence threshold:", s_threshold)
 
-            # Audio Monitor tab
-            w_mon = QWidget(); f_mon = QFormLayout(w_mon)
+            s_resume = QDoubleSpinBox(); s_resume.setRange(0.001, 1.0); s_resume.setSingleStep(0.005); s_resume.setDecimals(4); s_resume.setValue(float(getattr(self, 'resume_threshold', 0.045)))
+            s_resume.setToolTip("Sound level required to exit the silent state. Should be slightly higher than the silence threshold.")
+            f_mon.addRow("Resume threshold:", s_resume)
 
-            # Check if the audio monitor is functional before building the UI
-            if not getattr(self.audio_monitor, '_sd', None) or self.audio_monitor.last_error:
-                error_msg = self.audio_monitor.last_error or "The 'sounddevice' library is not available or failed to load."
-                error_label = QLabel(f"⚠️ Audio Monitor Disabled\n\n{error_msg}")
-                error_label.setWordWrap(True)
-                error_label.setStyleSheet("color: #d86a4a; font-weight: bold;")
-                f_mon.addRow(error_label)
-            else:
-                # Audio monitor is working, so build the normal UI
-                chk_monitor_system = QCheckBox("Monitor system output (speakers/headphones)")
-                chk_monitor_system.setChecked(bool(getattr(self, 'monitor_system_output', True)))
-                chk_monitor_system.setToolTip("Monitor system audio output (speakers/headphones) instead of microphone.")
-                
-                cmb_device = QComboBox(); cmb_device.setToolTip("Select the audio device to monitor for silence.")
-                try:
-                    sd = getattr(self.audio_monitor, '_sd', None)
-                    devs = sd.query_devices() if sd else []
-                    loopbacks = []; normals = []
-                    for i, d in enumerate(devs):
-                        if int(d.get('max_input_channels', 0)) > 0:
-                            host = d.get('hostapi_name', '') or ''
-                            name = d.get('name', f'Device {i}')
-                            lname = name.lower()
-                            if ('wasapi' in host.lower()) and ('loopback' in lname or 'stereo mix' in lname or 'what u hear' in lname):
-                                loopbacks.append((i, name, host))
-                            else:
-                                normals.append((i, name, host))
-                    for i, name, host in (loopbacks + normals):
-                        cmb_device.addItem(f"[{i}] {name} ({host})", i)
-                    cur = int(getattr(self, 'monitor_device_id', -1))
-                    idx = cmb_device.findData(cur)
-                    if idx >= 0: cmb_device.setCurrentIndex(idx)
-                except Exception:
-                    cmb_device.addItem("No devices available"); cmb_device.setEnabled(False)
-                pb_rms = QProgressBar()
-                pb_rms.setRange(0, 100)
-                pb_rms.setFormat('RMS: %p%')
-                self.audio_monitor.rmsUpdated.connect(
-                    lambda v: (
-                        pb_rms.setValue(int(max(0.0, min(1.0, float(v))) * 100)),
-                        # logger.info(f"[UI] Updating RMS bar with value: {int(max(0.0, min(1.0, float(v))) * 100)}")
-    )
-)
-                
-                s_threshold = QDoubleSpinBox(); s_threshold.setRange(0.001, 1.0); s_threshold.setSingleStep(0.005); s_threshold.setDecimals(4)
-                s_threshold.setValue(float(getattr(self, 'silence_threshold', 0.03)))
-                s_threshold.setToolTip("Sound level below which is considered silence. Lower is more sensitive.")
-                
-                s_resume = QDoubleSpinBox(); s_resume.setRange(0.001, 1.0); s_resume.setSingleStep(0.005); s_resume.setDecimals(4)
-                s_resume.setValue(float(getattr(self, 'resume_threshold', max(0.03, getattr(self, 'silence_threshold', 0.03) * 1.5))))
-                s_resume.setToolTip("Sound level required to exit the silent state. Should be slightly higher than the silence threshold.")
-                
-                s_silence = QDoubleSpinBox(); s_silence.setRange(0.1, 60.0); s_silence.setSingleStep(0.25); s_silence.setSuffix(" minutes")
-                s_silence.setValue(float(getattr(self, 'silence_duration_s', 300.0)) / 60.0)
-                s_silence.setToolTip("Duration of continuous silence required before auto-play is triggered.")
-                
-                chk_auto = QCheckBox("Enable auto-play on silence")
-                chk_auto.setChecked(bool(getattr(self, 'auto_play_enabled', True)))
-                chk_auto.setToolTip("Globally enable or disable the silence detection and auto-play feature.")
-
-                f_mon.addRow(chk_monitor_system)
-                f_mon.addRow("Input device:", cmb_device)
-                f_mon.addRow("Live level:", pb_rms)
-                f_mon.addRow("Silence threshold:", s_threshold)
-                f_mon.addRow("Resume threshold:", s_resume)
-                f_mon.addRow("Auto-play after silence:", s_silence)
-
-                # Create the main auto-play checkbox that was defined earlier
-                f_mon.addRow(chk_auto)
-
-                # Create the NEW Smart Start checkbox
-                chk_smart_start = QCheckBox("Use Smart Start (Requires recent activity to play)")
-                chk_smart_start.setChecked(bool(getattr(self, 'smart_autostart_enabled', True)))
-                chk_smart_start.setToolTip("If enabled, auto-play will only trigger if you've recently used your mouse or keyboard.\nThis prevents playback when you are truly away from the computer.")
-
-                # Link its enabled state to the main auto-play checkbox
-                chk_smart_start.setEnabled(chk_auto.isChecked())
-                chk_auto.toggled.connect(chk_smart_start.setEnabled)
-
-                # Add the Smart Start checkbox to the layout
-                f_mon.addRow("", chk_smart_start)
-
-                f_mon.addRow(chk_auto)
+            s_silence = QDoubleSpinBox(); s_silence.setRange(0.1, 60.0); s_silence.setSingleStep(0.25); s_silence.setSuffix(" minutes"); s_silence.setValue(float(getattr(self, 'silence_duration_s', 300.0)) / 60.0)
+            s_silence.setToolTip("Duration of continuous silence required before auto-play is triggered.")
+            f_mon.addRow("Auto-play after silence:", s_silence)
             
-            tabs.addTab(w_mon, "Audio Monitor")
-
-            # UI & Panels tab
-            w_ui = QWidget(); f_ui = QFormLayout(w_ui)
-            chk_restore_session = QCheckBox("Restore last session on startup")
-            chk_restore_session.setChecked(bool(getattr(self, 'restore_session', True)))
-            chk_restore_session.setToolTip("Automatically save and load your playlist and position between sessions.")
-            f_ui.addRow(chk_restore_session)
-
-            chk_show_up_next = QCheckBox("Show 'Up Next' panel")
-            chk_show_up_next.setChecked(bool(getattr(self, 'show_up_next', True)))
-            chk_show_up_next.setToolTip("Show or hide the 'Up Next' panel below the video player.")
-            f_ui.addRow(chk_show_up_next)
-
-            chk_group_singles = QCheckBox("Group miscellaneous videos into a folder")
-            chk_group_singles.setChecked(bool(getattr(self, 'group_singles', False)))
-            chk_group_singles.setToolTip("Organize individual videos into a 'Miscellaneous' group in the playlist.")
-            f_ui.addRow(chk_group_singles)
-
-            chk_center_on_restore = QCheckBox("Center window on restore")
-            chk_center_on_restore.setChecked(bool(getattr(self, 'center_on_restore', True)))
-            chk_center_on_restore.setToolTip("Center the application window on screen when restoring from the tray or taskbar.")
-            f_ui.addRow(chk_center_on_restore)
-
-            chk_min_to_tray = QCheckBox("Minimize to system tray")
-            chk_min_to_tray.setChecked(self.minimize_to_tray)
-            chk_min_to_tray.setToolTip("When minimizing the window, hide it to the system tray instead of the taskbar.")
-            f_ui.addRow(chk_min_to_tray)
+            chk_auto = QCheckBox("Enable auto-play on silence"); chk_auto.setChecked(bool(getattr(self, 'auto_play_enabled', True)))
+            chk_auto.setToolTip("Globally enable or disable the silence detection and auto-play feature.")
             
-            chk_show_badge = QCheckBox("Show 'Time Today' badge in top bar")
-            chk_show_badge.setChecked(bool(getattr(self, 'show_today_badge', True)))
-            chk_show_badge.setToolTip("Show or hide the total listening time for the current day in the main window.")
-            f_ui.addRow(chk_show_badge)
+            chk_smart_start = QCheckBox("Use Smart Start (Requires recent activity to play)"); chk_smart_start.setChecked(bool(getattr(self, 'smart_autostart_enabled', True)))
+            chk_smart_start.setToolTip("If enabled, auto-play will only trigger if you've recently used your mouse or keyboard.\nThis prevents playback when you are truly away from the computer.")
             
-            tabs.addTab(w_ui, "UI")
-
-            # Diagnostics tab
-            w_diag = QWidget(); f_diag = QFormLayout(w_diag)
-            lbl_log = QLabel("Logging & Diagnostics"); lbl_log.setStyleSheet("font-weight: bold; margin-top: 10px;"); f_diag.addRow(lbl_log)
-            log_level_combo = QComboBox(); log_level_combo.addItems(['DEBUG', 'INFO', 'WARNING', 'ERROR']); log_level_combo.setCurrentText(self.log_level)
-            log_level_combo.setToolTip("Set the verbosity of log files. 'DEBUG' is the most detailed.")
-            f_diag.addRow("Log Level:", log_level_combo)
-            logs_btn = QPushButton("Open Logs Folder"); logs_btn.clicked.connect(self.open_logs_folder); logs_btn.setToolTip("Open the folder containing the application's log files.")
-            f_diag.addRow("", logs_btn)
-            export_btn = QPushButton("Export Diagnostics"); export_btn.clicked.connect(self.export_diagnostics); export_btn.setToolTip("Export logs and configuration into a zip file for troubleshooting.")
-            f_diag.addRow("", export_btn)
-            tabs.addTab(w_diag, "Diagnostics")
+            chk_smart_start.setEnabled(chk_auto.isChecked())
+            chk_auto.toggled.connect(chk_smart_start.setEnabled)
             
-            # Buttons
-            btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel); layout.addWidget(btns)
+            checkbox_container = QWidget()
+            checkbox_layout = QVBoxLayout(checkbox_container)
+            checkbox_layout.setContentsMargins(0, 10, 0, 0); checkbox_layout.setSpacing(10)
+            checkbox_layout.addWidget(chk_auto)
+            checkbox_layout.addWidget(chk_smart_start)
+            f_mon.addRow(checkbox_container)
+        tabs.addTab(w_mon, "Audio Monitor")
 
-            def _apply():
-                # Apply all settings from all tabs
-                # Playback
-                try: self.completed_percent = int(spn_completed.value())
-                except Exception: pass
-                try: self.skip_completed = bool(chk_skip_completed.isChecked())
-                except Exception: pass
-                try:
-                    self.afk_timeout_minutes = int(s_afk.value())
-                    if getattr(self, 'afk_monitor', None):
-                        self.afk_monitor.timeout_seconds = self.afk_timeout_minutes * 60
-                except Exception: pass
-                
-                # Audio Monitor (only if not in error state)
-                if getattr(self.audio_monitor, '_sd', None) and not self.audio_monitor.last_error:
-                    try: self.monitor_system_output = bool(chk_monitor_system.isChecked())
-                    except Exception: pass
-                    try:
-                        did = cmb_device.currentData()
-                        if did is not None: self.monitor_device_id = int(did)
-                    except Exception: pass
-                    try: self.silence_threshold = float(s_threshold.value())
-                    except Exception: pass
-                    try: self.resume_threshold = float(s_resume.value())
-                    except Exception: pass
-                    try: self.silence_duration_s = float(s_silence.value()) * 60.0
-                    except Exception: pass
-                    try: self.auto_play_enabled = bool(chk_auto.isChecked())
-                    except Exception: pass
-                    try: self.smart_autostart_enabled = bool(chk_smart_start.isChecked())
-                    except Exception: pass
-                    try:
-                        if getattr(self, 'audio_monitor', None):
-                            self.audio_monitor.update_settings(
-                                silence_duration_s=self.silence_duration_s, silence_threshold=self.silence_threshold,
-                                resume_threshold=self.resume_threshold, monitor_system_output=self.monitor_system_output,
-                                device_id=self.monitor_device_id)
-                    except Exception: pass
-                
-                # UI & Panels
-                try:
-                    self.restore_session = bool(chk_restore_session.isChecked())
-                    self.show_up_next = bool(chk_show_up_next.isChecked())
-                    if hasattr(self, 'up_next_container'): self.up_next_container.setVisible(self.show_up_next)
-                except Exception: pass
-                try:
-                    # --- FIX: Save the expansion state BEFORE refreshing ---
-                    expansion_state = self._get_tree_expansion_state()
+        # --- Tab 3: UI ---
+        w_ui = QWidget(); f_ui = QFormLayout(w_ui)
+        chk_restore_session = QCheckBox("Restore last session on startup"); chk_restore_session.setChecked(bool(getattr(self, 'restore_session', True)))
+        chk_restore_session.setToolTip("Automatically save and load your playlist and position between sessions.")
+        f_ui.addRow(chk_restore_session)
 
-                    self.group_singles = bool(chk_group_singles.isChecked())
+        chk_show_up_next = QCheckBox("Show 'Up Next' panel"); chk_show_up_next.setChecked(bool(getattr(self, 'show_up_next', True)))
+        chk_show_up_next.setToolTip("Show or hide the 'Up Next' panel below the video player.")
+        f_ui.addRow(chk_show_up_next)
 
-                    # --- FIX: Pass the state TO the refresh function ---
-                    self._refresh_playlist_widget(expansion_state=expansion_state)
-                except Exception: pass
-                try: self.center_on_restore = bool(chk_center_on_restore.isChecked())
-                except Exception: pass
-                try: self.minimize_to_tray = bool(chk_min_to_tray.isChecked())
-                except Exception: pass
+        chk_group_singles = QCheckBox("Group miscellaneous videos into a folder"); chk_group_singles.setChecked(bool(getattr(self, 'group_singles', False)))
+        chk_group_singles.setToolTip("Organize individual videos into a 'Miscellaneous' group in the playlist.")
+        f_ui.addRow(chk_group_singles)
+
+        chk_center_on_restore = QCheckBox("Center window on restore"); chk_center_on_restore.setChecked(bool(getattr(self, 'center_on_restore', True)))
+        chk_center_on_restore.setToolTip("Center the application window on screen when restoring from the tray or taskbar.")
+        f_ui.addRow(chk_center_on_restore)
+
+        chk_min_to_tray = QCheckBox("Minimize to system tray"); chk_min_to_tray.setChecked(self.minimize_to_tray)
+        chk_min_to_tray.setToolTip("When minimizing the window, hide it to the system tray instead of the taskbar.")
+        f_ui.addRow(chk_min_to_tray)
+        
+        chk_show_badge = QCheckBox("Show 'Time Today' badge in top bar"); chk_show_badge.setChecked(bool(getattr(self, 'show_today_badge', True)))
+        chk_show_badge.setToolTip("Show or hide the total listening time for the current day in the main window.")
+        f_ui.addRow(chk_show_badge)
+        tabs.addTab(w_ui, "UI")
+
+        # --- Tab 4: Diagnostics ---
+        w_diag = QWidget(); f_diag = QFormLayout(w_diag)
+        lbl_log = QLabel("Logging & Diagnostics"); lbl_log.setStyleSheet("font-weight: bold; margin-top: 10px;"); f_diag.addRow(lbl_log)
+        log_level_combo = QComboBox(); log_level_combo.addItems(['DEBUG', 'INFO', 'WARNING', 'ERROR']); log_level_combo.setCurrentText(self.log_level)
+        log_level_combo.setToolTip("Set the verbosity of log files. 'DEBUG' is the most detailed.")
+        f_diag.addRow("Log Level:", log_level_combo)
+        logs_btn = QPushButton("Open Logs Folder"); logs_btn.clicked.connect(self.open_logs_folder); logs_btn.setToolTip("Open the folder containing the application's log files.")
+        f_diag.addRow("", logs_btn)
+        export_btn = QPushButton("Export Diagnostics"); export_btn.clicked.connect(self.export_diagnostics); export_btn.setToolTip("Export logs and configuration into a zip file for troubleshooting.")
+        f_diag.addRow("", export_btn)
+        tabs.addTab(w_diag, "Diagnostics")
+        
+        # --- Buttons and Apply Logic ---
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel); layout.addWidget(btns)
+        def _apply():
+            try: # Playback
+                self.completed_percent = int(spn_completed.value())
+                self.skip_completed = bool(chk_skip_completed.isChecked())
+                self.afk_timeout_minutes = int(s_afk.value())
+                if getattr(self, 'afk_monitor', None): self.afk_monitor.timeout_seconds = self.afk_timeout_minutes * 60
+            except Exception: pass
+            
+            if getattr(self.audio_monitor, '_sd', None) and not self.audio_monitor.last_error: # Audio Monitor
                 try:
-                    self.show_today_badge = bool(chk_show_badge.isChecked())
-                    if hasattr(self, 'today_badge'): self.today_badge.setVisible(self.show_today_badge)
+                    self.auto_play_enabled = bool(chk_auto.isChecked())
+                    self.smart_autostart_enabled = bool(chk_smart_start.isChecked())
+                    self.monitor_system_output = bool(chk_monitor_system.isChecked())
+                    self.monitor_device_id = int(cmb_device.currentData())
+                    self.silence_threshold = float(s_threshold.value())
+                    self.resume_threshold = float(s_resume.value())
+                    self.silence_duration_s = float(s_silence.value()) * 60.0
+                    if getattr(self, 'audio_monitor', None):
+                        self.audio_monitor.update_settings(silence_duration_s=self.silence_duration_s, silence_threshold=self.silence_threshold, resume_threshold=self.resume_threshold, monitor_system_output=self.monitor_system_output, device_id=self.monitor_device_id)
                 except Exception: pass
-                
-                # Persist all settings
-                self._save_settings()
-                dlg.accept()
+            
+            try: # UI
+                expansion_state = self._get_tree_expansion_state()
+                self.restore_session = bool(chk_restore_session.isChecked())
+                self.show_up_next = bool(chk_show_up_next.isChecked())
+                if hasattr(self, 'up_next_container'): self.up_next_container.setVisible(self.show_up_next)
+                self.group_singles = bool(chk_group_singles.isChecked())
+                self.center_on_restore = bool(chk_center_on_restore.isChecked())
+                self.minimize_to_tray = bool(chk_min_to_tray.isChecked())
+                self.show_today_badge = bool(chk_show_badge.isChecked())
+                if hasattr(self, 'today_badge'): self.today_badge.setVisible(self.show_today_badge)
+                self._refresh_playlist_widget(expansion_state=expansion_state)
+            except Exception: pass
+            
+            try: # Diagnostics
+                self.log_level = log_level_combo.currentText()
+                logging.getLogger().setLevel(getattr(logging, self.log_level.upper(), logging.INFO))
+            except Exception: pass
 
-            btns.accepted.connect(_apply)
-            btns.rejected.connect(dlg.reject)
-            dlg.exec()
+            self._save_settings()
+            dlg.accept()
+
+        btns.accepted.connect(_apply)
+        btns.rejected.connect(dlg.reject)
+        dlg.exec()
 
     def open_settings(self):
         dlg = QDialog(self); dlg.setWindowTitle("Settings"); dlg.resize(400, 300)
@@ -11611,7 +11547,18 @@ class MediaPlayer(QMainWindow):
             
             inactivity_duration = time.time() - afk_monitor.last_input_time
 
-            if inactivity_duration < self.silence_duration_s:
+            # --- ADD THIS ENTIRE DEBUG BLOCK ---
+            # print("--- SMART START DEBUG ---")
+            # print(f"  - Inactivity duration: {inactivity_duration:.2f} seconds")
+            # print(f"  - Silence duration setting: {self.silence_duration_s:.2f} seconds")
+            # print(f"  - Condition to PLAY is: (Inactivity < Silence Duration)")
+            # print(f"  - Result of check: {inactivity_duration < self.silence_duration_s}")
+            # print("-------------------------")
+            # --- END DEBUG BLOCK ---
+
+            RECENT_ACTIVITY_THRESHOLD = 5.0 # seconds
+
+            if inactivity_duration < RECENT_ACTIVITY_THRESHOLD:
                 self.status.showMessage("Silence Detected, User is Active - Resuming", 4000)
             else:
                 # User is silent AND inactive (truly AFK), so we do nothing.
