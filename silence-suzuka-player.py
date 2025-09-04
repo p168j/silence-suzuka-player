@@ -62,6 +62,87 @@ from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter, QColor, QBrush
 from PySide6.QtWidgets import QGraphicsColorizeEffect
 from PySide6.QtWidgets import QStyleOptionViewItem, QStyle
 from PySide6.QtCore import QRect
+from pathlib import Path
+
+def _render_svg_tinted(svg_path, size: QSize, color: str) -> QPixmap:
+        """Renders an SVG file, tinting its fill/stroke with a single color."""
+        try:
+            with open(svg_path, 'r', encoding='utf-8') as f:
+                svg_data = f.read()
+            
+            # A more robust method: Inject a CSS style to override fill and stroke
+            # This works even if the original SVG has no fill/stroke attributes
+            style_override = f"<style>g, path, rect, circle, polygon {{ fill: {color} !important; stroke: {color} !important; }}</style>"
+            
+            # Find the closing tag of the opening <svg> element to inject the style
+            import re
+            match = re.search(r'(<svg[^>]*>)', svg_data)
+            if match:
+                # Inject the style right after the opening <svg ...> tag
+                svg_data = svg_data[:match.end()] + style_override + svg_data[match.end():]
+            else:
+                # Fallback for SVGs without attributes in the root tag
+                svg_data = svg_data.replace('<svg>', f'<svg>{style_override}')
+                
+            # Load the modified SVG data
+            renderer = QSvgRenderer(QByteArray(svg_data.encode('utf-8')))
+            pixmap = QPixmap(size)
+            pixmap.fill(Qt.transparent)
+            
+            painter = QPainter(pixmap)
+            painter.setRenderHint(QPainter.Antialiasing, True)
+            renderer.render(painter)
+            painter.end()
+            
+            return pixmap
+        except Exception as e:
+            # Add a print statement here to help debug if it still fails
+            print(f"Error rendering SVG {svg_path} with color {color}: {e}")
+            return QPixmap() # Return an empty pixmap on error
+        
+def _render_svg_outline_tinted(svg_path, size: QSize, color: str) -> QPixmap:
+    """Renders an SVG file, tinting ONLY its stroke and forcing the fill to be transparent."""
+    try:
+        with open(svg_path, 'r', encoding='utf-8') as f:
+            svg_data = f.read()
+        
+        # Inject CSS to force a transparent fill and a colored stroke
+        # This is the key change to ensure outlines are not filled in.
+        style_override = f"<style>g, path, rect, circle, polygon {{ fill: none !important; stroke: {color} !important; stroke-width: 1.5px; }}</style>"
+        
+        import re
+        match = re.search(r'(<svg[^>]*>)', svg_data)
+        if match:
+            svg_data = svg_data[:match.end()] + style_override + svg_data[match.end():]
+        else:
+            svg_data = svg_data.replace('<svg>', f'<svg>{style_override}')
+            
+        renderer = QSvgRenderer(QByteArray(svg_data.encode('utf-8')))
+        pixmap = QPixmap(size)
+        pixmap.fill(Qt.transparent)
+        
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        renderer.render(painter)
+        painter.end()
+        
+        return pixmap
+    except Exception as e:
+        print(f"Error rendering OUTLINE SVG {svg_path} with color {color}: {e}")
+        return QPixmap()
+
+def playlist_icon_for_type(item_type):
+    # Standardized to 28x28 for better visibility
+    icon_size = QSize(32, 32)
+    if item_type == 'youtube':
+        return load_svg_icon(str(APP_DIR / 'icons/youtube-fa7.svg'), icon_size)
+    elif item_type == 'bilibili':
+        return load_svg_icon(str(APP_DIR / 'icons/bilibili-fa7.svg'), icon_size)
+    elif item_type == 'local':
+        # --- MODIFIED LINE ---
+        return load_svg_icon(str(APP_DIR / 'icons/local-file.svg'), icon_size) 
+    else:
+        return load_svg_icon(str(APP_DIR / 'icons/music.svg'), icon_size)
 
 
 class MiniPlayer(QWidget):
@@ -2066,6 +2147,10 @@ class PlayingItemDelegate(QStyledItemDelegate):
                     painter.fillRect(option.rect, bg_color)
                     painter.restore()
 
+
+
+
+
 class LightChevronTreeStyle(QProxyStyle):
     def __init__(self, base=None, color="#e0e0e0"):
         super().__init__(base)
@@ -2111,41 +2196,7 @@ class LightChevronTreeStyle(QProxyStyle):
         
         super().drawPrimitive(element, option, painter, widget)
 
-def _render_svg_tinted(svg_path, size: QSize, color: str) -> QPixmap:
-    """Renders an SVG file, tinting its fill/stroke with a single color."""
-    try:
-        with open(svg_path, 'r', encoding='utf-8') as f:
-            svg_data = f.read()
-        
-        # A simple regex to find fill/stroke attributes and replace their values.
-        # This works for simple, single-color icons.
-        svg_data = re.sub(r'(fill|stroke)="[^"]+"', f'\\1="{color}"', svg_data)
-        
-        # Load the modified SVG data
-        renderer = QSvgRenderer(QByteArray(svg_data.encode('utf-8')))
-        pixmap = QPixmap(size)
-        pixmap.fill(Qt.transparent)
-        
-        painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.Antialiasing, True)
-        renderer.render(painter)
-        painter.end()
-        
-        return pixmap
-    except Exception:
-        return QPixmap() # Return an empty pixmap on error
-
-def playlist_icon_for_type(item_type):
-    # Standardized to 28x28 for better visibility
-    icon_size = QSize(28, 28)
-    if item_type == 'youtube':
-        return load_svg_icon(str(APP_DIR / 'icons/youtube-fa7.svg'), icon_size)
-    elif item_type == 'bilibili':
-        return load_svg_icon(str(APP_DIR / 'icons/bilibili-fa7.svg'), icon_size)
-    elif item_type == 'local':
-        return "🎬"
-    else:
-        return "🎵"
+    
         
 def load_svg_icon(path, size=QSize(18, 18)):
     renderer = QSvgRenderer(path)
@@ -3565,39 +3616,52 @@ class MediaPlayer(QMainWindow):
         # This definition now correctly happens BEFORE the UI is built
         self.icon_size = QSize(22, 22)
         try:
+            # Helper function for safe loading
+            def safe_load_icon(path, fallback_text):
+                return QIcon(str(path)) if path.exists() else QIcon.fromTheme(fallback_text, QIcon(fallback_text))
+
+            def safe_load_tinted(path, size, color, fallback_text):
+                 if path.exists():
+                     return QIcon(_render_svg_tinted(str(path), size, color))
+                 return QIcon.fromTheme(fallback_text, QIcon(fallback_text))
+
             play_path = APP_DIR / 'icons/play.svg'
             pause_path = APP_DIR / 'icons/pause.svg'
             prev_path = APP_DIR / 'icons/previous.svg'
             next_path = APP_DIR / 'icons/next.svg'
             shuffle_path = APP_DIR / 'icons/shuffle.svg'
             repeat_path = APP_DIR / 'icons/repeat.svg'
-            icon_px = QSize(50, 50)
-            self._play_icon_normal = load_svg_icon(str(play_path), icon_px) if play_path.exists() else QIcon()
-            self._pause_icon_normal = load_svg_icon(str(pause_path), icon_px) if pause_path.exists() else QIcon()
-            self.prev_icon_vinyl = QIcon(str(prev_path)) if prev_path.exists() else "⏮"
-            self.next_icon_vinyl = QIcon(str(next_path)) if next_path.exists() else "⏭"
-            self.shuffle_icon_vinyl = QIcon(str(shuffle_path)) if shuffle_path.exists() else "🔀"
-            self.repeat_icon_vinyl = QIcon(str(repeat_path)) if repeat_path.exists() else "🔁"
-            self.prev_icon_dark = QIcon(_render_svg_tinted(str(prev_path), self.icon_size, "#FFFFFF")) if prev_path.exists() else "⏮"
-            self.next_icon_dark = QIcon(_render_svg_tinted(str(next_path), self.icon_size, "#FFFFFF")) if next_path.exists() else "⏭"
-            self.shuffle_icon_dark = QIcon(_render_svg_tinted(str(shuffle_path), self.icon_size, "#FFFFFF")) if shuffle_path.exists() else "🔀"
-            self.repeat_icon_dark = QIcon(_render_svg_tinted(str(repeat_path), self.icon_size, "#FFFFFF")) if repeat_path.exists() else "🔁"
             shuffle_on_path = APP_DIR / 'icons/shuffle-on.svg'
             repeat_on_path = APP_DIR / 'icons/repeat-on.svg'
+            mute_path = APP_DIR / 'icons/volume-mute.svg'
+            volume_path = APP_DIR / 'icons/volume.svg'
             accent_color_on = "#e76f51"
-            self.shuffle_on_icon_vinyl = QIcon(str(shuffle_on_path)) if shuffle_on_path.exists() else "🔀"
-            self.repeat_on_icon_vinyl = QIcon(str(repeat_on_path)) if repeat_on_path.exists() else "🔁"
-            self.shuffle_on_icon_dark = QIcon(_render_svg_tinted(str(shuffle_on_path), self.icon_size, accent_color_on)) if shuffle_on_path.exists() else "🔀"
-            self.repeat_on_icon_dark = QIcon(_render_svg_tinted(str(repeat_on_path), self.icon_size, accent_color_on)) if repeat_on_path.exists() else "🔁"
+            icon_px = QSize(50, 50)
+
+            self._play_icon_normal = safe_load_icon(play_path, "▶")
+            self._pause_icon_normal = safe_load_icon(pause_path, "❚❚")
+            
+            self.prev_icon_vinyl = safe_load_icon(prev_path, "⏮")
+            self.next_icon_vinyl = safe_load_icon(next_path, "⏭")
+            self.shuffle_icon_vinyl = safe_load_icon(shuffle_path, "🔀")
+            self.repeat_icon_vinyl = safe_load_icon(repeat_path, "🔁")
+            self.shuffle_on_icon_vinyl = safe_load_icon(shuffle_on_path, "🔀")
+            self.repeat_on_icon_vinyl = safe_load_icon(repeat_on_path, "🔁")
+
+            self.prev_icon_dark = safe_load_tinted(prev_path, self.icon_size, "#FFFFFF", "⏮")
+            self.next_icon_dark = safe_load_tinted(next_path, self.icon_size, "#FFFFFF", "⏭")
+            self.shuffle_icon_dark = safe_load_tinted(shuffle_path, self.icon_size, "#FFFFFF", "🔀")
+            self.repeat_icon_dark = safe_load_tinted(repeat_path, self.icon_size, "#FFFFFF", "🔁")
+            self.shuffle_on_icon_dark = safe_load_tinted(shuffle_on_path, self.icon_size, accent_color_on, "🔀")
+            self.repeat_on_icon_dark = safe_load_tinted(repeat_on_path, self.icon_size, accent_color_on, "🔁")
+            
             self.tray_icon_play = self._play_icon_normal
             self.tray_icon_pause = self._pause_icon_normal
-            self.volume_icon = QIcon(str(APP_DIR / 'icons/volume.svg'))
-            mute_path = APP_DIR / 'icons/volume-mute.svg'
-            self.volume_mute_icon = QIcon(str(mute_path)) if mute_path.exists() else "🔇"
+            self.volume_icon = safe_load_icon(volume_path, "🔊")
+            self.volume_mute_icon = safe_load_icon(mute_path, "🔇")
             
-            # --- FIX: Use emojis for both audio states ---
-            self.icon_audio_active = "🔊"  # Sound is active
-            self.icon_audio_silent = "🔇"  # System is silent
+            self.icon_audio_active = "🔊"
+            self.icon_audio_silent = "🔇"
         except Exception as e:
             logger.error(f"Failed during icon creation: {e}")
 
@@ -3639,28 +3703,29 @@ class MediaPlayer(QMainWindow):
         self._undo_stack = []  # Stack of undo operations
         self._max_undo_operations = 10  # Limit undo history
 
+
+
     def _update_top_bar_icons(self):
         """Loads and tints the top bar icons to match the current theme."""
         try:
-            # Determine the correct color based on the current theme
             icon_color = "#f3f3f3" if self.theme == 'dark' else "#4a2c2a"
-            icon_size = QSize(18, 18) # A good, clean size for the top bar
+            icon_size = QSize(22, 22)
 
-            # Load, tint, and set the icon for each button
-            stats_icon = QIcon(_render_svg_tinted(str(APP_DIR / 'icons/stats.svg'), icon_size, icon_color))
+            # Use the OUTLINE function for these buttons
+            stats_icon = QIcon(_render_svg_outline_tinted(str(APP_DIR / 'icons/stats.svg'), icon_size, icon_color))
             self.stats_btn.setIcon(stats_icon)
 
-            settings_icon = QIcon(_render_svg_tinted(str(APP_DIR / 'icons/settings.svg'), icon_size, icon_color))
+            settings_icon = QIcon(_render_svg_outline_tinted(str(APP_DIR / 'icons/settings.svg'), icon_size, icon_color))
             self.settings_btn.setIcon(settings_icon)
 
-            minimize_icon = QIcon(_render_svg_tinted(str(APP_DIR / 'icons/minimize.svg'), icon_size, icon_color))
+            minimize_icon = QIcon(_render_svg_outline_tinted(str(APP_DIR / 'icons/minimize.svg'), icon_size, icon_color))
             self.mini_player_btn.setIcon(minimize_icon)
 
-            theme_icon = QIcon(_render_svg_tinted(str(APP_DIR / 'icons/palette.svg'), icon_size, icon_color))
+            theme_icon = QIcon(_render_svg_outline_tinted(str(APP_DIR / 'icons/theme.svg'), icon_size, icon_color))
             self.theme_btn.setIcon(theme_icon)
 
         except Exception as e:
-            logger.error(f"Failed to update top bar icons: {e}")    
+            logger.error(f"Failed to update top bar icons: {e}")
 
     def on_silence_detected(self):
         """
@@ -4699,23 +4764,9 @@ class MediaPlayer(QMainWindow):
         # Top bar
         top = QHBoxLayout(); top.setSpacing(8)
         title = QLabel("Silence Suzuka Player"); title.setObjectName('titleLabel'); title.setFont(self._font_serif(20, italic=True, bold=True))
-        # Dropdown for Scope Selection - COMMENTED OUT FOR SIMPLICITY
-        # self.scope_dropdown = QComboBox()
-        # self.scope_dropdown.setObjectName('scopeDropdown')
-        # self.scope_dropdown.addItem("Library", None)  # Default scope
-        # self.scope_dropdown.addItem("Playlist 1", "playlist1")
-        # self.scope_dropdown.addItem("Playlist 2", "playlist2")
-        # self.scope_dropdown.addItem("YouTube", "youtube")
-        # self.scope_dropdown.addItem("Bilibili", "bilibili")  # Add Bilibili as its own option
-        # self.scope_dropdown.addItem("Local Media", "local-media")
-        # self.scope_dropdown.setCurrentIndex(0)  # Default to Library
-        # self.scope_dropdown.currentIndexChanged.connect(lambda idx: self._on_scope_changed(idx))
+        top.addWidget(title)
+        top.addStretch()
 
-        # Add title to the top layout
-        top.addWidget(title)  # Add the title on the far left
-        # top.addWidget(self.scope_dropdown)  # Add the dropdown to the right of the title - COMMENTED OUT
-        top.addStretch()  # Push remaining items to the right
-        
         # Right: Today badge • Silence • Stats • Settings • Theme
         self.today_badge = QLabel("0s"); self.today_badge.setObjectName('statsBadge'); self.today_badge.setToolTip("Total listening time today")
         self.today_badge.setVisible(getattr(self, 'show_today_badge', True))
@@ -4724,12 +4775,13 @@ class MediaPlayer(QMainWindow):
         self.silence_indicator = QLabel("🔇"); self.silence_indicator.setObjectName('silenceIndicator'); self.silence_indicator.setToolTip("System silence indicator — shows when no system audio is detected (configurable in Settings → Audio Monitor)")
         top.addWidget(self.silence_indicator)
         
-        self.stats_btn = QPushButton("📊")
+        # Initialize buttons without emoji text
+        self.stats_btn = QPushButton() 
         self.stats_btn.setObjectName('settingsBtn')
         self.stats_btn.setToolTip("Listening Statistics")
         self.stats_btn.clicked.connect(self.open_stats)
         
-        self.settings_btn = QPushButton("⚙")
+        self.settings_btn = QPushButton()
         self.settings_btn.setObjectName('settingsBtn')
         self.settings_btn.setToolTip("Settings")
         self.settings_btn.clicked.connect(self.open_settings_tabs)
@@ -4737,18 +4789,21 @@ class MediaPlayer(QMainWindow):
         top.addWidget(self.stats_btn)
         top.addWidget(self.settings_btn)
         
-        self.mini_player_btn = QPushButton("🗔️") # A picture-in-picture style icon
+        self.mini_player_btn = QPushButton()
         self.mini_player_btn.setObjectName('settingsBtn')
         self.mini_player_btn.setToolTip("Switch to Mini Player")
         self.mini_player_btn.clicked.connect(self._toggle_mini_player)
         top.addWidget(self.mini_player_btn)
 
-        self.theme_btn = QPushButton("🎨"); self.theme_btn.setObjectName('settingsBtn'); self.theme_btn.setToolTip("Dark mode coming soon!"); self.theme_btn.setEnabled(False)  
+        self.theme_btn = QPushButton()
+        self.theme_btn.setObjectName('settingsBtn')
+        self.theme_btn.setToolTip("Toggle Theme")
         # self.theme_btn.clicked.connect(self.toggle_theme)
         top.addWidget(self.theme_btn)
         
-        # Add the top layout to the root layout
-        root.addLayout(top)    
+        self._update_top_bar_icons()
+        
+        root.addLayout(top)
         
         # Content
         content = QHBoxLayout(); content.setSpacing(8); root.addLayout(content, 1)
@@ -4769,24 +4824,21 @@ class MediaPlayer(QMainWindow):
         add_media_container = QWidget()
         add_media_container.setObjectName("addMediaContainer")
         add_media_container.setFixedHeight(44)
-        add_media_container.setMaximumWidth(220)  # Constrain width
+        add_media_container.setMaximumWidth(220)
 
         add_media_layout = QHBoxLayout(add_media_container)
         add_media_layout.setContentsMargins(0, 0, 0, 0)
         add_media_layout.setSpacing(0)
 
-        # Main button (most of the width)
         self.add_media_main = QPushButton("Add Media")
         self.add_media_main.setObjectName("addMediaMain")
         self.add_media_main.setFixedHeight(44)
         self.add_media_main.clicked.connect(self._on_add_media_clicked)
 
-        # Dropdown button (small arrow)
         self.add_media_dropdown = QPushButton("▼")
         self.add_media_dropdown.setObjectName("addMediaDropdown")
         self.add_media_dropdown.setFixedSize(32, 44)
 
-        # Create the menu
         menu = QMenu(self)
         menu.addAction("🔗 Add Link...", self.add_link_dialog)
         menu.addAction("📁 Add Files...", self.add_local_files)
@@ -4794,109 +4846,80 @@ class MediaPlayer(QMainWindow):
         def show_add_media_menu():
             try:
                 self._apply_menu_theme(menu)
-                # Position menu below the dropdown button
                 pos = self.add_media_dropdown.mapToGlobal(self.add_media_dropdown.rect().bottomRight())
-                pos.setX(pos.x() - menu.sizeHint().width())  # Right-align the menu
+                pos.setX(pos.x() - menu.sizeHint().width())
                 menu.exec(pos)
             except Exception:
-                # Fallback positioning
                 menu.exec(self.add_media_dropdown.mapToGlobal(self.add_media_dropdown.rect().bottomLeft()))
 
-        # Connect the dropdown button OUTSIDE the function definition
         self.add_media_dropdown.clicked.connect(show_add_media_menu)
 
-        # Add to layout
         add_media_layout.addWidget(self.add_media_main, 1)
         add_media_layout.addWidget(self.add_media_dropdown, 0)
 
         side_layout.addWidget(add_media_container)
-        # ---- end Split Add Media Button ----
-
+        
         opts = QHBoxLayout()
-        # Front page toggles removed; configure in Settings
         side_layout.addLayout(opts)
 
-        # Playlist controls (save/load) — Unwatched toggle with icon swap (eye / eye-off)
+        # Playlist controls
         controls = QHBoxLayout()
-        self.save_btn = QPushButton("💾")
+        self.save_btn = QPushButton()
+        self.save_btn.setIcon(load_svg_icon(str(APP_DIR / 'icons/save.svg'))) 
         self.save_btn.setObjectName('miniBtn')
         self.save_btn.setToolTip("Save current playlist")
         self.save_btn.clicked.connect(self.save_playlist)
         self.save_btn.setFixedSize(36, 28)
-        self.load_btn = QPushButton("📂")
+
+        self.load_btn = QPushButton()
+        self.load_btn.setIcon(load_svg_icon(str(APP_DIR / 'icons/load.svg'))) 
         self.load_btn.setObjectName('miniBtn')
         self.load_btn.setToolTip("Load saved playlist")
         self.load_btn.clicked.connect(self.load_playlist_dialog) 
         self.load_btn.setFixedSize(36, 28)
 
-        self.duration_btn = QPushButton("⏱️")
+        self.duration_btn = QPushButton()
+        self.duration_btn.setIcon(load_svg_icon(str(APP_DIR / 'icons/duration.svg'))) 
         self.duration_btn.setObjectName('miniBtn')
         self.duration_btn.setToolTip("Fetch all durations")
         self.duration_btn.clicked.connect(self._fetch_all_durations)
         self.duration_btn.setFixedSize(36, 28)
 
-        # New: icon-only Unwatched toggle (prefers icons/eye.svg + icons/eye-off.svg)
         self.unwatched_btn = QPushButton()
         self.unwatched_btn.setObjectName('miniBtn')
         self.unwatched_btn.setCheckable(True)
-        try:
-            self.unwatched_btn.setFixedSize(36, 28)
-        except Exception:
-            pass
+        self.unwatched_btn.setFixedSize(36, 28)
 
-        # Resolve SVG icons if present; otherwise fallback to emoji
         try:
-            eye_on_path = APP_DIR / 'icons' / 'eye.svg'
-            eye_off_path = APP_DIR / 'icons' / 'eye-off.svg'
+            # CORRECT FILENAMES for eye icons
+            eye_on_path = APP_DIR / 'icons/icons_eye_Version10.svg'
+            eye_off_path = APP_DIR / 'icons/icons_eye-off_Version10.svg'
             if eye_on_path.exists() and eye_off_path.exists():
                 self._unwatched_icon_on = QIcon(str(eye_on_path))
                 self._unwatched_icon_off = QIcon(str(eye_off_path))
-                # icon-only, set icon size for alignment
                 self.unwatched_btn.setIconSize(QSize(18, 18))
-                self.unwatched_btn.setText("")  # icon-only
+                self.unwatched_btn.setText("")
             else:
-                self._unwatched_icon_on = None
-                self._unwatched_icon_off = None
-                # Emoji fallback: OFF shows 👁 (meaning show) and ON shows 🙈 (hidden)
-                # set a compact emoji so button width matches others
-                self.unwatched_btn.setText("👁" if not getattr(self, 'unwatched_only', False) else "🙈")
+                raise FileNotFoundError("Eye icons not found")
         except Exception:
             self._unwatched_icon_on = None
             self._unwatched_icon_off = None
-            self.unwatched_btn.setText("👁" if not getattr(self, 'unwatched_only', False) else "🙈")
+            self.unwatched_btn.setText("👁")
 
-                # use themed tooltip instead of native QToolTip (keep accessible description)
-        try:
-            self.unwatched_btn.setAccessibleDescription("Show unwatched items only (toggle)")
-        except Exception:
-            pass
         self.unwatched_btn.setToolTip("")
-        # Reuse existing logic
         self.unwatched_btn.toggled.connect(self._toggle_unwatched_only)
-        # Update visuals (icon/text and styling)
         self.unwatched_btn.toggled.connect(self._update_unwatched_btn_visual)
 
-        # Enable drag and drop
         self.setAcceptDrops(True)
 
-        # initialize state from persisted flag (set in _load_files)
         try:
             self.unwatched_btn.setChecked(bool(getattr(self, 'unwatched_only', False)))
-        except Exception:
-            pass
-        try:
-            # ensure correct initial appearance
             self._update_unwatched_btn_visual(bool(getattr(self, 'unwatched_only', False)))
-        except Exception:
-            pass
-        try:
-            # Install themed tooltip (shows app-styled tooltip and is updated by _update_unwatched_btn_visual)
             initial_txt = "Unwatched only: ON (click to turn off)" if getattr(self, 'unwatched_only', False) else "Show unwatched items only (OFF)"
             self._install_themed_tooltip(self.unwatched_btn, initial_txt)
         except Exception:
-            pass   
+            pass
 
-        # Layout: Save | Load | Unwatched-icon | spacer | Group
         controls.addWidget(self.save_btn)
         controls.addWidget(self.load_btn)
         controls.addWidget(self.duration_btn)
@@ -4909,7 +4932,6 @@ class MediaPlayer(QMainWindow):
         except Exception:
             pass
 
-        # Search bar container for width control
         search_container = QWidget()
         search_layout = QHBoxLayout(search_container)
         search_layout.setContentsMargins(0, 0, 0, 0)
@@ -4919,37 +4941,25 @@ class MediaPlayer(QMainWindow):
         self.search_bar.setObjectName('searchBar')
         self.search_bar.setClearButtonEnabled(True)
 
-        # Constrain search bar width
         self.search_bar.setMaximumWidth(280)
         self.search_bar.setMinimumWidth(150)
 
         search_layout.addWidget(self.search_bar)
-        search_layout.addStretch()  # Push search bar to the left
+        search_layout.addStretch()
 
-        self.search_bar.setObjectName('searchBar')
-        self.search_bar.setClearButtonEnabled(True)  # This enables the X button
-
-        # Install event filter to handle IME events
         self.search_bar.installEventFilter(self)
-        
-        # Replace textChanged with improved Japanese IME support
         self.search_bar.textChanged.connect(self._on_search_text_changed)
         self.search_bar.returnPressed.connect(lambda: self.filter_playlist(self.search_bar.text()))
 
-        # Initialize search timer
         self._search_timer = QTimer()
         self._search_timer.setSingleShot(True)
 
         def do_filter():
-            # # DEBUG removed
             self.filter_playlist(self.search_bar.text())
 
         self._search_timer.timeout.connect(do_filter)
-        
-        # Track IME composition state
         self._ime_composing = False
 
-        # Clear with Escape key
         QShortcut(QKeySequence(Qt.Key_Escape), self.search_bar, self.search_bar.clear)
         side_layout.addWidget(search_container)
 
@@ -4957,22 +4967,14 @@ class MediaPlayer(QMainWindow):
         self.library_header_label.setObjectName('libraryHeader')
         self.library_header_label.setToolTip("Double-click to play all")
         self.library_header_label.mouseDoubleClickEvent = lambda e: self._play_all_library()
-
         self.library_header_label.setContextMenuPolicy(Qt.CustomContextMenu)
         self.library_header_label.customContextMenuRequested.connect(self._show_library_header_context_menu)
-
-        # ADD THIS DEBUG:
-        # print(f"[HEADER DEBUG] Library header context menu policy set: {self.library_header_label.contextMenuPolicy()}")
-        # print(f"[HEADER DEBUG] Signal connected: customContextMenuRequested")
-
         side_layout.addWidget(self.library_header_label)
 
-        # Create a container widget to hold either the playlist or the empty state view
         self.playlist_container = QWidget()
         self.playlist_stack = QStackedLayout(self.playlist_container)
         self.playlist_stack.setContentsMargins(0, 0, 0, 0)
 
-        # 1. The Playlist Tree (Index 0)
         self.playlist_tree = PlaylistTree(self)
         self.playlist_tree.setObjectName('playlistTree')
         self.playlist_tree.setAlternatingRowColors(True)
@@ -4982,27 +4984,12 @@ class MediaPlayer(QMainWindow):
         self.playlist_tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.playlist_tree.customContextMenuRequested.connect(self._show_playlist_context_menu)
         self.playlist_tree.mousePressEvent = self._create_mouse_press_handler()
-    
-
-        # Set playlist font: Lora, italic, bold (size set dynamically)
         self.playlist_tree.setFont(self._font_serif_no_size(italic=True, bold=True))
-
-        # --- ADD THESE LINES FOR ICON SIZE AND ROW HEIGHT ---
-        self.playlist_tree.setIconSize(QSize(24, 24))  
-
-        # Apply custom style ONLY for dark theme (let vinyl use system default)
-        # We'll apply this properly after theme loads in _load_files()
-        pass  # Remove the style application here for now
-
+        self.playlist_tree.setIconSize(QSize(24, 24))
         self.playlist_stack.addWidget(self.playlist_tree)
-
-         # --- ADD THESE LINES FOR ICON SIZE AND ROW HEIGHT ---
-        self.playlist_tree.setIconSize(QSize(24, 24))  
-
         self.playing_delegate = PlayingItemDelegate(self)
         self.playlist_tree.setItemDelegate(self.playing_delegate)
 
-        # 2. The Empty State Widget (Index 1)
         self.empty_state_widget = QWidget()
         empty_layout = QVBoxLayout(self.empty_state_widget)
         empty_layout.addStretch()
@@ -5021,60 +5008,37 @@ class MediaPlayer(QMainWindow):
         empty_layout.addWidget(self.empty_state_subheading)
         empty_layout.addStretch()
         self.playlist_stack.addWidget(self.empty_state_widget)
-
-        # Add the container to the sidebar
         side_layout.addWidget(self.playlist_container, 1)
 
-        # Video frame (now in the left compact area)
         self.video_frame = QWidget(); self.video_frame.setObjectName('videoWidget')
         self.video_frame.setStyleSheet("background:#000; border-radius: 6px"); main_col.addWidget(self.video_frame, 3)
 
-        # Now Playing and Progress Bar Layout
         now_playing_layout = QVBoxLayout()
-
-        # Track Title Label
         self.track_label = QLabel("No track playing")
         self.track_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed) 
         self.track_label.setObjectName('trackLabel')
         self.track_label.setFont(self._font_serif_no_size(italic=True, bold=True))
-        self.track_label.setWordWrap(False)  # Disable word wrap for eliding
+        self.track_label.setWordWrap(False)
         self.track_label.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
-        self.track_label.setStyleSheet("""
-            color: #4a2c2a;
-            background: transparent;
-            margin-top: 14px;
-            margin-bottom: 12px;
-            letter-spacing: 0.5px;
-        """)
-        self._track_title_full = "No track playing"  # Store full text for eliding
+        self.track_label.setStyleSheet("color: #4a2c2a; background: transparent; margin-top: 14px; margin-bottom: 12px; letter-spacing: 0.5px;")
+        self._track_title_full = "No track playing"
 
-        # Initialize track title scrolling components
         self._track_scroll_timer = None
         self._track_scroll_pos = 0
         self._track_original_text = ""
 
-        # FIXED: Proper event handler setup
         def track_enter_handler(event):
-            # # DEBUG removed
             self._start_track_title_scrolling()
-
         def track_leave_handler(event):
-            # # DEBUG removed
             self._stop_track_title_scrolling()
 
-        # Enable mouse tracking and set event handlers
         self.track_label.setMouseTracking(True)
         self.track_label.enterEvent = track_enter_handler
         self.track_label.leaveEvent = track_leave_handler
-
-        # Add mouse tracking for track title scrolling
-        self.track_label.setMouseTracking(True)
         self.track_label.enterEvent = self._on_track_title_enter
         self.track_label.leaveEvent = self._on_track_title_leave
-
         now_playing_layout.addWidget(self.track_label)
 
-        # Progress Bar and Time Labels
         progress_layout = QHBoxLayout()
         self.time_label = QLabel("0:00")
         self.time_label.setObjectName('timeLabel')
@@ -5093,28 +5057,20 @@ class MediaPlayer(QMainWindow):
         progress_layout.addWidget(self.dur_label)
         now_playing_layout.addLayout(progress_layout)
 
-
-        # Up Next panel (toggle via Settings)
         try:
             self.up_next_container = QWidget()
             up_layout = QVBoxLayout(self.up_next_container)
             up_layout.setContentsMargins(0,0,0,0)
-
             self.up_next_header = QPushButton("▼ Up Next")
             self.up_next_header.setCheckable(True)
             self.up_next_header.setChecked(True)
             self.up_next_header.setObjectName('upNextHeader')
             self.up_next_header.clicked.connect(self._on_up_next_header_clicked)
             up_layout.addWidget(self.up_next_header)
-
-            # Create a stacked layout to switch between the list and a message
             self.up_next_stack = QStackedLayout()
-
-            # 1. The song list (index 0)
             self.up_next = ScrollingTreeWidget()
             self.up_next.setHeaderHidden(True)
             self.up_next.setObjectName('upNext')
-            # self.up_next.setFixedHeight(140)  <-- REMOVED THIS LINE
             self.up_next.setFont(self._font_serif_no_size(italic=True, bold=True))
             self.up_next.setAlternatingRowColors(True)
             self.up_next.setIndentation(12)
@@ -5123,8 +5079,6 @@ class MediaPlayer(QMainWindow):
             self.up_next.customContextMenuRequested.connect(self._show_up_next_menu)
             self.up_next.itemDoubleClicked.connect(self._on_up_next_double_clicked)
             self.up_next_stack.addWidget(self.up_next)
-
-            # 2. The shuffle message (index 1)
             shuffle_msg_widget = QWidget()
             shuffle_msg_layout = QVBoxLayout(shuffle_msg_widget)
             shuffle_msg_layout.setAlignment(Qt.AlignCenter)
@@ -5133,8 +5087,6 @@ class MediaPlayer(QMainWindow):
             shuffle_msg_label.setAlignment(Qt.AlignCenter)
             shuffle_msg_layout.addWidget(shuffle_msg_label)
             self.up_next_stack.addWidget(shuffle_msg_widget)
-
-            # 3. The repeat message (index 2) - ADD THIS NEW BLOCK
             repeat_msg_widget = QWidget()
             repeat_msg_layout = QVBoxLayout(repeat_msg_widget)
             repeat_msg_layout.setAlignment(Qt.AlignCenter)
@@ -5143,13 +5095,11 @@ class MediaPlayer(QMainWindow):
             repeat_msg_label.setAlignment(Qt.AlignCenter)
             repeat_msg_layout.addWidget(repeat_msg_label)
             self.up_next_stack.addWidget(repeat_msg_widget)
-
-            up_layout.addLayout(self.up_next_stack) # Add the stack to the panel
-            main_col.addWidget(self.up_next_container, 1) # <-- MODIFIED THIS LINE
+            up_layout.addLayout(self.up_next_stack)
+            main_col.addWidget(self.up_next_container, 1)
         except Exception:
             pass
         
-        # Shuffle button
         self.shuffle_btn = QPushButton()
         self.shuffle_btn.setCheckable(True)
         self.shuffle_btn.setIconSize(self.icon_size)
@@ -5158,7 +5108,6 @@ class MediaPlayer(QMainWindow):
         self.shuffle_btn.clicked.connect(self._toggle_shuffle)
         self.shuffle_btn.setFixedSize(40, 40) 
         
-        # Prev button
         self.prev_btn = QPushButton()
         self.prev_btn.setIconSize(self.icon_size)
         self.prev_btn.setObjectName('controlBtn')
@@ -5166,38 +5115,14 @@ class MediaPlayer(QMainWindow):
         self.prev_btn.clicked.connect(self.previous_track)
         self.shuffle_btn.setFixedSize(40, 40) 
 
-        # Play/Pause button
         self.play_pause_btn = QPushButton()
         self.play_pause_btn.setIconSize(QSize(50, 50))
         self.play_pause_btn.setObjectName('playPauseBtn')
         self.play_pause_btn.setToolTip("Play/Pause (Space)")
         self.play_pause_btn.clicked.connect(self.toggle_play_pause)
 
-        # Add this test:
-        def simple_test():
-            # print("Play button was clicked!")
-            try:
-                current_size = self.play_pause_btn.iconSize()
-                # print(f"Current icon size: {current_size.width()}x{current_size.height()}")
-                # Test if we can change icon size
-                self.play_pause_btn.setIconSize(QSize(45, 45))
-                QTimer.singleShot(200, lambda: self.play_pause_btn.setIconSize(QSize(50, 50)))
-            except Exception as e:
-                print(f"Size test failed: {e}")
-
-        self.play_pause_btn.clicked.connect(simple_test)
-
-        # Test simple press feedback
-        def test_press():
-            pass # print("Button pressed - animation should trigger")
-        def test_release():
-            pass # print("Button released - animation should trigger")
-        self.play_pause_btn.pressed.connect(test_press)
-        self.play_pause_btn.released.connect(test_release)
-
         self.play_pause_btn.setFixedSize(60, 60)
         
-        # Next button
         self.next_btn = QPushButton()
         self.next_btn.setIconSize(self.icon_size)
         self.next_btn.setObjectName('controlBtn')
@@ -5205,7 +5130,6 @@ class MediaPlayer(QMainWindow):
         self.next_btn.clicked.connect(self.next_track)
         self.next_btn.setFixedSize(40, 40)
 
-        # Repeat button
         self.repeat_btn = QPushButton()
         self.repeat_btn.setCheckable(True)
         self.repeat_btn.setIconSize(self.icon_size)
@@ -5214,14 +5138,11 @@ class MediaPlayer(QMainWindow):
         self.repeat_btn.clicked.connect(self._toggle_repeat)
         self.repeat_btn.setFixedSize(40, 40)
         
-        # --- Volume icon: prefer icons/volume.svg rendered with QSvgRenderer (hi-dpi aware) ---
-        # --- Volume icon: prefer icons/volume.svg rendered with QSvgRenderer (hi-dpi aware) ---
         try:
             from PySide6.QtCore import QRectF
-            # create label
             self.volume_icon_label = QLabel()
             self.volume_icon_label.setObjectName('volumeIconLabel')
-            self.volume_icon_label.setFixedSize(icon_size)  # icon_size defined earlier (QSize(22,22))
+            self.volume_icon_label.setFixedSize(icon_size)
             self.volume_icon_label.setToolTip("Volume")
             try:
                 self.volume_icon_label.setAccessibleDescription("Volume")
@@ -5231,15 +5152,12 @@ class MediaPlayer(QMainWindow):
             svg_path = APP_DIR / 'icons' / 'volume.svg'
             rendered = False
             try:
-                # If QtSvg (QSvgRenderer) is available and the SVG exists, render it into a QPixmap
                 if svg_path.exists() and ('QSvgRenderer' in globals()) and (QSvgRenderer is not None):
-                    # Use theme-appropriate color
                     if getattr(self, 'theme', 'dark') == 'dark':
-                        color = "#d0d0d0"  # off-white grey for dark theme
+                        color = "#d0d0d0"
                     else:
-                        color = "#4a2c2a"  # brown for vinyl theme
+                        color = "#4a2c2a"
                     
-                    # Use the existing _render_svg_tinted function to color the icon
                     pm = _render_svg_tinted(str(svg_path), icon_size, color)
                     if not pm.isNull():
                         self.volume_icon_label.setPixmap(pm)
@@ -5247,7 +5165,6 @@ class MediaPlayer(QMainWindow):
             except Exception:
                 rendered = False
 
-            # Fallback: use previously loaded QIcon (self.volume_icon) if available
             if not rendered:
                 try:
                     if hasattr(self, 'volume_icon') and not self.volume_icon.isNull():
@@ -5256,12 +5173,10 @@ class MediaPlayer(QMainWindow):
                 except Exception:
                     rendered = False
 
-            # Final fallback: emoji
             if not rendered:
                 self.volume_icon_label.setText("🔇")
                 self.volume_icon_label.setAlignment(Qt.AlignCenter)
 
-            # Optional: click-to-toggle-mute handler (uncomment assignment line below to enable)
             try:
                 def _vol_clicked(ev):
                     try:
@@ -5276,25 +5191,21 @@ class MediaPlayer(QMainWindow):
                 self.volume_icon_label.mousePressEvent = _vol_clicked
             except Exception:
                 pass
-
-            
         except Exception:
             controls_bar.addWidget(QLabel("🔊"))
-        # --- end volume icon block ---
+            
         self.volume_slider = ClickableSlider(Qt.Horizontal)
         self.volume_slider.setObjectName('volumeSlider')
         self.volume_slider.setRange(0, 100)
         self.volume_slider.setValue(80)
         self.volume_slider.setFixedWidth(120)
-        self.volume_slider.setToolTip(f"Volume: 80%")  # Initial tooltip
+        self.volume_slider.setToolTip(f"Volume: 80%")
         self.volume_slider.valueChanged.connect(self.set_volume)
-        # Update tooltip on any value change
         self.volume_slider.valueChanged.connect(lambda v: self.volume_slider.setToolTip(f"Volume: {v}%"))
-        # --- Corrected Centered Control Bar Layout ---
+        
         controls_row = QGridLayout()
         controls_row.setContentsMargins(0, 0, 0, 0)
 
-        # 1. Define the center button group
         center_controls = QHBoxLayout()
         center_controls.setSpacing(12)
         center_controls.addWidget(self.shuffle_btn)
@@ -5305,7 +5216,6 @@ class MediaPlayer(QMainWindow):
         center_widget = QWidget()
         center_widget.setLayout(center_controls)
 
-        # 2. Define the volume control group
         volume_controls = QHBoxLayout()
         volume_controls.setSpacing(6)
         volume_controls.addWidget(self.volume_icon_label)
@@ -5313,27 +5223,18 @@ class MediaPlayer(QMainWindow):
         volume_widget = QWidget()
         volume_widget.setLayout(volume_controls)
 
-        # 3. Add both groups to the layout
-        # The button group spans all 3 columns and is centered within them.
         controls_row.addWidget(center_widget, 0, 0, 1, 3, alignment=Qt.AlignHCenter)
-        # The volume group is placed in the 3rd column (index 2) and aligned to the right.
         controls_row.addWidget(volume_widget, 0, 2, alignment=Qt.AlignRight)
 
-        # Make the outer columns stretchable to push the volume slider to the edge.
         controls_row.setColumnStretch(0, 1)
         controls_row.setColumnStretch(2, 1)
 
-        # Add the full-width Now Playing panel just above the controls
-        root.addLayout(now_playing_layout) # <--- ADD THIS LINE
-
-        # Add controls to root layout for full-width span
+        root.addLayout(now_playing_layout)
         root.addLayout(controls_row)
 
         self.status = QStatusBar(); self.setStatusBar(self.status)
 
-        # UI timers
         self.badge_timer = QTimer(self); self.badge_timer.timeout.connect(self.update_badge); self.badge_timer.start(5000)
-        # Apply Up Next initial visibility from settings
         try:
             _show_up = bool(getattr(self, 'show_up_next', True))
             if hasattr(self, 'up_next_container'):
@@ -5347,16 +5248,6 @@ class MediaPlayer(QMainWindow):
                     pass
         except Exception:
             pass
-        # Note: Up Next now uses ScrollingTreeWidget, so no custom scrolling setup needed
-        # self._setup_up_next_scrolling()    
-
-        # DEBUG: Test if undo system is set up
-        # print("=== UNDO SYSTEM CHECK ===")
-        # print(f"_add_undo_operation exists: {hasattr(self, '_add_undo_operation')}")
-        # print(f"_perform_undo exists: {hasattr(self, '_perform_undo')}")  
-        # print(f"_undo_stack exists: {hasattr(self, '_undo_stack')}")
-        # print(f"Undo stack size: {len(getattr(self, '_undo_stack', []))}")
-        # print("========================")
 
 
     def _toggle_mini_player(self):
@@ -6779,6 +6670,9 @@ class MediaPlayer(QMainWindow):
                 except Exception:
                     pass    
 
+                if hasattr(self, 'icon_manager') and self.icon_manager:
+                    self._update_dynamic_icons()    
+
                 # Apply text colors to labels
                 if hasattr(self, 'track_label'):
                     self.track_label.setStyleSheet(f"color: {text_color}; background: transparent; margin-top: 14px; margin-bottom: 12px; letter-spacing: 0.5px; font-weight: bold; font-style: italic; font-family: '{self._serif_font}';")
@@ -6823,6 +6717,7 @@ class MediaPlayer(QMainWindow):
 
             except Exception as e:
                 logger.warning(f"Failed to force-apply theme to widgets: {e}")
+                
 
     def _play_all_library(self):
         """Plays the entire library from the beginning."""
@@ -6850,6 +6745,10 @@ class MediaPlayer(QMainWindow):
                 bg.setPalette(pal)
         except Exception:
             pass
+
+        if hasattr(self, 'icon_manager') and self.icon_manager:
+            self._migrate_all_ui_icons()
+            self._update_dynamic_icons()
         
         # Apply the new theme
         if self.theme == 'vinyl':
@@ -7010,35 +6909,38 @@ class MediaPlayer(QMainWindow):
 
 
     def _update_silence_indicator(self, is_silent: bool = None):
-        """Update the silence indicator - simplified version."""
+        """Update the silence indicator using themed SVG icons."""
         if is_silent is not None:
             self._last_system_is_silent = bool(is_silent)
         
-        # Always keep visible to prevent layout shifts
         self.silence_indicator.setVisible(True)
         
-        # Simple check: if we have a current track, assume we're active
         has_track = (self.current_index >= 0 and self.current_index < len(self.playlist))
+        icon_size = QSize(22, 22)
+        icon_color = "#f3f3f3" if getattr(self, 'theme', 'dark') == 'dark' else "#4a2c2a"
+
+        self.silence_indicator.setText("")
         
+        pixmap = QPixmap()
+        tooltip = ""
+
         if has_track:
-            # Any time we have a loaded track, show playing icon
-            icon_text = "🎵"
+            # The 'play' icon is FILLED, so use the original tinting function
             tooltip = "Media player is active"
-            # Reset timer when we have an active track
+            pixmap = _render_svg_tinted(str(APP_DIR / 'icons/music.svg'), icon_size, icon_color)
             self._reset_silence_counter()
         else:
-            # No track loaded: show system audio state
             if self._last_system_is_silent:
-                icon_text = "🔇"
+                # The 'volume-mute' icon is an OUTLINE
                 remaining = max(0, self.audio_monitor.silence_duration_s - self.audio_monitor._silence_counter)
                 tooltip = f"System is silent. Auto-play in {human_duration(remaining)}."
+                pixmap = _render_svg_outline_tinted(str(APP_DIR / 'icons/volume-mute.svg'), icon_size, "#e76f51") 
             else:
-                icon_text = "🔊"
+                # The 'volume' icon is an OUTLINE
                 tooltip = "System audio is active."
+                pixmap = _render_svg_outline_tinted(str(APP_DIR / 'icons/volume.svg'), icon_size, icon_color)
         
-        # Always update
-        self.silence_indicator.setPixmap(QPixmap())
-        self.silence_indicator.setText(icon_text)
+        self.silence_indicator.setPixmap(pixmap)
         self.silence_indicator.setToolTip(tooltip)
         
     def _force_update_silence_indicator_after_delay(self):
@@ -9821,7 +9723,8 @@ class MediaPlayer(QMainWindow):
                     # DEBUG removed,
                     self._copy_url(u)
                 )[1])
-                menu.addAction("🗑️ Remove").triggered.connect(lambda: self._remove_index(idx))
+                remove_action = self._create_icon_action("Remove", "trash.svg", lambda: self._remove_index(idx))
+                menu.addAction(remove_action)
                 menu.addSeparator()
                 menu.addAction("⏮️ Reset Playback Position").triggered.connect(lambda: self._clear_resume_for_url(url))
                 menu.addAction("✅ Mark as Unwatched").triggered.connect(lambda u=url: self._mark_item_unwatched(u))
