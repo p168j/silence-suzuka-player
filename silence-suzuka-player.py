@@ -3710,8 +3710,8 @@ class MediaPlayer(QMainWindow):
         try:
             icon_color = "#f3f3f3" if self.theme == 'dark' else "#4a2c2a"
             
-            # Use the standardized top bar icon size
-            icon_size = self.top_bar_icon_size
+            # Use the much larger top bar icon size
+            icon_size = self.top_bar_icon_size  # Now 32x32
 
             # Use the OUTLINE function for these buttons
             stats_icon = QIcon(_render_svg_outline_tinted(str(APP_DIR / 'icons/stats.svg'), icon_size, icon_color))
@@ -3728,6 +3728,7 @@ class MediaPlayer(QMainWindow):
 
         except Exception as e:
             logger.error(f"Failed to update top bar icons: {e}")
+
 
     def on_silence_detected(self):
         """
@@ -4763,9 +4764,10 @@ class MediaPlayer(QMainWindow):
         root = QVBoxLayout(central); root.setContentsMargins(8, 8, 8, 8); root.setSpacing(8)
         icon_size = QSize(22, 22)
 
-        self.top_bar_icon_size = QSize(20, 20)      # Slightly larger for top bar
-        self.sidebar_icon_size = QSize(18, 18)      # Standard size for sidebar buttons
-        self.playlist_icon_size = QSize(24, 24)     # Keep existing playlist icon size
+        self.top_bar_icon_size = QSize(32, 32)      # Much more visible top bar icons
+        self.sidebar_icon_size = QSize(30, 30)      # Large, easy-to-click sidebar buttons  
+        self.playlist_icon_size = QSize(32, 32)     # Clearly visible playlist icons
+        self.control_icon_size = QSize(24, 24)      # Standard control button icons (keep these medium)
 
         # Top bar
         top = QHBoxLayout(); top.setSpacing(8)
@@ -4786,12 +4788,14 @@ class MediaPlayer(QMainWindow):
         self.stats_btn.setObjectName('settingsBtn')
         self.stats_btn.setToolTip("Listening Statistics")
         self.stats_btn.setIconSize(self.top_bar_icon_size)
+        self.stats_btn.setFixedSize(48, 44)  # Much larger button container
         self.stats_btn.clicked.connect(self.open_stats)
         
         self.settings_btn = QPushButton()
         self.settings_btn.setObjectName('settingsBtn')
         self.settings_btn.setToolTip("Settings")
         self.settings_btn.setIconSize(self.top_bar_icon_size)
+        self.stats_btn.setFixedSize(48, 44)  # Much larger button container
         self.settings_btn.clicked.connect(self.open_settings_tabs)
     
         top.addWidget(self.stats_btn)
@@ -4801,6 +4805,7 @@ class MediaPlayer(QMainWindow):
         self.mini_player_btn.setObjectName('settingsBtn')
         self.mini_player_btn.setToolTip("Switch to Mini Player")
         self.mini_player_btn.setIconSize(self.top_bar_icon_size)
+        self.stats_btn.setFixedSize(48, 44)  # Much larger button container
         self.mini_player_btn.clicked.connect(self._toggle_mini_player)
         top.addWidget(self.mini_player_btn)
 
@@ -4808,6 +4813,7 @@ class MediaPlayer(QMainWindow):
         self.theme_btn.setObjectName('settingsBtn')
         self.theme_btn.setToolTip("Toggle Theme")
         self.theme_btn.setIconSize(self.top_bar_icon_size)
+        self.stats_btn.setFixedSize(48, 44)  # Much larger button container
         # self.theme_btn.clicked.connect(self.toggle_theme)
         top.addWidget(self.theme_btn)
         
@@ -4879,26 +4885,27 @@ class MediaPlayer(QMainWindow):
         self.save_btn.setObjectName('miniBtn')
         self.save_btn.setToolTip("Save current playlist")
         self.save_btn.clicked.connect(self.save_playlist)
-        self.save_btn.setFixedSize(36, 28)
+        self.save_btn.setFixedSize(52, 44)  # Much larger for easier clicking
 
         self.load_btn = QPushButton()
         self.load_btn.setIcon(load_svg_icon(str(APP_DIR / 'icons/load.svg'), self.sidebar_icon_size))
         self.load_btn.setObjectName('miniBtn')
         self.load_btn.setToolTip("Load saved playlist")
         self.load_btn.clicked.connect(self.load_playlist_dialog) 
-        self.load_btn.setFixedSize(36, 28)
+        self.save_btn.setFixedSize(52, 44)  # Much larger for easier clicking
 
         self.duration_btn = QPushButton()
         self.duration_btn.setIcon(load_svg_icon(str(APP_DIR / 'icons/duration.svg'), self.sidebar_icon_size))
         self.duration_btn.setObjectName('miniBtn')
         self.duration_btn.setToolTip("Fetch all durations")
         self.duration_btn.clicked.connect(self._fetch_all_durations)
-        self.duration_btn.setFixedSize(36, 28)
+        self.save_btn.setFixedSize(52, 44)  # Much larger for easier clicking
 
         self.unwatched_btn = QPushButton()
         self.unwatched_btn.setObjectName('miniBtn')
         self.unwatched_btn.setCheckable(True)
         self.unwatched_btn.setFixedSize(36, 28)
+        self.save_btn.setFixedSize(52, 44)  # Much larger for easier clicking
 
         try:
             # CORRECT FILENAMES for eye icons
@@ -6926,7 +6933,7 @@ class MediaPlayer(QMainWindow):
         self.silence_indicator.setVisible(True)
         
         has_track = (self.current_index >= 0 and self.current_index < len(self.playlist))
-        icon_size = QSize(22, 22)
+        icon_size = QSize(30, 30)  # Much larger silence indicator icon
         icon_color = "#f3f3f3" if getattr(self, 'theme', 'dark') == 'dark' else "#4a2c2a"
 
         self.silence_indicator.setText("")
@@ -6935,18 +6942,15 @@ class MediaPlayer(QMainWindow):
         tooltip = ""
 
         if has_track:
-            # FIXED: Use outline version for music icon to match other icons
             tooltip = "Media player is active"
             pixmap = _render_svg_outline_tinted(str(APP_DIR / 'icons/music.svg'), icon_size, icon_color)
             self._reset_silence_counter()
         else:
             if self._last_system_is_silent:
-                # The 'volume-mute' icon is an OUTLINE
                 remaining = max(0, self.audio_monitor.silence_duration_s - self.audio_monitor._silence_counter)
                 tooltip = f"System is silent. Auto-play in {human_duration(remaining)}."
                 pixmap = _render_svg_outline_tinted(str(APP_DIR / 'icons/volume-mute.svg'), icon_size, "#e76f51") 
             else:
-                # The 'volume' icon is an OUTLINE
                 tooltip = "System audio is active."
                 pixmap = _render_svg_outline_tinted(str(APP_DIR / 'icons/volume.svg'), icon_size, icon_color)
         
@@ -7024,26 +7028,25 @@ class MediaPlayer(QMainWindow):
         """Button feedback with proper circular glow"""
         try:
             buttons = [
-                # Main controls
+                # Main controls (keep these existing sizes)
                 (self.play_pause_btn, QSize(50, 50)),
                 (self.prev_btn, QSize(22, 22)),
                 (self.next_btn, QSize(22, 22)),
                 (self.shuffle_btn, QSize(22, 22)),
                 (self.repeat_btn, QSize(22, 22)),
                 
-                # Top bar buttons
-                (self.stats_btn, QSize(18, 18)),
-                (self.settings_btn, QSize(18, 18)),
-                (self.theme_btn, QSize(18, 18)),  # Remove the duplicate
+                # Top bar buttons - MUCH larger
+                (self.stats_btn, QSize(32, 32)),
+                (self.settings_btn, QSize(32, 32)),
+                (self.theme_btn, QSize(32, 32)),
+                (self.mini_player_btn, QSize(32, 32)),
                 
-                # Playlist controls
-                (self.save_btn, QSize(16, 16)),
-                (self.load_btn, QSize(16, 16)),
-                (self.duration_btn, QSize(16, 16)),
-                (self.unwatched_btn, QSize(16, 16)),
-                (self.duration_btn, QSize(16, 16)),
+                # Playlist controls - larger
+                (self.save_btn, QSize(30, 30)),
+                (self.load_btn, QSize(30, 30)),
+                (self.duration_btn, QSize(30, 30)),
+                (self.unwatched_btn, QSize(24, 24)),
             ]
-            
             # Icon button animations
             for btn, normal_size in buttons:
                 def make_press_handler(button, n_size):
