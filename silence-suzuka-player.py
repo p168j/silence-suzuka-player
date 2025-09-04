@@ -150,6 +150,9 @@ class MiniPlayer(QWidget):
         super().__init__(parent)
         self.main_player = main_player_instance  # A reference to the main app
 
+        self.enable_thumbnails = False  # Disable thumbnails by default
+        self.enable_durations = False  # Disable durations by default
+
         # --- Window Flags ---
         # Make it a frameless tool window that stays on top
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
@@ -2726,7 +2729,7 @@ class PlaylistLoaderThread(QThread):
         ydl_opts = {
             'quiet': True,
             'no_warnings': True,
-            'extract_flat': True,      # THIS IS THE KEY CHANGE FOR PERFORMANCE
+            'extract_flat': True,
             'skip_download': True,
             'socket_timeout': 60,
             'retries': 3,
@@ -2738,6 +2741,8 @@ class PlaylistLoaderThread(QThread):
         try:
             import urllib.parse as up
             target_url = self.url
+            
+            # --- Existing YouTube URL cleaning ---
             if self.kind == 'youtube' and ('list=' in self.url):
                 try:
                     u = up.urlparse(self.url)
@@ -2747,6 +2752,17 @@ class PlaylistLoaderThread(QThread):
                         target_url = f"https://www.youtube.com/playlist?list={lid}"
                 except Exception:
                     pass
+
+            # --- NEW FIX FOR BILIBILI SPACE PLAYLISTS ---
+            # This block cleans up space.bilibili.com URLs to be more compatible.
+            if self.kind == 'bilibili' and 'space.bilibili.com/lists/' in self.url:
+                try:
+                    # Strip query parameters like ?type=season which can confuse yt-dlp
+                    target_url = self.url.split('?')[0]
+                except Exception:
+                    pass # Fallback to original URL if split fails
+            # --- END OF FIX ---
+            
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(target_url, download=False)
         except Exception as e:
@@ -9354,101 +9370,24 @@ class MediaPlayer(QMainWindow):
             return False
         
     def _add_url_to_playlist(self, url: str):
-        try:
-            # Sanitize quotes/whitespace early
-            url = (url or "").strip().strip('"').strip("'")
-            url_lower = url.lower()
+        self.status.showMessage("Loading...", 2000)
+        QApplication.processEvents() # keep UI responsive
 
-            if 'youtube.com' in url_lower or 'youtu.be' in url_lower:
-                media_type = 'youtube'
-            elif 'bilibili.com' in url_lower:
-                media_type = 'bilibili'
-            else:
-                media_type = 'local'
+        # Guess type
+        t = 'local'
+        lo = url.lower()
+        if 'youtube.com' in lo or 'youtu.be' in lo:
+            t = 'youtube'
+        elif 'bilibili.com' in lo:
+            t = 'bilibili'
 
-            # Detect playlists for network sources
-            if media_type == 'youtube':
-                is_playlist = ('list=' in url_lower or '/playlist' in url_lower)
-            elif media_type == 'bilibili':
-                is_playlist = (
-                    'list=' in url_lower or '/playlist' in url_lower or '/series' in url_lower or
-                    'space.bilibili.com' in url_lower
-                )
-            else:
-                is_playlist = False
-
-            # Local single: normalize, dedupe, friendly title, enqueue duration
-            if media_type == 'local' and not is_playlist:
-                import os
-                def _norm_local(u: str) -> str:
-                    p = _path_from_url_or_path(u or "")
-                    try:
-                        return os.path.normcase(os.path.abspath(p))
-                    except Exception:
-                        return p
-
-                clean_path = _path_from_url_or_path(url)
-                norm_new = _norm_local(clean_path)
-
-                for it in self.playlist:
-                    if isinstance(it, dict) and it.get('type') == 'local':
-                        if _norm_local(it.get('url')) == norm_new:
-                            self.status.showMessage("This local file is already in the playlist", 3000)
-                            return
-
-                title = Path(clean_path).name or clean_path
-                item = {'title': title, 'url': clean_path, 'type': 'local'}
-
-                new_index = len(self.playlist)
-                self.playlist.append(item)
-
-                if hasattr(self, '_local_dur'):
-                    self._local_dur.enqueue(new_index, item)
-
-                # Record undo as 'add_items' so Ctrl+Z removes the just-added item(s)
-                self._add_undo_operation('add_items', {
-                    'items': [{'index': new_index, 'item': item}],
-                    'was_playing': self._is_playing(),
-                    'old_current_index': self.current_index
-                })
-
-                self._add_single_item_to_tree(new_index, item)
-                self._schedule_save_current_playlist()
-                return
-
-            # Network playlist
-            if is_playlist:
-                self._show_loading("Loading playlist entries...")
-                loader = PlaylistLoaderThread(url, media_type)
-                self._playlist_loader = loader
-                loader.itemsReady.connect(self._on_playlist_items_ready)
-                loader.error.connect(lambda e: self._hide_loading(f"Playlist load failed: {e}", 5000))
-                loader.finished.connect(loader.deleteLater)
-                loader.start()
-            else:
-                # Single network item
-                display = Path(url).name or url
-                item = {'title': f"[Loading...] {display}", 'url': url, 'type': media_type}
-
-                new_index = len(self.playlist)
-                self.playlist.append(item)
-
-                # Record undo as 'add_items'
-                self._add_undo_operation('add_items', {
-                    'items': [{'index': new_index, 'item': item}],
-                    'was_playing': self._is_playing(),
-                    'old_current_index': self.current_index
-                })
-
-                self._add_single_item_to_tree(new_index, item)
-                self._schedule_save_current_playlist()
-
-                worker = self.ytdl_workers[self._worker_index]
-                worker.resolve(url, media_type)
-                self._worker_index = (self._worker_index + 1) % len(self.ytdl_workers)
-
-        except Exception as e:
-            self.status.showMessage(f"Failed to add media: {e}", 4000)
+        # Load playlist in background
+        loader = PlaylistLoaderThread(url, t)
+        self._playlist_loader = loader
+        loader.itemsReady.connect(self._on_playlist_items_ready)
+        loader.error.connect(lambda e: self.status.showMessage(f"Load failed: {e}", 5000))
+        loader.finished.connect(loader.deleteLater)
+        loader.start()
 
     def _fetch_all_durations(self):
         """Fetch durations for all items in playlist with cancel support"""
@@ -11416,44 +11355,26 @@ class MediaPlayer(QMainWindow):
         dlg.exec()
 
     def _on_playlist_items_ready(self, items: list):
-            if not items:
-                self._hide_loading("No entries found in playlist", 4000)
-                return
+        if not items:
+            self.status.showMessage("No entries found in playlist", 4000)
+            return
+        
+        # Deduplicate
+        existing_urls = {it.get('url') for it in self.playlist if it.get('url')}
+        new_items = [it for it in items if it.get('url') and it.get('url') not in existing_urls]
+        
+        if not new_items:
+            self.status.showMessage("Playlist items already exist", 4000)
+            return
 
-            # --- PREPARATION ---
-            # 1. Deduplicate against the entire existing playlist
-            existing_urls = {it.get('url') for it in self.player.playlist if it.get('url')}
-            new_items = [it for it in items if it.get('url') and it.get('url') not in existing_urls]
-            
-            if not new_items:
-                self._hide_loading("Playlist items already exist", 4000)
-                return
-
-            # 2. Keep track of the starting index for new items
-            base_index = len(self.player.playlist)
-            
-            # 3. Update the internal playlist data structure first
-            self.player.playlist.extend(new_items)
-            
-            # --- BATCHED UI UPDATE ---
-            # 4. Define the function that will process one batch of new items
-            def add_batch_to_ui(batch, start_offset):
-                for i, item_data in enumerate(batch):
-                    current_index = base_index + start_offset + i
-                    self._add_single_item_to_tree(current_index, item_data)
-
-            # 5. Use the helper to process all new items without freezing the UI
-            self._process_with_yield(
-                items=new_items,
-                processor_func=add_batch_to_ui,
-                batch_size=50,  # Process 50 items at a time
-                progress_callback=lambda p, t: self._show_loading(f"Adding {p} / {t} items...")
-            )
-
-            # --- FINALIZATION ---
-            # 6. Schedule a single save operation after all items are added
-            self._schedule_save_current_playlist()
-            self._hide_loading(f"Added {len(new_items)} new entries", 5000)
+        # Add all new items at once
+        self.playlist.extend(new_items)
+        
+        # Single save and single UI refresh
+        self._save_current_playlist()
+        self._refresh_playlist_widget()
+        
+        self.status.showMessage(f"Added {len(new_items)} new entries", 5000)
             
     def _restart_audio_monitor(self):
         """Restart the audio monitor with new settings"""
