@@ -4885,6 +4885,7 @@ class MediaPlayer(QMainWindow):
         self.save_btn.setObjectName('miniBtn')
         self.save_btn.setToolTip("Save current playlist")
         self.save_btn.clicked.connect(self.save_playlist)
+        self.save_btn.setIconSize(self.sidebar_icon_size) 
         self.save_btn.setFixedSize(52, 44)  # Much larger for easier clicking
 
         self.load_btn = QPushButton()
@@ -4892,6 +4893,7 @@ class MediaPlayer(QMainWindow):
         self.load_btn.setObjectName('miniBtn')
         self.load_btn.setToolTip("Load saved playlist")
         self.load_btn.clicked.connect(self.load_playlist_dialog) 
+        self.save_btn.setIconSize(self.sidebar_icon_size) 
         self.save_btn.setFixedSize(52, 44)  # Much larger for easier clicking
 
         self.duration_btn = QPushButton()
@@ -4899,12 +4901,14 @@ class MediaPlayer(QMainWindow):
         self.duration_btn.setObjectName('miniBtn')
         self.duration_btn.setToolTip("Fetch all durations")
         self.duration_btn.clicked.connect(self._fetch_all_durations)
+        self.save_btn.setIconSize(self.sidebar_icon_size) 
         self.save_btn.setFixedSize(52, 44)  # Much larger for easier clicking
 
         self.unwatched_btn = QPushButton()
         self.unwatched_btn.setObjectName('miniBtn')
         self.unwatched_btn.setCheckable(True)
         self.unwatched_btn.setFixedSize(36, 28)
+        self.save_btn.setIconSize(self.sidebar_icon_size) 
         self.save_btn.setFixedSize(52, 44)  # Much larger for easier clicking
 
         try:
