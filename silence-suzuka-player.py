@@ -10570,14 +10570,20 @@ class MediaPlayer(QMainWindow):
             self.trackChanged.emit(item.get('title', 'Unknown'))
             try:
                 thumb_url = item.get('thumbnail')
-                if thumb_url and HAVE_REQUESTS: # Check if requests library is available
+                if thumb_url:
                     fetcher = ThumbnailFetcher(thumb_url, self)
+                    # When the fetcher is done, it will emit its own signal.
+                    # We connect that to our new main player signal.
                     fetcher.thumbnailReady.connect(self.trackThumbnailReady.emit)
                     fetcher.start()
                 else:
-                    self.trackThumbnailReady.emit(QPixmap()) # Emit empty pixmap if no thumbnail
+                    # If there's no thumbnail, emit an empty pixmap to clear the old one
+                    self.trackThumbnailReady.emit(QPixmap())
             except Exception as e:
                 logger.error(f"Failed to start thumbnail fetcher: {e}")
+            url = item.get('url')
+            key = self._canonical_url_key(url) if url else None
+            resume_ms = int(self.playback_positions.get(key, self.playback_positions.get(url, 0))) if url else 0
 
             # --- Call the new unified method to do the heavy lifting ---
             self._prepare_and_load_track(self.current_index, start_pos_ms=resume_ms, should_play=True)
@@ -10792,8 +10798,6 @@ class MediaPlayer(QMainWindow):
         # Update tray and silence indicator visibility based on current playback state
         self._update_tray()
         self.update_badge()
-        try: self.positionChanged.emit(self._last_play_pos_ms, int((self.mpv.duration or 0) * 1000))
-        except Exception: pass
 
         # Adaptive save intervals based on content and activity
         if self._is_playing() and 0 <= self.current_index < len(self.playlist):
