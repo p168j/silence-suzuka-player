@@ -4883,14 +4883,14 @@ class MediaPlayer(QMainWindow):
         self.stats_btn.setObjectName('settingsBtn')
         self.stats_btn.setToolTip("Listening Statistics")
         self.stats_btn.setIconSize(self.top_bar_icon_size)
-        self.stats_btn.setFixedSize(48, 44)  # Much larger button container
+        self.stats_btn.setFixedSize(48, 44)  
         self.stats_btn.clicked.connect(self.open_stats)
         
         self.settings_btn = QPushButton()
         self.settings_btn.setObjectName('settingsBtn')
         self.settings_btn.setToolTip("Settings")
         self.settings_btn.setIconSize(self.top_bar_icon_size)
-        self.stats_btn.setFixedSize(48, 44)  # Much larger button container
+        self.settings_btn.setFixedSize(48, 44) 
         self.settings_btn.clicked.connect(self.open_settings_tabs)
     
         top.addWidget(self.stats_btn)
@@ -4900,7 +4900,7 @@ class MediaPlayer(QMainWindow):
         self.mini_player_btn.setObjectName('settingsBtn')
         self.mini_player_btn.setToolTip("Switch to Mini Player")
         self.mini_player_btn.setIconSize(self.top_bar_icon_size)
-        self.stats_btn.setFixedSize(48, 44)  # Much larger button container
+        self.mini_player_btn.setFixedSize(48, 44) 
         self.mini_player_btn.clicked.connect(self._toggle_mini_player)
         top.addWidget(self.mini_player_btn)
 
@@ -4908,7 +4908,7 @@ class MediaPlayer(QMainWindow):
         self.theme_btn.setObjectName('settingsBtn')
         self.theme_btn.setToolTip("Toggle Theme")
         self.theme_btn.setIconSize(self.top_bar_icon_size)
-        self.stats_btn.setFixedSize(48, 44)  # Much larger button container
+        self.theme_btn.setFixedSize(48, 44)  
         # self.theme_btn.clicked.connect(self.toggle_theme)
         top.addWidget(self.theme_btn)
         
@@ -5376,29 +5376,58 @@ class MediaPlayer(QMainWindow):
 
     def _toggle_mini_player(self):
         """Hides the main window and shows the mini-player."""
+        # Check if mini_player exists and create it if it doesn't
         if not hasattr(self, 'mini_player') or not self.mini_player:
             self.mini_player = MiniPlayer(main_player_instance=self)
-
-            # --- This is the crucial connection logic that was missing ---
+            
+            # Connect all the control buttons
             self.mini_player.play_pause_btn.clicked.connect(self.toggle_play_pause)
             self.mini_player.next_btn.clicked.connect(self.next_track)
             self.mini_player.prev_btn.clicked.connect(self.previous_track)
             self.mini_player.show_main_btn.clicked.connect(self._show_main_player_from_mini)
-
+            
+            # Connect state change signals
             self.playbackStateChanged.connect(self.mini_player.update_playback_state)
             self.trackChanged.connect(self.mini_player.update_track_title)
-            # --- End of connection logic ---
-
-        # Immediately sync the mini-player with the current state
+            self.trackThumbnailReady.connect(self.mini_player.update_thumbnail)
+            self.positionChanged.connect(self.mini_player.update_progress)
+        
+        # Sync current state with mini player
         self.mini_player.update_playback_state(self._is_playing())
+        
+        # Update track title
         if 0 <= self.current_index < len(self.playlist):
             item = self.playlist[self.current_index]
             self.mini_player.update_track_title(item.get('title', 'Unknown'))
         else:
             self.mini_player.update_track_title("No Track Playing")
-
+        
+        # Update progress if playing
+        try:
+            if hasattr(self, 'mpv') and self.mpv:
+                position_ms = int((self.mpv.time_pos or 0) * 1000)
+                duration_ms = int((self.mpv.duration or 0) * 1000)
+                self.mini_player.update_progress(position_ms, duration_ms)
+        except Exception:
+            pass
+        
+        # Position the mini player before showing
+        if hasattr(self, 'mini_player_pos'):
+            self.mini_player.move(self.mini_player_pos)
+        else:
+            # Position in top-right corner of screen by default
+            screen = QApplication.primaryScreen()
+            if screen:
+                screen_rect = screen.availableGeometry()
+                x = screen_rect.right() - self.mini_player.width() - 20
+                y = screen_rect.top() + 20
+                self.mini_player.move(x, y)
+        
+        # Hide main window and show mini player
         self.hide()
         self.mini_player.show()
+        self.mini_player.raise_()
+        self.mini_player.activateWindow()
 
     def _show_main_player_from_mini(self):
         """Hides the mini-player and shows the main window."""
