@@ -954,7 +954,7 @@ class PlaylistManagerDialog(QDialog):
             self.sort_field_combo.addItem("📅 Date Created", "created")
             self.sort_field_combo.addItem("📝 Name", "name")
             self.sort_field_combo.addItem("📊 Item Count", "items")
-            self.sort_field_combo.currentDataChanged.connect(self._on_sort_changed)
+            self.sort_field_combo.activated.connect(self._on_sort_changed)
             self.sort_field_combo.setStyleSheet("""
                 QComboBox {
                     background-color: #f9f6f0;
@@ -1061,9 +1061,10 @@ class PlaylistManagerDialog(QDialog):
         except Exception as e:
             print(f"Filter changed error: {e}")
     
-    def _on_sort_changed(self, field):
+    def _on_sort_changed(self, index):
         """Handle sort field changes"""
         try:
+            field = self.sort_field_combo.itemData(index)
             self._current_sort['field'] = field
             self._apply_filters_and_sort()
         except Exception as e:
@@ -3393,7 +3394,8 @@ class PlaylistTree(QTreeWidget):
         """Handle drop events for files and URLs with duplicate guard and preserved expansion state."""
         try:
             mime_data = event.mimeData()
-            expansion_state = self._get_tree_expansion_state()
+            # --- FIX: Call methods on the player instance ---
+            expansion_state = self.player._get_tree_expansion_state()
 
             added = 0
             skipped = 0
@@ -3411,7 +3413,7 @@ class PlaylistTree(QTreeWidget):
             if mime_data.hasUrls():
                 existing_local = set(
                     _norm_local(it.get('url'))
-                    for it in self.playlist
+                    for it in self.player.playlist  # FIX: Access player's playlist
                     if isinstance(it, dict) and it.get('type') == 'local' and it.get('url')
                 )
 
@@ -3428,43 +3430,43 @@ class PlaylistTree(QTreeWidget):
                             'url': file_path,
                             'type': 'local'
                         }
-                        self.playlist.append(item)
-                        new_items.append({'index': len(self.playlist) - 1, 'item': item})
+                        self.player.playlist.append(item) # FIX: Access player's playlist
+                        new_items.append({'index': len(self.player.playlist) - 1, 'item': item})
                         existing_local.add(nf)
                         added += 1
 
-                        if hasattr(self, '_local_dur'):
-                            self._local_dur.enqueue(len(self.playlist) - 1, self.playlist[-1])
+                        if hasattr(self.player, '_local_dur'): # FIX: Access player's attribute
+                            self.player._local_dur.enqueue(len(self.player.playlist) - 1, self.player.playlist[-1])
                     else:
                         # Web URL (no dedupe here; handled inside _add_url_to_playlist)
-                        self._add_url_to_playlist(url.toString())
+                        self.player._add_url_to_playlist(url.toString()) # FIX: Call method on player
 
             elif mime_data.hasText():
                 text = (mime_data.text() or "").strip().strip('"').strip("'")
                 if text:
                     # Route through the unified path handler (it dedupes and enqueues)
-                    before_len = len(self.playlist)
-                    self._add_url_to_playlist(text)
-                    if len(self.playlist) > before_len:
-                        new_items.append({'index': len(self.playlist) - 1, 'item': self.playlist[-1]})
+                    before_len = len(self.player.playlist) # FIX: Access player's playlist
+                    self.player._add_url_to_playlist(text) # FIX: Call method on player
+                    if len(self.player.playlist) > before_len:
+                        new_items.append({'index': len(self.player.playlist) - 1, 'item': self.player.playlist[-1]})
 
             # Save, refresh, and record undo for added items
-            self._save_current_playlist()
-            self._refresh_playlist_widget(expansion_state=expansion_state)
+            self.player._save_current_playlist() # FIX: Call method on player
+            self.player._refresh_playlist_widget(expansion_state=expansion_state) # FIX: Call method on player
             event.acceptProposedAction()
 
             if new_items:
-                self._add_undo_operation('add_items', {
+                self.player._add_undo_operation('add_items', { # FIX: Call method on player
                     'items': new_items,
-                    'was_playing': self._is_playing(),
-                    'old_current_index': self.current_index
+                    'was_playing': self.player._is_playing(),
+                    'old_current_index': self.player.current_index
                 })
 
             if added or skipped:
                 msg = f"Added {added} item(s)"
                 if skipped:
                     msg += f", skipped {skipped} duplicate(s)"
-                self.status.showMessage(msg, 4000)
+                self.player.status.showMessage(msg, 4000) # FIX: Access player's status bar
 
         except Exception as e:
             print(f"Drop event error: {e}")
