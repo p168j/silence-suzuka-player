@@ -5378,13 +5378,13 @@ class MediaPlayer(QMainWindow):
         """Hides the main window and shows the mini-player."""
         if not hasattr(self, 'mini_player') or not self.mini_player:
             self.mini_player = MiniPlayer(main_player_instance=self)
-            
-            # --- This is the crucial connection logic ---
+
+            # --- This is the crucial connection logic that was missing ---
             self.mini_player.play_pause_btn.clicked.connect(self.toggle_play_pause)
             self.mini_player.next_btn.clicked.connect(self.next_track)
             self.mini_player.prev_btn.clicked.connect(self.previous_track)
             self.mini_player.show_main_btn.clicked.connect(self._show_main_player_from_mini)
-            
+
             self.playbackStateChanged.connect(self.mini_player.update_playback_state)
             self.trackChanged.connect(self.mini_player.update_track_title)
             # --- End of connection logic ---
