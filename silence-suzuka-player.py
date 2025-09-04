@@ -3709,7 +3709,9 @@ class MediaPlayer(QMainWindow):
         """Loads and tints the top bar icons to match the current theme."""
         try:
             icon_color = "#f3f3f3" if self.theme == 'dark' else "#4a2c2a"
-            icon_size = QSize(22, 22)
+            
+            # Use the standardized top bar icon size
+            icon_size = self.top_bar_icon_size
 
             # Use the OUTLINE function for these buttons
             stats_icon = QIcon(_render_svg_outline_tinted(str(APP_DIR / 'icons/stats.svg'), icon_size, icon_color))
@@ -4761,6 +4763,10 @@ class MediaPlayer(QMainWindow):
         root = QVBoxLayout(central); root.setContentsMargins(8, 8, 8, 8); root.setSpacing(8)
         icon_size = QSize(22, 22)
 
+        self.top_bar_icon_size = QSize(20, 20)      # Slightly larger for top bar
+        self.sidebar_icon_size = QSize(18, 18)      # Standard size for sidebar buttons
+        self.playlist_icon_size = QSize(24, 24)     # Keep existing playlist icon size
+
         # Top bar
         top = QHBoxLayout(); top.setSpacing(8)
         title = QLabel("Silence Suzuka Player"); title.setObjectName('titleLabel'); title.setFont(self._font_serif(20, italic=True, bold=True))
@@ -4779,11 +4785,13 @@ class MediaPlayer(QMainWindow):
         self.stats_btn = QPushButton() 
         self.stats_btn.setObjectName('settingsBtn')
         self.stats_btn.setToolTip("Listening Statistics")
+        self.stats_btn.setIconSize(self.top_bar_icon_size)
         self.stats_btn.clicked.connect(self.open_stats)
         
         self.settings_btn = QPushButton()
         self.settings_btn.setObjectName('settingsBtn')
         self.settings_btn.setToolTip("Settings")
+        self.settings_btn.setIconSize(self.top_bar_icon_size)
         self.settings_btn.clicked.connect(self.open_settings_tabs)
     
         top.addWidget(self.stats_btn)
@@ -4792,12 +4800,14 @@ class MediaPlayer(QMainWindow):
         self.mini_player_btn = QPushButton()
         self.mini_player_btn.setObjectName('settingsBtn')
         self.mini_player_btn.setToolTip("Switch to Mini Player")
+        self.mini_player_btn.setIconSize(self.top_bar_icon_size)
         self.mini_player_btn.clicked.connect(self._toggle_mini_player)
         top.addWidget(self.mini_player_btn)
 
         self.theme_btn = QPushButton()
         self.theme_btn.setObjectName('settingsBtn')
         self.theme_btn.setToolTip("Toggle Theme")
+        self.theme_btn.setIconSize(self.top_bar_icon_size)
         # self.theme_btn.clicked.connect(self.toggle_theme)
         top.addWidget(self.theme_btn)
         
@@ -4865,21 +4875,21 @@ class MediaPlayer(QMainWindow):
         # Playlist controls
         controls = QHBoxLayout()
         self.save_btn = QPushButton()
-        self.save_btn.setIcon(load_svg_icon(str(APP_DIR / 'icons/save.svg'))) 
+        self.save_btn.setIcon(load_svg_icon(str(APP_DIR / 'icons/save.svg'), self.sidebar_icon_size)) 
         self.save_btn.setObjectName('miniBtn')
         self.save_btn.setToolTip("Save current playlist")
         self.save_btn.clicked.connect(self.save_playlist)
         self.save_btn.setFixedSize(36, 28)
 
         self.load_btn = QPushButton()
-        self.load_btn.setIcon(load_svg_icon(str(APP_DIR / 'icons/load.svg'))) 
+        self.load_btn.setIcon(load_svg_icon(str(APP_DIR / 'icons/load.svg'), self.sidebar_icon_size))
         self.load_btn.setObjectName('miniBtn')
         self.load_btn.setToolTip("Load saved playlist")
         self.load_btn.clicked.connect(self.load_playlist_dialog) 
         self.load_btn.setFixedSize(36, 28)
 
         self.duration_btn = QPushButton()
-        self.duration_btn.setIcon(load_svg_icon(str(APP_DIR / 'icons/duration.svg'))) 
+        self.duration_btn.setIcon(load_svg_icon(str(APP_DIR / 'icons/duration.svg'), self.sidebar_icon_size))
         self.duration_btn.setObjectName('miniBtn')
         self.duration_btn.setToolTip("Fetch all durations")
         self.duration_btn.clicked.connect(self._fetch_all_durations)
@@ -6925,9 +6935,9 @@ class MediaPlayer(QMainWindow):
         tooltip = ""
 
         if has_track:
-            # The 'play' icon is FILLED, so use the original tinting function
+            # FIXED: Use outline version for music icon to match other icons
             tooltip = "Media player is active"
-            pixmap = _render_svg_tinted(str(APP_DIR / 'icons/music.svg'), icon_size, icon_color)
+            pixmap = _render_svg_outline_tinted(str(APP_DIR / 'icons/music.svg'), icon_size, icon_color)
             self._reset_silence_counter()
         else:
             if self._last_system_is_silent:
