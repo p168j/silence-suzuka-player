@@ -4891,7 +4891,7 @@ class MediaPlayer(QMainWindow):
         self.settings_btn.setObjectName('settingsBtn')
         self.settings_btn.setToolTip("Settings")
         self.settings_btn.setIconSize(self.top_bar_icon_size)
-        self.stats_btn.setFixedSize(48, 44)  # Much larger button container
+        self.settings_btn.setFixedSize(48, 44)  # Much larger button container
         self.settings_btn.clicked.connect(self.open_settings_tabs)
     
         top.addWidget(self.stats_btn)
@@ -4901,7 +4901,7 @@ class MediaPlayer(QMainWindow):
         self.mini_player_btn.setObjectName('settingsBtn')
         self.mini_player_btn.setToolTip("Switch to Mini Player")
         self.mini_player_btn.setIconSize(self.top_bar_icon_size)
-        self.stats_btn.setFixedSize(48, 44)  # Much larger button container
+        self.mini_player_btn.setFixedSize(48, 44)  # Much larger button container
         self.mini_player_btn.clicked.connect(self._toggle_mini_player)
         top.addWidget(self.mini_player_btn)
 
@@ -4909,7 +4909,7 @@ class MediaPlayer(QMainWindow):
         self.theme_btn.setObjectName('settingsBtn')
         self.theme_btn.setToolTip("Toggle Theme")
         self.theme_btn.setIconSize(self.top_bar_icon_size)
-        self.stats_btn.setFixedSize(48, 44)  # Much larger button container
+        self.theme_btn.setFixedSize(48, 44)  # Much larger button container
         # self.theme_btn.clicked.connect(self.toggle_theme)
         top.addWidget(self.theme_btn)
         
