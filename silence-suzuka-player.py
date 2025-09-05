@@ -4007,11 +4007,13 @@ class MediaPlayer(QMainWindow):
                 self._collapse_all_groups()
                 self.status.showMessage("All groups collapsed", 2000)
             else:
-                self._expand_all_groups(True)
+                # --- THIS IS THE FIX ---
+                # Removed the incorrect '(True)' argument
+                self._expand_all_groups() 
                 self.status.showMessage("All groups expanded", 2000)
                 
         except Exception as e:
-            logger.error(f"Failed to toggle groups: {e}")        
+            logger.error(f"Failed to toggle groups: {e}")   
 
     def _reset_all_playback_positions(self):
         """Reset all playback positions for items in the current playlist"""
@@ -9247,21 +9249,13 @@ class MediaPlayer(QMainWindow):
             logger.error(f"Failed to copy URL to clipboard: {e}")
             self.status.showMessage(f"Copy failed: {str(e)}", 3000)
 
-    def _expand_all_groups(self, expand: bool):
+    def _expand_all_groups(self):
+        """Expands all top-level group items in the playlist tree."""
         try:
-            root = self.playlist_tree.topLevelItem(0)
-            if not root:
-                return
-            def visit(node):
-                data = node.data(0, Qt.UserRole)
-                if isinstance(data, tuple) and data[0] == 'group':
-                    node.setExpanded(bool(expand))
-                for i in range(node.childCount()):
-                    visit(node.child(i))
-            for i in range(root.childCount()):
-                visit(root.child(i))
-        except Exception:
-            pass
+            self.playlist_tree.expandAll()
+            self.status.showMessage("All groups expanded", 2000)
+        except Exception as e:
+            logger.error(f"Failed to expand groups: {e}")
 
     def _export_m3u(self):
         try:
