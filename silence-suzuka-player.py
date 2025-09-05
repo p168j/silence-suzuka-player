@@ -3248,18 +3248,18 @@ class PlaylistTree(QTreeWidget):
     def __init__(self, player):
         super().__init__()
         self.player = player
+
         # Enable headers and set column labels
         self.setHeaderLabels(["Title", "Duration"])
         self.setHeaderHidden(True)
+
         # === FIX: Title stretches full row; Duration stays narrow on the far right ===
         header = self.header()
         header.setStretchLastSection(False)  # Do NOT auto-stretch the last column
         header.setSectionResizeMode(0, QHeaderView.Stretch)       # Title column fills remaining width
         header.setSectionResizeMode(1, QHeaderView.Fixed)         # Duration column is fixed
-        self.setColumnWidth(1, 70)                                # Duration width (tweak if you like)
-        # If you prefer auto width for duration, use this instead of Fixed + setColumnWidth:
-        # header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        
+        self.setColumnWidth(1, 70)                                # Duration width (tweak if needed)
+
         # Configure column sizing
         self.header().setSectionResizeMode(0, QHeaderView.Stretch)  # Title stretches dynamically
         self.header().setSectionResizeMode(1, QHeaderView.Fixed)    # Duration has fixed width
@@ -3275,18 +3275,33 @@ class PlaylistTree(QTreeWidget):
         self.setWordWrap(False)
         self.setTextElideMode(Qt.ElideRight)
 
-        # Debugging: Print column widths after configuration
-        print("Column 0 width (Title):", self.columnWidth(0))
-        print("Column 1 width (Duration):", self.columnWidth(1))
-
     def dropEvent(self, event):
-        """Handle drop events for files and URLs with duplicate guard and preserved expansion state."""
+        """Handle drag-and-drop events to reorder items or add files/URLs."""
         try:
-            mime_data = event.mimeData()
+            # Retrieve the tree's expansion state
             expansion_state = self._get_tree_expansion_state()
+            mime_data = event.mimeData()
 
+            # Handle reordering of items
+            target_item = self.itemAt(event.pos())
+            source_item = self.currentItem()
+
+            if source_item and target_item:
+                # Reordering logic
+                parent = source_item.parent() or self.invisibleRootItem()
+                source_index = parent.indexOfChild(source_item)
+                target_index = parent.indexOfChild(target_item)
+
+                if source_index >= 0 and target_index >= 0:
+                    parent.takeChild(source_index)
+                    parent.insertChild(target_index, source_item)
+                    event.accept()
+                    return
+
+            # Additional logic for file/URL drops
             added = 0
             skipped = 0
+            new_items = []  # for undo
 
             def _norm_local(u: str) -> str:
                 import os
@@ -3296,12 +3311,10 @@ class PlaylistTree(QTreeWidget):
                 except Exception:
                     return p
 
-            new_items = []  # for undo
-
             if mime_data.hasUrls():
                 existing_local = set(
                     _norm_local(it.get('url'))
-                    for it in self.playlist
+                    for it in self.player.playlist
                     if isinstance(it, dict) and it.get('type') == 'local' and it.get('url')
                 )
 
@@ -3318,47 +3331,61 @@ class PlaylistTree(QTreeWidget):
                             'url': file_path,
                             'type': 'local'
                         }
-                        self.playlist.append(item)
-                        new_items.append({'index': len(self.playlist) - 1, 'item': item})
+                        self.player.playlist.append(item)
+                        new_items.append({'index': len(self.player.playlist) - 1, 'item': item})
                         existing_local.add(nf)
                         added += 1
 
-                        if hasattr(self, '_local_dur'):
-                            self._local_dur.enqueue(len(self.playlist) - 1, self.playlist[-1])
+                        if hasattr(self.player, '_local_dur'):
+                            self.player._local_dur.enqueue(len(self.player.playlist) - 1, self.player.playlist[-1])
                     else:
                         # Web URL (no dedupe here; handled inside _add_url_to_playlist)
-                        self._add_url_to_playlist(url.toString())
+                        self.player._add_url_to_playlist(url.toString())
 
             elif mime_data.hasText():
                 text = (mime_data.text() or "").strip().strip('"').strip("'")
                 if text:
                     # Route through the unified path handler (it dedupes and enqueues)
-                    before_len = len(self.playlist)
-                    self._add_url_to_playlist(text)
-                    if len(self.playlist) > before_len:
-                        new_items.append({'index': len(self.playlist) - 1, 'item': self.playlist[-1]})
+                    before_len = len(self.player.playlist)
+                    self.player._add_url_to_playlist(text)
+                    if len(self.player.playlist) > before_len:
+                        new_items.append({'index': len(self.player.playlist) - 1, 'item': self.player.playlist[-1]})
 
             # Save, refresh, and record undo for added items
-            self._save_current_playlist()
+            self.player._save_current_playlist()  # Access the method from the parent player
             self._refresh_playlist_widget(expansion_state=expansion_state)
             event.acceptProposedAction()
 
             if new_items:
-                self._add_undo_operation('add_items', {
+                self.player._add_undo_operation('add_items', {
                     'items': new_items,
-                    'was_playing': self._is_playing(),
-                    'old_current_index': self.current_index
+                    'was_playing': self.player._is_playing(),
+                    'old_current_index': self.player.current_index
                 })
 
             if added or skipped:
                 msg = f"Added {added} item(s)"
                 if skipped:
                     msg += f", skipped {skipped} duplicate(s)"
-                self.status.showMessage(msg, 4000)
+                self.player.status.showMessage(msg, 4000)
 
         except Exception as e:
             print(f"Drop event error: {e}")
             event.ignore()
+
+    def _get_tree_expansion_state(self):
+        """Retrieve the expansion state of the tree."""
+        expansion_state = {}
+        root = self.invisibleRootItem()
+
+        def walk(node):
+            for i in range(node.childCount()):
+                child = node.child(i)
+                expansion_state[child] = child.isExpanded()
+                walk(child)
+
+        walk(root)
+        return expansion_state
 
 class ScrollingTreeWidget(QTreeWidget):
     def __init__(self, parent=None):
@@ -3741,15 +3768,32 @@ class MediaPlayer(QMainWindow):
             event.ignore()
 
     def dropEvent(self, event):
-        """Handle drop events for files and URLs with duplicate guard and preserved expansion state."""
+        """Handle drag-and-drop events to reorder items or add files/URLs."""
         try:
+            # Retrieve the tree's expansion state
+            expansion_state = self._get_tree_expansion_state()
             mime_data = event.mimeData()
 
-            # Preserve expansion state so headers don't collapse
-            expansion_state = self._get_tree_expansion_state()
+            # Handle reordering of items
+            target_item = self.itemAt(event.pos())
+            source_item = self.currentItem()
 
+            if source_item and target_item:
+                # Reordering logic
+                parent = source_item.parent() or self.invisibleRootItem()
+                source_index = parent.indexOfChild(source_item)
+                target_index = parent.indexOfChild(target_item)
+
+                if source_index >= 0 and target_index >= 0:
+                    parent.takeChild(source_index)
+                    parent.insertChild(target_index, source_item)
+                    event.accept()
+                    return
+
+            # Additional logic for file/URL drops
             added = 0
             skipped = 0
+            new_items = []  # for undo
 
             def _norm_local(u: str) -> str:
                 import os
@@ -3760,7 +3804,6 @@ class MediaPlayer(QMainWindow):
                     return p
 
             if mime_data.hasUrls():
-                # Existing local set (normalized)
                 existing_local = set(
                     _norm_local(it.get('url'))
                     for it in self.playlist
@@ -3775,32 +3818,42 @@ class MediaPlayer(QMainWindow):
                             skipped += 1
                             continue
 
-                        self.playlist.append({
+                        item = {
                             'title': Path(file_path).name,
                             'url': file_path,
                             'type': 'local'
-                        })
+                        }
+                        self.playlist.append(item)
+                        new_items.append({'index': len(self.playlist) - 1, 'item': item})
                         existing_local.add(nf)
                         added += 1
 
-                        # enqueue local duration probe
                         if hasattr(self, '_local_dur'):
                             self._local_dur.enqueue(len(self.playlist) - 1, self.playlist[-1])
-
                     else:
-                        # Web URL
+                        # Web URL (no dedupe here; handled inside _add_url_to_playlist)
                         self._add_url_to_playlist(url.toString())
 
             elif mime_data.hasText():
-                # URLs or local path as text
                 text = (mime_data.text() or "").strip().strip('"').strip("'")
                 if text:
+                    # Route through the unified path handler (it dedupes and enqueues)
+                    before_len = len(self.playlist)
                     self._add_url_to_playlist(text)
+                    if len(self.playlist) > before_len:
+                        new_items.append({'index': len(self.playlist) - 1, 'item': self.playlist[-1]})
 
-            # Save and refresh while keeping previous expansion state
+            # Save, refresh, and record undo for added items
             self._save_current_playlist()
             self._refresh_playlist_widget(expansion_state=expansion_state)
             event.acceptProposedAction()
+
+            if new_items:
+                self._add_undo_operation('add_items', {
+                    'items': new_items,
+                    'was_playing': self._is_playing(),
+                    'old_current_index': self.current_index
+                })
 
             if added or skipped:
                 msg = f"Added {added} item(s)"
