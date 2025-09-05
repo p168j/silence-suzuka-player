@@ -3928,14 +3928,26 @@ class MediaPlayer(QMainWindow):
         # 5. ELSE: If the user has been inactive for a long time (truly AFK),
         #    we do nothing, even though the system is silent.
 
+    def _collapse_all_headers(self):
+        """Collapse all playlist headers (groups)."""
+        for i in range(self.playlist_tree.topLevelItemCount()):
+            item = self.playlist_tree.topLevelItem(i)
+            item.setExpanded(False)  # Collapse header
+
+    def _expand_all_headers(self):
+        """Expand all playlist headers (groups)."""
+        for i in range(self.playlist_tree.topLevelItemCount()):
+            item = self.playlist_tree.topLevelItem(i)
+            item.setExpanded(True)  # Expand header
+
     def _collapse_all_groups(self):
-        # Example of collapsing the playlist tree
+        """Collapse all groups in the playlist."""
         for i in range(self.playlist_tree.topLevelItemCount()):
             item = self.playlist_tree.topLevelItem(i)
             item.setExpanded(False)
 
     def _expand_all_groups(self):
-        # Example of expanding the playlist tree
+        """Expand all groups in the playlist."""
         for i in range(self.playlist_tree.topLevelItemCount()):
             item = self.playlist_tree.topLevelItem(i)
             item.setExpanded(True)
@@ -11902,16 +11914,16 @@ class MediaPlayer(QMainWindow):
             QShortcut(QKeySequence(Qt.Key_Home), self, self._navigate_to_top)
             QShortcut(QKeySequence(Qt.Key_End), self, self._navigate_to_bottom)
 
-            # Add the hotkey 'C' for collapsing and expanding the playlist
+            # Bind the 'C' key to toggle playlist collapse/expand
             QShortcut(QKeySequence("C"), self, self._toggle_playlist)
-            
+                
     def _toggle_playlist(self):
-        # Toggle between collapse and expand
-        if self.is_playlist_collapsed:
-            self._expand_all_groups()
+        """Toggle between collapsing and expanding playlist headers."""
+        if not self.is_playlist_collapsed:
+            self._collapse_all_headers()
         else:
-            self._collapse_all_groups()
-        self.is_playlist_collapsed = not self.is_playlist_collapsed               
+            self._expand_all_headers()
+        self.is_playlist_collapsed = not self.is_playlist_collapsed  # Update state      
             
     def _toggle_mute(self):
         """Toggles the player's mute status."""
