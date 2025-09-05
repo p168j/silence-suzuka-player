@@ -10521,6 +10521,8 @@ class MediaPlayer(QMainWindow):
             self._refresh_playlist_widget(expansion_state=expansion_state)
             self._recover_current_after_change(was_playing)
             
+            self._last_clipboard_offer = ""
+
             return True
 
         except Exception as e:
@@ -11454,50 +11456,63 @@ class MediaPlayer(QMainWindow):
         dlg.exec()
 
     def _on_playlist_items_ready(self, items: list):
-            if not items:
-                self._hide_loading("No entries found in playlist", 4000)
-                return
+        if not items:
+            self._hide_loading("No entries found in playlist", 4000)
+            return
 
-            # --- PREPARATION ---
-            # 1. Deduplicate against the entire existing playlist
-            existing_urls = {it.get('url') for it in self.playlist if it.get('url')}
-            new_items = [it for it in items if it.get('url') and it.get('url') not in existing_urls]
-            
-            if not new_items:
-                self._hide_loading("Playlist items already exist", 4000)
-                return
+        # --- PREPARATION ---
+        # 1. Deduplicate against the entire existing playlist
+        existing_urls = {it.get('url') for it in self.playlist if it.get('url')}
+        new_items = [it for it in items if it.get('url') and it.get('url') not in existing_urls]
+        
+        if not new_items:
+            self._hide_loading("Playlist items already exist", 4000)
+            return
 
-            # 2. Keep track of the starting index for new items
-            base_index = len(self.playlist)
-            
-            # 3. Update the internal playlist data structure first
-            self.playlist.extend(new_items)
-            
-            # --- BATCHED UI UPDATE ---
-            # 4. Define the function that will process one batch of new items
-            def add_batch_to_ui(batch, start_offset):
-                for i, item_data in enumerate(batch):
-                    current_index = base_index + start_offset + i
-                    self._add_single_item_to_tree(current_index, item_data)
+        # --- FIX: CAPTURE STATE & CREATE UNDO OPERATION ---
+        was_playing = self._is_playing()
+        old_current_index = self.current_index
+        base_index = len(self.playlist)
+        
+        items_for_undo = []
+        for i, item in enumerate(new_items):
+            items_for_undo.append({'index': base_index + i, 'item': item})
 
-            # 5. Use the helper to process all new items without freezing the UI
-            self._process_with_yield(
-                items=new_items,
-                processor_func=add_batch_to_ui,
-                batch_size=50,  # Process 50 items at a time
-                progress_callback=lambda p, t: self._show_loading(f"Adding {p} / {t} items...")
-            )
+        self._add_undo_operation('add_items', {
+            'items': items_for_undo,
+            'was_playing': was_playing,
+            'old_current_index': old_current_index
+        })
+        # --- END FIX ---
 
-            # --- FINALIZATION ---
-            # 6. Schedule a single save operation after all items are added
-            self._schedule_save_current_playlist()
-            self._hide_loading(f"Added {len(new_items)} new entries", 5000)
-            
-            # 7. Resolve titles in the background for items that need it
-            items_needing_titles = [it for it in new_items if not it.get('title') or it['title'] == it.get('url')]
-            if items_needing_titles:
-                for item in items_needing_titles:
-                    self._resolve_title_parallel(item.get('url'), item.get('type', 'local'))
+        # 2. Update the internal playlist data structure
+        self.playlist.extend(new_items)
+        
+        # --- BATCHED UI UPDATE ---
+        # 3. Define the function that will process one batch of new items
+        def add_batch_to_ui(batch, start_offset):
+            for i, item_data in enumerate(batch):
+                current_index = base_index + start_offset + i
+                self._add_single_item_to_tree(current_index, item_data)
+
+        # 4. Use the helper to process all new items without freezing the UI
+        self._process_with_yield(
+            items=new_items,
+            processor_func=add_batch_to_ui,
+            batch_size=50,
+            progress_callback=lambda p, t: self._show_loading(f"Adding {p} / {t} items...")
+        )
+
+        # --- FINALIZATION ---
+        # 5. Schedule a single save operation after all items are added
+        self._schedule_save_current_playlist()
+        self._hide_loading(f"Added {len(new_items)} new entries (Ctrl+Z to undo)", 5000)
+        
+        # 6. Resolve titles in the background
+        items_needing_titles = [it for it in new_items if not it.get('title') or it['title'] == it.get('url')]
+        if items_needing_titles:
+            for item in items_needing_titles:
+                self._resolve_title_parallel(item.get('url'), item.get('type', 'local'))
             
     def _restart_audio_monitor(self):
         """Restart the audio monitor with new settings"""
