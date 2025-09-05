@@ -3518,9 +3518,42 @@ class ScrollingTreeWidget(QTreeWidget):
 class MediaPlayer(QMainWindow):
     requestTimerSignal = Signal(int, object)
     statusMessageSignal = Signal(str, int)
-    
+
     def __init__(self):
         super().__init__()
+        # Initialize mpv backend
+        try:
+            self.mpv = MPV()  # Remove debug logging parameters
+        except Exception as e:
+            print(f"Error initializing MPV: {e}")
+            self.mpv = None
+
+        # Initialize volume normalization state
+        self.volume_normalization_enabled = True  # Default to enabled
+
+        # Apply normalization on initialization
+        if self.mpv:
+            self._apply_volume_normalization()
+
+    def _apply_volume_normalization(self):
+        """Applies the volume normalization filter using mpv's audio filters."""
+        if not self.mpv:
+            print("MPV is not initialized. Skipping volume normalization.")
+            return
+
+        try:
+            if self.volume_normalization_enabled:
+                # Use the command method to apply the loudnorm filter
+                self.mpv.command("af", "add", "loudnorm")
+                print("Volume normalization enabled using loudnorm.")
+            else:
+                # Clear the audio filters
+                self.mpv.command("af", "clear")
+                print("Volume normalization disabled.")
+        except Exception as e:
+            print(f"Error applying volume normalization: {e}")
+
+    
 
         # --- 1. LOAD ALL THREE ICONS HERE ---
         # This replaces the previous icon loading logic for the tray.
@@ -6928,11 +6961,19 @@ class MediaPlayer(QMainWindow):
     def _play_all_library(self):
         """Plays the entire library from the beginning."""
         if self.playlist:
+            # Ensure the playlist reflects the current user-defined order
+            if hasattr(self, 'current_playlist') and self.current_playlist:
+                playlist_to_play = self.current_playlist
+            else:
+                playlist_to_play = self.playlist
+
             self.status.showMessage("Playing all media in library...", 3000)
             self.play_scope = None
             self._update_scope_label()
+
+            # Start playback from the beginning of the current playlist order
             self.current_index = 0
-            self.play_current()                
+            self.play_current(playlist_to_play)
 
     def toggle_theme(self):
         self.theme = 'vinyl' if getattr(self, 'theme', 'dark') != 'vinyl' else 'dark'
