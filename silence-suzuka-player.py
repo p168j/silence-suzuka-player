@@ -3974,7 +3974,7 @@ class MediaPlayer(QMainWindow):
                 self._collapse_all_groups()
                 self.status.showMessage("All groups collapsed", 2000)
             else:
-                self._expand_all_groups()
+                self._expand_all_groups(True)
                 self.status.showMessage("All groups expanded", 2000)
                 
         except Exception as e:
