@@ -9474,6 +9474,7 @@ class MediaPlayer(QMainWindow):
 
     # Actions
     def _maybe_offer_clipboard_url(self):
+        print("Clipboard content processed in _maybe_offer_clipboard_url")
         """Check clipboard for any URL or path and add it to the playlist."""
         try:
             cb_text = QApplication.clipboard().text() or ""
@@ -12021,7 +12022,7 @@ class MediaPlayer(QMainWindow):
             if action.text() == "Paste" or "Ctrl+V" in [s.toString() for s in action.shortcuts()]:
                 print(f"[DEBUG] Found existing paste action: {action}, removing it")
                 self.removeAction(action)
-                
+
             # Main Playback
             QShortcut(QKeySequence(Qt.Key_Space), self, self.toggle_play_pause)
             QShortcut(QKeySequence(Qt.Key_N), self, self.next_track)
@@ -12063,6 +12064,8 @@ class MediaPlayer(QMainWindow):
 
             # Bind the 'C' key to toggle playlist collapse/expand
             QShortcut(QKeySequence("C"), self, self._toggle_playlist)
+
+            QShortcut(QKeySequence(Qt.CTRL | Qt.Key_V), self, self._handle_paste)
 
             # ONLY ONE PASTE HANDLER - Remove all others!
             paste_action = QAction("Paste", self)
