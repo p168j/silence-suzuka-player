@@ -19,6 +19,8 @@ import qtawesome as qta
 import re
 import queue
 import warnings
+import subprocess
+import json
 from PySide6.QtGui import QIcon
 from pathlib import Path
 from datetime import datetime
@@ -63,6 +65,34 @@ from PySide6.QtWidgets import QGraphicsColorizeEffect
 from PySide6.QtWidgets import QStyleOptionViewItem, QStyle
 from PySide6.QtCore import QRect
 
+
+def fetch_bilibili_playlist_flat(url):
+    """Fetch Bilibili playlist entries in one batch using yt-dlp."""
+    try:
+        # Run yt-dlp with flat playlist mode
+        result = subprocess.run(
+            ["yt-dlp", "--flat-playlist", "--dump-single-json", url],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            encoding="utf-8", check=True
+        )
+        data = json.loads(result.stdout)
+        entries = data.get("entries", [])
+        
+        items = []
+        for entry in entries:
+            vid_id = entry.get("id")
+            title = entry.get("title", "Unknown")
+            if vid_id:
+                video_url = f"https://www.bilibili.com/video/{vid_id}"
+                items.append({
+                    "title": title,
+                    "url": video_url,
+                    "type": "bilibili"
+                })
+        return items
+    except Exception as e:
+        print(f"[BatchFetch] Failed for {url}: {e}")
+        return []
 
 class MiniPlayer(QWidget):
     def __init__(self, main_player_instance, parent=None):
