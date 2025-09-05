@@ -3769,6 +3769,24 @@ class MediaPlayer(QMainWindow):
         except Exception as e:
             logger.error(f"Failed to expand groups: {e}")    
 
+    def _toggle_playlist_headers(self):
+        """Toggle between collapsing and expanding playlist headers."""
+        root = self.playlist_tree.topLevelItem(0)  # Get the root of the playlist tree
+        if not root:
+            return
+
+        # Check the current state and toggle
+        if root.isExpanded():
+            # Collapse all headers
+            for i in range(root.childCount()):
+                root.child(i).setExpanded(False)
+            self.status.showMessage("Playlist headers collapsed", 3000)
+        else:
+            # Expand all headers
+            for i in range(root.childCount()):
+                root.child(i).setExpanded(True)
+            self.status.showMessage("Playlist headers expanded", 3000)
+
     def _resolve_title_parallel(self, url, kind):
         """Distribute title resolution across multiple workers"""
         worker = self.ytdl_workers[self._worker_index]
