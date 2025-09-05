@@ -64,6 +64,10 @@ from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter, QColor, QBrush
 from PySide6.QtWidgets import QGraphicsColorizeEffect
 from PySide6.QtWidgets import QStyleOptionViewItem, QStyle
 from PySide6.QtCore import QRect
+import io
+from PySide6.QtCore import QBuffer
+from PySide6.QtWidgets import QGraphicsBlurEffect
+from PySide6.QtGui import QPalette, QBrush
 
 
 def fetch_bilibili_playlist_flat(url):
@@ -94,97 +98,148 @@ def fetch_bilibili_playlist_flat(url):
         print(f"[BatchFetch] Failed for {url}: {e}")
         return []
 
-class MiniPlayer(QWidget):
-    def __init__(self, main_player_instance, parent=None):
+class VolumeIconLabel(QLabel):
+    """A QLabel that handles mute toggling on click and volume changes on scroll."""
+    def __init__(self, main_player, parent=None):
         super().__init__(parent)
-        self.main_player = main_player_instance  # A reference to the main app
+        self.main_player = main_player
+        self.setToolTip("Click to Mute/Unmute\nScroll to change volume")
 
-        # --- Window Flags ---
-        # Make it a frameless tool window that stays on top
+    def mousePressEvent(self, event):
+        self.main_player._toggle_mute()
+        super().mousePressEvent(event)
+
+    def wheelEvent(self, event):
+        # Scroll up (positive delta) to increase volume, down to decrease
+        if event.angleDelta().y() > 0:
+            self.main_player._volume_up()
+        else:
+            self.main_player._volume_down()
+        # Show a tooltip with the new volume
+        new_volume = self.main_player.volume_slider.value()
+        QToolTip.showText(QCursor.pos(), f"Volume: {new_volume}%", self)
+        event.accept()
+
+class MiniPlayer(QWidget):
+    def __init__(self, main_player_instance, theme, icons, parent=None):
+        super().__init__(parent)
+        self.main_player = main_player_instance
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
-        self.setAttribute(Qt.WA_TranslucentBackground) # Allows for rounded corners
-
-        # --- UI Setup ---
         self.setWindowTitle("Mini Player")
-        self.resize(300, 60) # A small, compact size
-        self._setup_ui()
-        self._apply_theme()
-
-        # --- Dragging Logic ---
+        self.resize(220, 300)
         self._drag_pos = None
+        
+        self._setup_ui()
+        self.update_theme_and_icons(theme, icons) # Apply initial theme and icons
 
     def _setup_ui(self):
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(6)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-        # 1. Track Title (stretches to fill space)
+        self.album_art = QLabel()
+        self.album_art.setObjectName("albumArtLabel")
+        self.album_art.setAlignment(Qt.AlignCenter)
+        self.album_art.mousePressEvent = lambda e: self.main_player.toggle_play_pause()
+        layout.addWidget(self.album_art, 1)
+
+        self.info_and_controls = QWidget()
+        self.info_and_controls.setObjectName("infoAndControlsWidget")
+        info_layout = QVBoxLayout(self.info_and_controls)
+        info_layout.setContentsMargins(10, 8, 10, 8)
+        layout.addWidget(self.info_and_controls)
+
         self.track_title = QLabel("No Track Playing")
         self.track_title.setObjectName("miniPlayerTitle")
-        layout.addWidget(self.track_title, 1) # The '1' makes it stretch
-
-        # 2. Control Buttons
-        self.prev_btn = QPushButton("⏮")
-        self.play_pause_btn = QPushButton("▶")
-        self.next_btn = QPushButton("⏭")
+        self.track_title.setAlignment(Qt.AlignCenter)
+        info_layout.addWidget(self.track_title)
         
-        # A button to return to the main window
-        self.show_main_btn = QPushButton("⏏️") 
-        self.show_main_btn.setToolTip("Show Full Player")
-
+        progress_layout = QHBoxLayout()
+        self.time_label = QLabel("0:00")
+        self.time_label.setObjectName("miniTimeLabel")
+        self.progress_bar = QSlider(Qt.Horizontal)
+        self.progress_bar.setObjectName("miniProgressBar")
+        self.duration_label = QLabel("0:00")
+        self.duration_label.setObjectName("miniTimeLabel")
+        progress_layout.addWidget(self.time_label)
+        progress_layout.addWidget(self.progress_bar, 1)
+        progress_layout.addWidget(self.duration_label)
+        info_layout.addLayout(progress_layout)
+        
+        controls_layout = QHBoxLayout()
+        controls_layout.setContentsMargins(0, 4, 0, 0)
+        self.prev_btn = QPushButton()
+        self.play_pause_btn = QPushButton()
+        self.next_btn = QPushButton()
+        self.volume_icon_label = VolumeIconLabel(self.main_player)
+        self.show_main_btn = QPushButton()
+        
         for btn in [self.prev_btn, self.play_pause_btn, self.next_btn, self.show_main_btn]:
-            btn.setObjectName("miniPlayerButton")
             btn.setFixedSize(32, 32)
-            layout.addWidget(btn)
+        self.show_main_btn.setToolTip("Show Full Player")
+        
+        controls_layout.addWidget(self.prev_btn)
+        controls_layout.addWidget(self.play_pause_btn)
+        controls_layout.addWidget(self.next_btn)
+        controls_layout.addStretch()
+        controls_layout.addWidget(self.volume_icon_label)
+        controls_layout.addWidget(self.show_main_btn)
+        info_layout.addLayout(controls_layout)
 
-    def _apply_theme(self):
-        # We can reuse the main app's theme for consistency
-        theme_style = """
-            QWidget {{
-                background-color: #2a2a2a;
-                color: #f3f3f3;
-                border-radius: 8px;
-            }}
-            #miniPlayerTitle {{
-                font-weight: bold;
-            }}
-            #miniPlayerButton {{
-                background: transparent;
-                border: none;
-                font-size: 16px;
-            }}
-            #miniPlayerButton:hover {{
-                background-color: rgba(255, 255, 255, 0.1);
-                border-radius: 16px;
-            }}
-            #miniPlayerButton:pressed {{
-                background-color: rgba(255, 255, 255, 0.2);
-            }}
-        """
-        self.setStyleSheet(theme_style)
+    def update_theme_and_icons(self, theme, icons):
+        self.icons = icons
+        self.prev_btn.setIcon(self.icons['previous'])
+        self.play_pause_btn.setIcon(self.icons['play'])
+        self.next_btn.setIcon(self.icons['next'])
+        self.show_main_btn.setIcon(self.icons['show_main'])
+        self.volume_icon_label.setPixmap(self.icons['volume'].pixmap(QSize(20, 20)))
 
-    # --- Methods for dragging the frameless window ---
+        if theme == 'vinyl':
+            self.setStyleSheet("""
+                QWidget { background-color: #f3ead3; border-radius: 8px; }
+                #albumArtLabel { background-color: #e9e0c8; }
+                #infoAndControlsWidget { background-color: #f0e7cf; border-top: 1px solid #e5d5b8; }
+                #miniPlayerTitle { color: #4a2c2a; font-weight: bold; }
+                #miniTimeLabel { color: #654321; font-size: 11px; }
+                QPushButton { border: none; }
+                #miniProgressBar::groove { height: 4px; background: #d9ceb2; border-radius: 2px; }
+                #miniProgressBar::handle { background: #4a2c2a; width: 10px; height: 10px; border-radius: 5px; margin: -3px 0; }
+                #miniProgressBar::sub-page { background: #4a2c2a; border-radius: 2px; }
+            """)
+        else: # Dark Theme
+            self.setStyleSheet("""
+                QWidget { background-color: #2a2a2a; border-radius: 8px; }
+                #albumArtLabel { background-color: #1e1e1e; }
+                #infoAndControlsWidget { background-color: #262626; border-top: 1px solid #3a3a3a; }
+                #miniPlayerTitle { color: #f0f0f0; font-weight: bold; }
+                #miniTimeLabel { color: #aaa; font-size: 11px; }
+                QPushButton { border: none; }
+                #miniProgressBar::groove { height: 4px; background: #4a4a4a; border-radius: 2px; }
+                #miniProgressBar::handle { background: #d0d0d0; width: 10px; height: 10px; border-radius: 5px; margin: -3px 0; }
+                #miniProgressBar::sub-page { background: #e76f51; border-radius: 2px; }
+            """)
+        self.update_playback_state(self.main_player._is_playing())
+
     def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self._drag_pos = event.globalPosition().toPoint()
-
+        if event.button() == Qt.LeftButton: self._drag_pos = event.globalPosition().toPoint()
     def mouseMoveEvent(self, event):
         if self._drag_pos:
             self.move(self.pos() + event.globalPosition().toPoint() - self._drag_pos)
             self._drag_pos = event.globalPosition().toPoint()
-
-    def mouseReleaseEvent(self, event):
-        self._drag_pos = None
-
-    # --- Placeholder slots for updating the UI ---
+    def mouseReleaseEvent(self, event): self._drag_pos = None
     def update_track_title(self, title):
-        # We'll wire this up later
-        self.track_title.setText(title)
-
+        metrics = self.track_title.fontMetrics()
+        elided_title = metrics.elidedText(title, Qt.ElideRight, self.track_title.width() - 10)
+        self.track_title.setText(elided_title)
     def update_playback_state(self, is_playing):
-        # We'll wire this up later
-        self.play_pause_btn.setText("❚❚" if is_playing else "▶")
-
+        self.play_pause_btn.setIcon(self.icons['pause'] if is_playing else self.icons['play'])
+    def update_album_art(self, pixmap):
+        self.album_art.setPixmap(pixmap.scaled(self.album_art.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+    def update_progress(self, position, duration):
+        self.progress_bar.setRange(0, duration)
+        self.progress_bar.setValue(position)
+        self.time_label.setText(format_time(position))
+        self.duration_label.setText(format_time(duration))
 
 class PlaylistMetadataWidget(QWidget):
     """Widget to display playlist metadata in a card-like format"""
@@ -2606,26 +2661,40 @@ class AFKMonitor(QThread):
 
 # --- Thumbnail fetcher ---
 class ThumbnailFetcher(QThread):
-    thumbnailReady = Signal(QPixmap)
+    thumbnailReady = Signal(bytes)
 
-    def __init__(self, url, parent=None):
+    def __init__(self, item_data, parent=None):
         super().__init__(parent)
-        self.url = url
+        self.item_data = item_data
 
     def run(self):
-        if not HAVE_REQUESTS or not self.url:
+        if not HAVE_REQUESTS or not self.item_data:
             return
+
+        thumb_url = None
+        item_type = self.item_data.get('type')
+        url = self.item_data.get('url')
+
         try:
-            r = requests.get(self.url, timeout=6)
-            if r.status_code == 200:
-                pm = QPixmap(); pm.loadFromData(r.content)
-                if not pm.isNull():
-                    self.thumbnailReady.emit(pm)
+            if item_type == 'youtube':
+                video_id = url.split('v=')[1].split('&')[0]
+                thumb_url = f"https://img.youtube.com/vi/{video_id}/mqdefault.jpg"
+            
+            elif item_type == 'bilibili':
+                import yt_dlp
+                ydl_opts = {'quiet': True, 'skip_download': True, 'no_warnings': True}
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                    thumb_url = info.get('thumbnail')
+            
+            if thumb_url:
+                r = requests.get(thumb_url, timeout=8)
+                if r.status_code == 200:
+                    self.thumbnailReady.emit(r.content)
         except Exception as e:
-            # Thumbnail fetch failed (silent)
-            pass
+            logger.warning(f"Thumbnail fetch failed for {url}: {e}")
         finally:
-             self.deleteLater()    
+             self.deleteLater()
 
 class PlaylistLoaderThread(QThread):
     itemsReady = Signal(list)
@@ -3514,6 +3583,7 @@ class ScrollingTreeWidget(QTreeWidget):
         if current_item and current_item.parent() is None:  # Only for top-level items
             self._start_scrolling(current_item)
 
+
 # --- Player ---
 class MediaPlayer(QMainWindow):
     requestTimerSignal = Signal(int, object)
@@ -3728,6 +3798,53 @@ class MediaPlayer(QMainWindow):
 
         self._undo_stack = []  # Stack of undo operations
         self._max_undo_operations = 10  # Limit undo history
+
+    def _get_mini_player_icons(self):
+        """Returns a dictionary of icons for the mini-player based on the current theme."""
+        eject_icon_path = APP_DIR / 'icons/eject.svg'
+        # Use a standard Qt icon as a fallback if the file is missing
+        eject_icon = QIcon(str(eject_icon_path)) if eject_icon_path.exists() else self.style().standardIcon(QStyle.SP_ArrowUp)
+
+        if self.theme == 'vinyl':
+            return {
+                'play': self._play_icon_normal,
+                'pause': self._pause_icon_normal,
+                'next': self.next_icon_vinyl,
+                'previous': self.prev_icon_vinyl,
+                'volume': self.volume_icon,
+                'show_main': eject_icon
+            }
+        else: # Dark theme
+            volume_icon = QIcon(_render_svg_tinted(str(APP_DIR / 'icons/volume.svg'), QSize(20,20), "#FFFFFF"))
+            show_main_icon = QIcon(_render_svg_tinted(str(eject_icon_path), QSize(20,20), "#FFFFFF")) if eject_icon_path.exists() else self.style().standardIcon(QStyle.SP_ArrowUp)
+
+            return {
+                'play': self._play_icon_normal,
+                'pause': self._pause_icon_normal,
+                'next': self.next_icon_dark,
+                'previous': self.prev_icon_dark,
+                'volume': volume_icon,
+                'show_main': show_main_icon
+            }
+
+    def _on_mini_player_seek(self):
+        """Handles seek requests from the mini-player's progress bar."""
+        if hasattr(self, 'mini_player') and self.mini_player:
+            pos_ms = self.mini_player.progress_bar.value()
+            self.set_position(pos_ms)
+
+    def _get_dominant_color(self, pixmap):
+        # This function is not used in the stable version, so we can ignore it.
+        # Returning a default color prevents any potential errors if it's called.
+        return QColor("#404040")
+
+    def _on_thumbnail_ready(self, image_data):
+        """Safely creates a QPixmap on the main thread and sends it to the mini-player."""
+        if hasattr(self, 'mini_player') and self.mini_player.isVisible():
+            pixmap = QPixmap()
+            pixmap.loadFromData(image_data)
+            if not pixmap.isNull():
+                self.mini_player.update_album_art(pixmap)
 
     def _update_top_bar_icons(self):
         """Loads and tints the top bar icons to match the current theme."""
@@ -5497,17 +5614,100 @@ class MediaPlayer(QMainWindow):
 
     def _toggle_mini_player(self):
         """Hides the main window and shows the mini-player."""
-        # Create the mini-player instance on the first click
         if not hasattr(self, 'mini_player') or not self.mini_player:
-            self.mini_player = MiniPlayer(main_player_instance=self)
+            # Pass the current theme and the correct icon set to the mini-player
+            icons = self._get_mini_player_icons()
+            self.mini_player = MiniPlayer(self, self.theme, icons)
 
-            # --- Connect the mini-player's buttons back to our main player ---
-            # This allows the mini-player to control the main app
+            # Connect signals
+            self.mini_player.play_pause_btn.clicked.connect(self.toggle_play_pause)
+            self.mini_player.next_btn.clicked.connect(self.next_track)
+            self.mini_player.prev_btn.clicked.connect(self.previous_track)
             self.mini_player.show_main_btn.clicked.connect(self._show_main_player_from_mini)
-            # We will connect the other buttons (play, next, etc.) later.
+            self.mini_player.progress_bar.sliderReleased.connect(self._on_mini_player_seek)
 
+        self._sync_mini_player_ui()
         self.hide()
         self.mini_player.show()
+
+        def _on_mini_player_seek(self):
+            """Handles seek requests from the mini-player's progress bar."""
+            if hasattr(self, 'mini_player') and self.mini_player:
+                pos_ms = self.mini_player.progress_bar.value()
+                self.set_position(pos_ms)
+
+    def _get_dominant_color(self, pixmap):
+        """Analyzes a pixmap to find a suitable dominant color."""
+        try:
+            from PIL import Image
+            # Convert QPixmap to a Pillow Image
+            buffer = QBuffer()
+            buffer.open(QBuffer.ReadWrite)
+            pixmap.save(buffer, "PNG")
+            pil_img = Image.open(io.BytesIO(buffer.data()))
+
+            # Downscale for performance and average out colors
+            pil_img = pil_img.resize((50, 50), Image.Resampling.LANCZOS)
+            
+            # Get the most frequent colors
+            colors = pil_img.getcolors(pil_img.size[0] * pil_img.size[1])
+            if not colors:
+                return None
+
+            # Find a color that's not too dark, not too bright, and has some saturation
+            best_color = None
+            max_score = -1
+            for count, (r, g, b) in colors:
+                # Skip grayscale colors
+                if abs(r - g) < 20 and abs(r - b) < 20:
+                    continue
+                
+                brightness = (r + g + b) / 3
+                saturation = 1 - (3 * min(r, g, b) / (r + g + b)) if (r+g+b) > 0 else 0
+
+                # We want a color that's in the mid-range of brightness and has decent saturation
+                if 60 < brightness < 200 and saturation > 0.2:
+                    score = count * saturation # Prioritize saturated, common colors
+                    if score > max_score:
+                        max_score = score
+                        best_color = QColor(r, g, b)
+
+            return best_color if best_color else QColor("#404040") # Fallback to a neutral dark gray
+        except Exception as e:
+            logger.error(f"Color extraction failed: {e}")
+            return QColor("#404040")
+
+    def _on_thumbnail_ready(self, image_data):
+        """Safely creates a QPixmap on the main thread and sends it to the mini-player."""
+        if hasattr(self, 'mini_player') and self.mini_player.isVisible():
+            pixmap = QPixmap()
+            pixmap.loadFromData(image_data)
+            if not pixmap.isNull():
+                self.mini_player.update_album_art(pixmap)
+
+    def _sync_mini_player_ui(self):
+        """Updates all mini-player UI elements to match the main player's state."""
+        if not hasattr(self, 'mini_player') or not self.mini_player:
+            return
+
+        self.mini_player.update_playback_state(self._is_playing())
+
+        if 0 <= self.current_index < len(self.playlist):
+            item = self.playlist[self.current_index]
+            self.mini_player.update_track_title(item.get('title', 'Unknown'))
+            
+            pos = int(self._last_play_pos_ms or 0)
+            dur = self.progress.maximum()
+            self.mini_player.update_progress(pos, dur)
+
+            fetcher = ThumbnailFetcher(item, self)
+            fetcher.thumbnailReady.connect(self._on_thumbnail_ready)
+            fetcher.start()
+        else:
+            self.mini_player.update_theme_and_icons(self.theme, self._get_mini_player_icons())
+            self.mini_player.update_track_title("No Track Playing")
+            self.mini_player.update_album_art(QPixmap())
+            self.mini_player.update_progress(0, 0)
 
     def _show_main_player_from_mini(self):
         """Hides the mini-player and shows the main window."""
@@ -7072,55 +7272,44 @@ class MediaPlayer(QMainWindow):
     def toggle_theme(self):
         self.theme = 'vinyl' if getattr(self, 'theme', 'dark') != 'vinyl' else 'dark'
         
-        # IMPORTANT: Clear any existing background styling first
+        # ... (all the existing code for clearing backgrounds and applying themes) ...
         try:
             bg = self.centralWidget()
             if bg:
-                # Clear any previous background styling
                 bg.setStyleSheet("#bgRoot { background: none; border-image: none; }")
                 bg.setAutoFillBackground(False)
-                
-                # Clear any existing palette background
                 pal = bg.palette()
                 pal.setBrush(bg.backgroundRole(), QBrush())
                 bg.setPalette(pal)
         except Exception:
             pass
         
-        # Apply the new theme
         if self.theme == 'vinyl':
             self._apply_vinyl_theme()
         else:
             self._apply_dark_theme()
         
-        # Apply dynamic font scaling after theme change
         self._apply_dynamic_fonts()
 
-        # Update playlist tree chevron style for new theme
         if hasattr(self, "playlist_tree"):
             if getattr(self, "theme", "dark") == "dark":
                 self.playlist_tree.setStyle(LightChevronTreeStyle(color="#e0e0e0"))
             else:
-                # Remove custom style to use native Qt arrows in vinyl
                 self.playlist_tree.setStyle(None)
-                # Force a style refresh
                 self.playlist_tree.style().unpolish(self.playlist_tree)
                 self.playlist_tree.style().polish(self.playlist_tree)
         
-        # Force a complete repaint to ensure all styling takes effect
-        try:
-            self.update()
-            self.centralWidget().update()
-            if hasattr(self, 'video_frame'):
-                self.video_frame.update()
-        except Exception:
-            pass
+        # --- FIX: Update the mini-player's theme if it's open ---
+        if hasattr(self, 'mini_player') and self.mini_player:
+            icons = self._get_mini_player_icons()
+            self.mini_player.update_theme_and_icons(self.theme, icons)
+        # --- END FIX ---
+                
+        self.update()
+        self.centralWidget().update()
+        if hasattr(self, 'video_frame'):
+            self.video_frame.update()
         
-        try:
-            if hasattr(self, 'theme_btn') and self.theme_btn:
-                self.theme_btn.setToolTip("Toggle Theme")
-        except Exception:
-            pass
         self._save_settings()
         self.status.showMessage(f"Theme toggled to {self.theme.capitalize()}", 3000)
     # mpv
@@ -7179,8 +7368,15 @@ class MediaPlayer(QMainWindow):
                     pos_ms = int(max(0.0, pos) * 1000)
                     self._last_play_pos_ms = pos_ms
                     if not self._user_scrubbing:
+                        # Update the main window's UI
                         self.progress.setValue(pos_ms)
                         self.time_label.setText(format_time(pos_ms))
+                        
+                        # --- THIS IS THE FIX ---
+                        # If the mini-player is open, update its progress bar directly
+                        if hasattr(self, 'mini_player') and self.mini_player.isVisible():
+                            self.mini_player.update_progress(pos_ms, self.progress.maximum())
+
                 except Exception:
                     pass
 
@@ -10795,6 +10991,7 @@ class MediaPlayer(QMainWindow):
             self.play_pause_btn.setIcon(self._pause_icon_normal)
             self._start_session()
             self._update_tray()
+            self._sync_mini_player_ui()
 
     def next_track(self):
         if not self.playlist:
@@ -10903,6 +11100,7 @@ class MediaPlayer(QMainWindow):
             # # DEBUG removed
             self._update_silence_indicator()
         self._update_tray()
+        self._sync_mini_player_ui()
 
     def _toggle_shuffle(self):
         self.shuffle_mode = self.shuffle_btn.isChecked()
