@@ -63,7 +63,16 @@ from PySide6.QtWidgets import QGraphicsColorizeEffect
 from PySide6.QtWidgets import QStyleOptionViewItem, QStyle
 from PySide6.QtCore import QRect
 from pathlib import Path
+from PySide6.QtWidgets import QPushButton
 
+class CustomPushButton(QPushButton):
+    def keyPressEvent(self, event):
+        # Allow Ctrl+V to propagate to the eventFilter
+        if event.key() == Qt.Key_V and (event.modifiers() & Qt.ControlModifier):
+            event.ignore()  # Let the event propagate
+        else:
+            # Default behavior for other keys
+            super().keyPressEvent(event)
 
 def _render_svg_tinted(svg_path, size: QSize, color: str) -> QPixmap:
         """Renders an SVG file, tinting its fill/stroke with a single color."""
@@ -3406,8 +3415,8 @@ class PlaylistTree(QTreeWidget):
         self.setTextElideMode(Qt.ElideRight)
 
         # Debugging: Print column widths after configuration
-        print("Column 0 width (Title):", self.columnWidth(0))
-        print("Column 1 width (Duration):", self.columnWidth(1))
+        # print("Column 0 width (Title):", self.columnWidth(0))
+        # print("Column 1 width (Duration):", self.columnWidth(1))
 
     def dragMoveEvent(self, event):
         """
@@ -3998,24 +4007,46 @@ class MediaPlayer(QMainWindow):
         self._worker_index = (self._worker_index + 1) % len(self.ytdl_workers)            
 
     def _handle_paste(self):
-        """Handle Ctrl+V: return True if a media URL was handled, False otherwise."""
+        logger.info("DEBUG: Entered _handle_paste method.")  
         try:
-            handled = False
-            if hasattr(self, '_maybe_offer_clipboard_url'):
-                handled = self._maybe_offer_clipboard_url()
-            if handled:
-                return True
-            cb_text = QApplication.clipboard().text().strip()
-            if cb_text:
-                try: self.status.showMessage("Clipboard does not contain a supported media URL", 2000)
-                except Exception: pass
-            else:
-                try: self.status.showMessage("Nothing to paste", 2000)
-                except Exception: pass
-            return False
+            clipboard_content = QApplication.clipboard().text().strip()
+            logger.info(f"Clipboard content: '{clipboard_content}'")
+            logger.info(f"Clipboard content: {QApplication.clipboard().text().strip()}")
+            """Handle Ctrl+V: return True if a media URL was handled, False otherwise."""
         except Exception as e:
-            try: self.status.showMessage(f"Paste failed: {e}", 3000)
-            except Exception: pass
+            logger.error(f"Error handling paste: {e}")
+        try:
+            logger.info("Ctrl+V detected, attempting to handle clipboard content...")
+            cb_text = QApplication.clipboard().text().strip()
+            logger.info(f"Clipboard content: '{cb_text}'")
+
+            if not cb_text:
+                self.status.showMessage("Nothing to paste", 2000)
+                logger.warning("Clipboard is empty.")
+                return False
+
+            # Check if `_maybe_offer_clipboard_url` handles it
+            if hasattr(self, '_maybe_offer_clipboard_url'):
+                logger.info("Calling `_maybe_offer_clipboard_url`...")
+                handled = self._maybe_offer_clipboard_url()
+                if handled:
+                    logger.info("_maybe_offer_clipboard_url successfully handled the clipboard content.")
+                    return True
+                else:
+                    logger.info("_maybe_offer_clipboard_url did not handle the clipboard content.")
+
+            # Fallback: Try adding the clipboard text as a URL to the playlist
+            if cb_text.startswith("http://") or cb_text.startswith("https://"):
+                logger.info(f"Attempting to add URL to playlist: {cb_text}")
+                self._add_url_to_playlist(cb_text)
+                return True
+            else:
+                self.status.showMessage("Clipboard does not contain a supported media URL", 2000)
+                logger.warning("Clipboard content is not a valid URL.")
+                return False
+        except Exception as e:
+            logger.error(f"Paste failed: {e}")
+            self.status.showMessage(f"Paste failed: {e}", 3000)
             return False
 
     def dragEnterEvent(self, event):
@@ -5076,7 +5107,8 @@ class MediaPlayer(QMainWindow):
         self.stats_btn.setFixedSize(48, 44)  # Much larger button container
         self.stats_btn.clicked.connect(self.open_stats)
         
-        self.settings_btn = QPushButton()
+        self.settings_btn = CustomPushButton("Settings", self)
+        self.settings_btn.setFocusPolicy(Qt.NoFocus)  # Prevents the button from gaining focus
         self.settings_btn.setObjectName('settingsBtn')
         self.settings_btn.setToolTip("Settings")
         self.settings_btn.setIconSize(self.top_bar_icon_size)
@@ -5881,18 +5913,17 @@ class MediaPlayer(QMainWindow):
     def eventFilter(self, obj, event):
         try:
             if event.type() == QEvent.KeyPress:
-                key_event = event
-                if key_event.key() == Qt.Key_V and (key_event.modifiers() & Qt.ControlModifier):
-                    try:
-                        try: self.status.showMessage("EventFilter caught Ctrl+V", 900)
-                        except Exception: pass
-                        try: self._handle_paste()
-                        except Exception: pass
-                        return True
-                    except Exception:
-                        pass
-        except Exception:
-            pass
+                logger.info(f"Focused widget: {QApplication.focusWidget()}")
+                logger.info(f"KeyPress detected: {event.key()} with modifiers {event.modifiers()}")
+
+                if event.key() == Qt.Key_V and (event.modifiers() & Qt.ControlModifier):
+                    logger.info("Ctrl+V detected in eventFilter")
+                    self._handle_paste()
+                    return True
+        except Exception as e:
+            logger.error(f"Error in eventFilter: {e}")
+
+        event.ignore()  # Allow the event to propagate further if not handled
         return super().eventFilter(obj, event)
 
     def _set_track_title(self, text):
@@ -6962,6 +6993,7 @@ class MediaPlayer(QMainWindow):
         try:
             self._paste_shortcut = QShortcut(QKeySequence("Ctrl+V"), self)
             self._paste_shortcut.setContext(Qt.ApplicationShortcut)
+            self._paste_shortcut.activated.connect(lambda: logger.info("QShortcut triggered Ctrl+V"))
             self._paste_shortcut.activated.connect(
                 lambda: getattr(self, "_handle_paste", lambda: None)()
             )
@@ -6971,6 +7003,7 @@ class MediaPlayer(QMainWindow):
         try:
             # keep a strong reference so the QShortcut isn't garbage-collected
             self._paste_shortcut = QShortcut(QKeySequence("Ctrl+V"), self)
+            self._paste_shortcut.activated.connect(lambda: logger.info("QShortcut triggered Ctrl+V"))
             self._paste_shortcut.setContext(Qt.ApplicationShortcut)
             def _on_paste_shortcut():
                 try:
@@ -7007,6 +7040,7 @@ class MediaPlayer(QMainWindow):
         try:
             app = QApplication.instance()
             if app is not None:
+                logger.info("Installing global eventFilter")
                 app.installEventFilter(self)
         except Exception:
             pass
@@ -9405,6 +9439,7 @@ class MediaPlayer(QMainWindow):
 
     # Actions
     def _maybe_offer_clipboard_url(self):
+        logger.info("Entered `_maybe_offer_clipboard_url` method.")
         """
         Check clipboard for a media URL or local path and add it directly to the playlist.
         Returns True if a URL/path was added or handled, False otherwise.
@@ -9468,24 +9503,30 @@ class MediaPlayer(QMainWindow):
             return False
         
     def _add_url_to_playlist(self, url: str):
-        self.status.showMessage("Loading...", 2000)
-        QApplication.processEvents() # keep UI responsive
+        try:
+            logger.info(f"Adding URL to playlist: {url}")
+            self.status.showMessage("Loading...", 2000)
+            QApplication.processEvents()  # keep UI responsive
 
-        # Guess type
-        t = 'local'
-        lo = url.lower()
-        if 'youtube.com' in lo or 'youtu.be' in lo:
-            t = 'youtube'
-        elif 'bilibili.com' in lo:
-            t = 'bilibili'
+            # Guess type
+            t = 'local'
+            lo = url.lower()
+            if 'youtube.com' in lo or 'youtu.be' in lo:
+                t = 'youtube'
+            elif 'bilibili.com' in lo:
+                t = 'bilibili'
+            logger.info(f"Detected type: {t}")
 
-        # Load playlist in background
-        loader = PlaylistLoaderThread(url, t)
-        self._playlist_loader = loader
-        loader.itemsReady.connect(self._on_playlist_items_ready)
-        loader.error.connect(lambda e: self.status.showMessage(f"Load failed: {e}", 5000))
-        loader.finished.connect(loader.deleteLater)
-        loader.start()
+            # Load playlist in background
+            loader = PlaylistLoaderThread(url, t)
+            self._playlist_loader = loader
+            loader.itemsReady.connect(self._on_playlist_items_ready)
+            loader.error.connect(lambda e: logger.error(f"Load failed: {e}"))
+            loader.finished.connect(loader.deleteLater)
+            loader.start()
+        except Exception as e:
+            logger.error(f"Failed to add URL to playlist: {e}")
+            self.status.showMessage(f"Failed to add URL: {e}", 3000)
 
     def _fetch_all_durations(self):
         """Fetch durations for all items in playlist with cancel support"""
