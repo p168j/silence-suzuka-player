@@ -6988,6 +6988,35 @@ class MediaPlayer(QMainWindow):
         except Exception as e:
             logger.error(f"Error getting first visible index: {e}")
             return None
+        
+    def _get_all_visible_indices(self):
+        """Gets a list of all playable item indices in their current visual order."""
+        indices = []
+        try:
+            for i in range(self.playlist_tree.topLevelItemCount()):
+                item = self.playlist_tree.topLevelItem(i)
+                if not item or item.isHidden():
+                    continue
+                
+                data = item.data(0, Qt.UserRole)
+                
+                # Case 1: Group header
+                if isinstance(data, tuple) and data[0] == 'group':
+                    for j in range(item.childCount()):
+                        child = item.child(j)
+                        if not child.isHidden():
+                            child_data = child.data(0, Qt.UserRole)
+                            if isinstance(child_data, tuple) and child_data[0] == 'current':
+                                indices.append(child_data[1])
+                
+                # Case 2: Top-level item
+                elif isinstance(data, tuple) and data[0] == 'current':
+                    indices.append(data[1])
+            return indices
+        except Exception as e:
+            logger.error(f"Failed to get all visible indices: {e}")
+            # Fallback to raw order if visual traversal fails
+            return list(range(len(self.playlist)))
 
     def _play_all_library(self):
         """Plays the entire library from the beginning, respecting the visual order."""
@@ -9860,12 +9889,13 @@ class MediaPlayer(QMainWindow):
             return f"{base} ({i})"
 
     def on_tree_item_double_clicked(self, item, column):
-
         data = item.data(0, Qt.UserRole)
         if not isinstance(data, tuple):
             return
 
         kind = data[0]
+
+        # This part for clicking individual songs is fine
         if kind == 'current':
             idx = data[1]
             self.play_scope = None
@@ -9875,46 +9905,30 @@ class MediaPlayer(QMainWindow):
             self.play_current()
             self._highlight_current_row()
             self._update_up_next()
+
+        # This is the corrected logic for clicking a group header
         elif kind == 'group':
             try:
-                # --- ADD THIS BLOCK to save the expansion state ---
-                # Get the current state of all groups
-                expansion_state = self._get_tree_expansion_state()
-                raw_key = data[1]
+                raw_key = data[1] if len(data) > 1 else None
                 key = self._group_effective_key(raw_key, item)
-                
-                # Force the clicked group to be marked as EXPANDED in our state object
-                if key:
-                    expansion_state[key] = True
-                # --- END of new block ---
 
+                indices = self._iter_indices_for_group(key)
+                if not indices:
+                    self.status.showMessage(f"No items in group '{key}' to play.", 3000)
+                    return
+
+                # --- THE FIX ---
+                # Do NOT refresh the widget. Just set the state and play.
                 self.play_scope = ('group', key)
                 self._update_scope_label()
-
-                # --- MODIFY THIS LINE to use the saved state ---
-                self._refresh_playlist_widget(expansion_state=expansion_state)
-
-                # This playback logic remains the same
-                if getattr(self, 'playback_model', 'scoped') == 'scoped':
-                    indices = self._iter_indices_for_group(key)
-                    if indices:
-                        self.current_index = indices[0]
-                        self.play_current()
-                        self._highlight_current_row()
-                    else:
-                        self.status.showMessage(f"No items found in group '{key}'", 3000)
-                else:
-                    if item.childCount() > 0:
-                        child = item.child(0)
-                        cdata = child.data(0, Qt.UserRole)
-                        if isinstance(cdata, tuple) and cdata[0] == 'current':
-                            idx = cdata[1]
-                            self._save_current_position()
-                            self.current_index = idx
-                            self.play_current()
-                            self._highlight_current_row()
-
+                
+                self.current_index = indices[0] # Start from the first item in the group
+                self.play_current()
+                
+                # Update UI elements that reflect the new state
+                self._highlight_current_row()
                 self._update_up_next()
+                item.setExpanded(True) # Ensure the group is expanded
 
             except Exception as e:
                 print(f"Error while setting group scope: {e}")
@@ -10789,54 +10803,61 @@ class MediaPlayer(QMainWindow):
     def next_track(self):
         if not self.playlist:
             return
-        # Save current track position before switching
         self._save_current_position()
-        # Use scoped playback behavior
-        indices = self._scope_indices()
-        if indices:
-            try:
-                pos = indices.index(self.current_index) if self.current_index in indices else -1
-                if self.shuffle_mode:
-                    import random
-                    self.current_index = random.choice(indices)
-                else:
-                    self.current_index = indices[(pos + 1) % len(indices)]
-                self.play_current(); return
-            except Exception:
-                pass
+
+        # Determine the correct sequence of tracks to follow
+        if self.play_scope:
+            # If in a group, use the scoped indices
+            indices = self._scope_indices()
+        else:
+            # If playing all, get the order directly from the visual tree
+            indices = self._get_all_visible_indices()
+
+        if not indices:
+            return # No tracks to play in the current context
+
         if self.shuffle_mode:
             import random
-            self.current_index = random.randint(0, len(self.playlist)-1)
+            self.current_index = random.choice(indices)
         else:
-            self.current_index = (self.current_index + 1) % len(self.playlist)
+            try:
+                pos = indices.index(self.current_index) if self.current_index in indices else -1
+                self.current_index = indices[(pos + 1) % len(indices)]
+            except (ValueError, IndexError):
+                # Fallback if current_index is somehow not in the list
+                self.current_index = indices[0]
+        
         self.play_current()
 
     def previous_track(self):
-            if not self.playlist:
-                return
-            # Save current track position before switching
-            self._save_current_position()
-            # Use scoped playback behavior
+        if not self.playlist:
+            return
+        self._save_current_position()
+
+        # Determine the correct sequence of tracks to follow
+        if self.play_scope:
+            # If in a group, use the scoped indices
             indices = self._scope_indices()
-            if indices:
-                try:
-                    pos = indices.index(self.current_index) if self.current_index in indices else -1
-                    if self.shuffle_mode:
-                        import random
-                        self.current_index = random.choice(indices)
-                    else:
-                        # Correctly calculate the previous index within the scope
-                        self.current_index = indices[(pos - 1 + len(indices)) % len(indices)] # <-- THE FIX
-                    self.play_current(); return
-                except Exception:
-                    pass
-            # This non-scoped part was already correct
-            if self.shuffle_mode:
-                import random
-                self.current_index = random.randint(0, len(self.playlist)-1)
-            else:
-                self.current_index = (self.current_index - 1 + len(self.playlist)) % len(self.playlist)
-            self.play_current()
+        else:
+            # If playing all, get the order directly from the visual tree
+            indices = self._get_all_visible_indices()
+
+        if not indices:
+            return # No tracks to play in the current context
+
+        if self.shuffle_mode:
+            import random
+            self.current_index = random.choice(indices)
+        else:
+            try:
+                pos = indices.index(self.current_index) if self.current_index in indices else -1
+                # Correctly calculate the previous index (handles wrapping from 0 to end)
+                self.current_index = indices[(pos - 1 + len(indices)) % len(indices)]
+            except (ValueError, IndexError):
+                # Fallback if current_index is somehow not in the list
+                self.current_index = indices[-1] # Go to the last item
+        
+        self.play_current()
         
     def toggle_play_pause(self):
         if self._is_playing():
