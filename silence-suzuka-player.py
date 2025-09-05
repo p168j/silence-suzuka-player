@@ -3997,19 +3997,29 @@ class MediaPlayer(QMainWindow):
         self._worker_index = (self._worker_index + 1) % len(self.ytdl_workers)            
 
     def _handle_paste(self):
-        """Handle Ctrl+V paste for media URLs"""
+        """Handle Ctrl+V paste for media URLs.
+
+        Returns True if the paste was handled (a URL was added), False otherwise.
+        """
         try:
             handled = self._maybe_offer_clipboard_url()
-            
-            if not handled:
-                cb_text = QApplication.clipboard().text().strip()
-                if cb_text:
-                    self.status.showMessage("Not a media URL", 2000)
-                else:
-                    self.status.showMessage("Nothing to paste", 2000)
-                    
+            if handled:
+                # We added/handled the clipboard URL
+                return True
+
+            # Nothing actionable in clipboard, show helpful UI feedback
+            cb_text = QApplication.clipboard().text().strip()
+            if cb_text:
+                self.status.showMessage("Clipboard does not contain a supported media URL", 2000)
+            else:
+                self.status.showMessage("Nothing to paste", 2000)
+            return False
         except Exception as e:
-            self.status.showMessage(f"Paste failed: {e}", 3000)
+            try:
+                self.status.showMessage(f"Paste failed: {e}", 3000)
+            except Exception:
+                pass
+            return False
 
     def dragEnterEvent(self, event):
         """Handle drag enter events"""
@@ -5555,7 +5565,7 @@ class MediaPlayer(QMainWindow):
                     pass
         except Exception:
             pass
-
+        
 
     def _toggle_mini_player(self):
         """Hides the main window and shows the mini-player."""
@@ -5872,36 +5882,44 @@ class MediaPlayer(QMainWindow):
             pass    
             
     def eventFilter(self, obj, event):
-            # Themed tooltip handling
-            try:
-                if hasattr(self, '_themed_tooltips') and (obj in self._themed_tooltips):
-                    tip, duration = self._themed_tooltips[obj]
-                    if event.type() == QEvent.Enter:
-                        try:
-                            # New logic to center the tooltip horizontally
-                            obj_pos = obj.mapToGlobal(obj.rect().topLeft())
-                            obj_width = obj.width()
-                            tip_width = tip.sizeHint().width()
-                            
-                            x = obj_pos.x() + (obj_width - tip_width) / 2
-                            y = obj_pos.y() + obj.height() + 6
-                            
-                            tip.move(int(x), int(y))
-                            tip.show()
-                            QTimer.singleShot(duration, lambda: tip.hide())
-                        except Exception:
-                            tip.show()
-                        return False
-                    elif event.type() == QEvent.Leave or event.type() == QEvent.FocusOut:
-                        try:
-                            tip.hide()
-                        except Exception:
-                            pass
-                        return False
-            except Exception:
-                pass
+        # Intercept global Ctrl+V and let _handle_paste decide whether to consume it.
+        try:
+            if event.type() == QEvent.KeyPress:
+                key_event = event
+                if key_event.key() == Qt.Key_V and (key_event.modifiers() & Qt.ControlModifier):
+                    try:
+                        # If _handle_paste handled the clipboard (returns True), consume event
+                        if hasattr(self, '_handle_paste') and self._handle_paste():
+                            return True
+                    except Exception:
+                        pass
+            # FALLBACK: preserve any existing themed-tooltip handling or other eventFilter behavior
+            # (keep your themed tooltip block here if you use it)
+            if hasattr(self, '_themed_tooltips') and (obj in self._themed_tooltips):
+                tip, duration = self._themed_tooltips[obj]
+                if event.type() == QEvent.Enter:
+                    try:
+                        obj_pos = obj.mapToGlobal(obj.rect().topLeft())
+                        obj_width = obj.width()
+                        tip_width = tip.sizeHint().width()
+                        x = obj_pos.x() + (obj_width - tip_width) / 2
+                        y = obj_pos.y() + obj.height() + 6
+                        tip.move(int(x), int(y))
+                        tip.show()
+                        QTimer.singleShot(duration, lambda: tip.hide())
+                    except Exception:
+                        tip.show()
+                    return False
+                elif event.type() == QEvent.Leave or event.type() == QEvent.FocusOut:
+                    try:
+                        tip.hide()
+                    except Exception:
+                        pass
+                    return False
+        except Exception:
+            pass
 
-            return super().eventFilter(obj, event)
+        return super().eventFilter(obj, event)
     
     def _set_track_title(self, text):
         """Set track title with eliding support and scrolling"""
@@ -7405,6 +7423,13 @@ class MediaPlayer(QMainWindow):
                 
         except Exception as e:
             print(f"Button animation error: {e}")
+
+        try:
+            app = QApplication.instance()
+            if app is not None:
+                app.installEventFilter(self)
+        except Exception:
+            pass
             
     def _flash_button_press(self, button):
         """Enhanced color flash using QGraphicsColorizeEffect"""
