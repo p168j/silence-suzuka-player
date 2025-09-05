@@ -10049,8 +10049,48 @@ class MediaPlayer(QMainWindow):
             pass
 
     def _play_index(self, idx):
-        if 0 <= idx < len(self.playlist):
-            self.current_index = idx; self.play_current(); self._update_up_next()
+        """Start playback for the given index."""
+        item = self.playlist[idx]
+
+        # Check and fetch title if missing
+        if not item.get('title'):
+            media_type = item.get('type', 'unknown')
+            url = item.get('url')
+            if media_type == 'local':
+                # For local files, resolve title from file name
+                item['title'] = Path(url).name
+            elif media_type == 'bilibili':
+                # For Bilibili videos, resolve title using YtdlManager
+                self._resolve_title_parallel(url, media_type)
+
+        # Check and fetch duration if missing
+        if not item.get('duration'):
+            media_type = item.get('type', 'unknown')
+            url = item.get('url')
+            if media_type == 'local':
+                # For local files, probe duration using mpv
+                duration = probe_local_duration_via_mpv(url)
+                if duration is not None:
+                    item['duration'] = duration
+            elif media_type == 'bilibili':
+                # For Bilibili videos, fetch duration using DurationFetcher
+                self._fetch_duration(idx)
+
+        # Proceed with playback
+        self._prepare_and_load_track(idx, should_play=True)
+
+
+    def _fetch_duration(self, index):
+        """Fetch duration for the playlist item at the given index."""
+        item = self.playlist[index]
+        self.durationFetcher = DurationFetcher([item], parent=self)
+        self.durationFetcher.durationReady.connect(self._on_duration_ready)
+        self.durationFetcher.start()
+
+    def _on_duration_ready(self, index, duration):
+        """Handle duration ready signal."""
+        if index < len(self.playlist):
+            self.playlist[index]['duration'] = duration
 
     def _move_item(self, idx, delta):
         j = idx + delta
