@@ -63,6 +63,9 @@ from PySide6.QtWidgets import QGraphicsColorizeEffect
 from PySide6.QtWidgets import QStyleOptionViewItem, QStyle
 from PySide6.QtCore import QRect
 from pathlib import Path
+from PyQt5.QtWidgets import QShortcut
+from PyQt5.QtGui import QKeySequence
+from PyQt5.QtCore import Qt, QEvent
 
 def _render_svg_tinted(svg_path, size: QSize, color: str) -> QPixmap:
         """Renders an SVG file, tinting its fill/stroke with a single color."""
@@ -3997,28 +4000,24 @@ class MediaPlayer(QMainWindow):
         self._worker_index = (self._worker_index + 1) % len(self.ytdl_workers)            
 
     def _handle_paste(self):
-        """Handle Ctrl+V paste for media URLs.
-
-        Returns True if the paste was handled (a URL was added), False otherwise.
-        """
+        """Handle Ctrl+V: return True if a media URL was handled, False otherwise."""
         try:
-            handled = self._maybe_offer_clipboard_url()
+            handled = False
+            if hasattr(self, '_maybe_offer_clipboard_url'):
+                handled = self._maybe_offer_clipboard_url()
             if handled:
-                # We added/handled the clipboard URL
                 return True
-
-            # Nothing actionable in clipboard, show helpful UI feedback
             cb_text = QApplication.clipboard().text().strip()
             if cb_text:
-                self.status.showMessage("Clipboard does not contain a supported media URL", 2000)
+                try: self.status.showMessage("Clipboard does not contain a supported media URL", 2000)
+                except Exception: pass
             else:
-                self.status.showMessage("Nothing to paste", 2000)
+                try: self.status.showMessage("Nothing to paste", 2000)
+                except Exception: pass
             return False
         except Exception as e:
-            try:
-                self.status.showMessage(f"Paste failed: {e}", 3000)
-            except Exception:
-                pass
+            try: self.status.showMessage(f"Paste failed: {e}", 3000)
+            except Exception: pass
             return False
 
     def dragEnterEvent(self, event):
@@ -5882,45 +5881,22 @@ class MediaPlayer(QMainWindow):
             pass    
             
     def eventFilter(self, obj, event):
-        # Intercept global Ctrl+V and let _handle_paste decide whether to consume it.
         try:
             if event.type() == QEvent.KeyPress:
                 key_event = event
                 if key_event.key() == Qt.Key_V and (key_event.modifiers() & Qt.ControlModifier):
                     try:
-                        # If _handle_paste handled the clipboard (returns True), consume event
-                        if hasattr(self, '_handle_paste') and self._handle_paste():
-                            return True
+                        try: self.status.showMessage("EventFilter caught Ctrl+V", 900)
+                        except Exception: pass
+                        try: self._handle_paste()
+                        except Exception: pass
+                        return True
                     except Exception:
                         pass
-            # FALLBACK: preserve any existing themed-tooltip handling or other eventFilter behavior
-            # (keep your themed tooltip block here if you use it)
-            if hasattr(self, '_themed_tooltips') and (obj in self._themed_tooltips):
-                tip, duration = self._themed_tooltips[obj]
-                if event.type() == QEvent.Enter:
-                    try:
-                        obj_pos = obj.mapToGlobal(obj.rect().topLeft())
-                        obj_width = obj.width()
-                        tip_width = tip.sizeHint().width()
-                        x = obj_pos.x() + (obj_width - tip_width) / 2
-                        y = obj_pos.y() + obj.height() + 6
-                        tip.move(int(x), int(y))
-                        tip.show()
-                        QTimer.singleShot(duration, lambda: tip.hide())
-                    except Exception:
-                        tip.show()
-                    return False
-                elif event.type() == QEvent.Leave or event.type() == QEvent.FocusOut:
-                    try:
-                        tip.hide()
-                    except Exception:
-                        pass
-                    return False
         except Exception:
             pass
-
         return super().eventFilter(obj, event)
-    
+
     def _set_track_title(self, text):
         """Set track title with eliding support and scrolling"""
         self._track_title_full = text or ""
@@ -6985,7 +6961,58 @@ class MediaPlayer(QMainWindow):
         # Call _update_widget_themes() AFTER setting the main stylesheet
         self._update_widget_themes()
         self._setup_button_animations()
-            
+        try:
+            self._paste_shortcut = QShortcut(QKeySequence("Ctrl+V"), self)
+            self._paste_shortcut.setContext(Qt.ApplicationShortcut)
+            self._paste_shortcut.activated.connect(
+                lambda: getattr(self, "_handle_paste", lambda: None)()
+            )
+        except Exception:
+            pass
+
+        try:
+            # keep a strong reference so the QShortcut isn't garbage-collected
+            self._paste_shortcut = QShortcut(QKeySequence("Ctrl+V"), self)
+            self._paste_shortcut.setContext(Qt.ApplicationShortcut)
+            def _on_paste_shortcut():
+                try:
+                    try: self.status.showMessage("Paste shortcut triggered", 900)
+                    except Exception: pass
+                    try:
+                        handled = False
+                        if hasattr(self, '_handle_paste'):
+                            handled = self._handle_paste()
+                        if not handled:
+                            try: self.status.showMessage("Paste not handled (no media URL)", 1500)
+                            except Exception: pass
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+            self._paste_shortcut.activated.connect(_on_paste_shortcut)
+        except Exception:
+            pass
+
+        # Fallback - make sure our eventFilter will see raw key events
+        try:
+            app = QApplication.instance()
+            if app is not None:
+                app.installEventFilter(self)
+        except Exception:
+            pass
+
+            self._paste_shortcut.activated.connect(_on_paste_shortcut)
+        except Exception:
+            pass
+
+        # Fallback: ensure our eventFilter sees Ctrl+V even in odd focus cases
+        try:
+            app = QApplication.instance()
+            if app is not None:
+                app.installEventFilter(self)
+        except Exception:
+            pass
+                    
     def _update_widget_themes(self):
             """Force-apply theme-specific styles and icons to widgets."""
             try:
