@@ -63,9 +63,7 @@ from PySide6.QtWidgets import QGraphicsColorizeEffect
 from PySide6.QtWidgets import QStyleOptionViewItem, QStyle
 from PySide6.QtCore import QRect
 from pathlib import Path
-from PyQt5.QtWidgets import QShortcut
-from PyQt5.QtGui import QKeySequence
-from PyQt5.QtCore import Qt, QEvent
+
 
 def _render_svg_tinted(svg_path, size: QSize, color: str) -> QPixmap:
         """Renders an SVG file, tinting its fill/stroke with a single color."""
