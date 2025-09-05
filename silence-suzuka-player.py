@@ -126,34 +126,39 @@ class MiniPlayer(QWidget):
         self.main_player = main_player_instance
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setWindowTitle("Mini Player")
-        self.resize(220, 300)
+        self.setFixedWidth(220)
+        self.resize(220, 320)
         self._drag_pos = None
         
+        # --- NEW: Variables for title scrolling ---
+        self._scroll_timer = QTimer(self)
+        self._scroll_timer.timeout.connect(self._scroll_title_step)
+        self._scroll_pos = 0
+        self._full_title = ""
+        # --- END NEW ---
+        
         self._setup_ui()
-        self.update_theme_and_icons(theme, icons) # Apply initial theme and icons
+        self.update_theme_and_icons(theme, icons)
 
     def _setup_ui(self):
+        # ... (This method is unchanged from the last fix) ...
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(0)
-
         self.album_art = QLabel()
         self.album_art.setObjectName("albumArtLabel")
         self.album_art.setAlignment(Qt.AlignCenter)
         self.album_art.mousePressEvent = lambda e: self.main_player.toggle_play_pause()
         layout.addWidget(self.album_art, 1)
-
         self.info_and_controls = QWidget()
         self.info_and_controls.setObjectName("infoAndControlsWidget")
         info_layout = QVBoxLayout(self.info_and_controls)
         info_layout.setContentsMargins(10, 8, 10, 8)
         layout.addWidget(self.info_and_controls)
-
         self.track_title = QLabel("No Track Playing")
         self.track_title.setObjectName("miniPlayerTitle")
         self.track_title.setAlignment(Qt.AlignCenter)
         info_layout.addWidget(self.track_title)
-        
         progress_layout = QHBoxLayout()
         self.time_label = QLabel("0:00")
         self.time_label.setObjectName("miniTimeLabel")
@@ -165,7 +170,6 @@ class MiniPlayer(QWidget):
         progress_layout.addWidget(self.progress_bar, 1)
         progress_layout.addWidget(self.duration_label)
         info_layout.addLayout(progress_layout)
-        
         controls_layout = QHBoxLayout()
         controls_layout.setContentsMargins(0, 4, 0, 0)
         self.prev_btn = QPushButton()
@@ -173,19 +177,59 @@ class MiniPlayer(QWidget):
         self.next_btn = QPushButton()
         self.volume_icon_label = VolumeIconLabel(self.main_player)
         self.show_main_btn = QPushButton()
-        
         for btn in [self.prev_btn, self.play_pause_btn, self.next_btn, self.show_main_btn]:
             btn.setFixedSize(32, 32)
         self.show_main_btn.setToolTip("Show Full Player")
-        
+        controls_layout.addWidget(self.volume_icon_label)
+        controls_layout.addStretch()
         controls_layout.addWidget(self.prev_btn)
         controls_layout.addWidget(self.play_pause_btn)
         controls_layout.addWidget(self.next_btn)
         controls_layout.addStretch()
-        controls_layout.addWidget(self.volume_icon_label)
         controls_layout.addWidget(self.show_main_btn)
         info_layout.addLayout(controls_layout)
+        # --- NEW: Enable mouse tracking on the title for hover events ---
+        self.track_title.setMouseTracking(True)
+        self.track_title.installEventFilter(self)
 
+    # --- NEW: Event filter to catch hover events on the title ---
+    def eventFilter(self, obj, event):
+        if obj == self.track_title:
+            if event.type() == QEvent.Enter:
+                self._start_title_scroll()
+            elif event.type() == QEvent.Leave:
+                self._stop_title_scroll()
+        return super().eventFilter(obj, event)
+
+    # --- NEW: Methods to control the title scrolling ---
+    def _start_title_scroll(self):
+        metrics = self.track_title.fontMetrics()
+        text_width = metrics.horizontalAdvance(self._full_title)
+        # Only scroll if the text is actually wider than the label
+        if text_width > self.track_title.width():
+            self._scroll_pos = 0
+            self._scroll_timer.start(200) # Scroll speed
+
+    def _stop_title_scroll(self):
+        self._scroll_timer.stop()
+        self.update_track_title(self._full_title) # Restore elided text
+
+    def _scroll_title_step(self):
+        text_to_scroll = self._full_title + "   " # Add padding
+        scrolled_text = text_to_scroll[self._scroll_pos:] + text_to_scroll[:self._scroll_pos]
+        self.track_title.setText(scrolled_text)
+        self._scroll_pos = (self._scroll_pos + 1) % len(text_to_scroll)
+
+    def update_track_title(self, title):
+        # Stop any active scroll and store the new full title
+        self._scroll_timer.stop()
+        self._full_title = title
+        # Set the initial elided text
+        metrics = self.track_title.fontMetrics()
+        elided_title = metrics.elidedText(title, Qt.ElideRight, self.track_title.width() - 10)
+        self.track_title.setText(elided_title)
+
+    # ... (the rest of the MiniPlayer methods are unchanged) ...
     def update_theme_and_icons(self, theme, icons):
         self.icons = icons
         self.prev_btn.setIcon(self.icons['previous'])
@@ -193,11 +237,10 @@ class MiniPlayer(QWidget):
         self.next_btn.setIcon(self.icons['next'])
         self.show_main_btn.setIcon(self.icons['show_main'])
         self.volume_icon_label.setPixmap(self.icons['volume'].pixmap(QSize(20, 20)))
-
         if theme == 'vinyl':
             self.setStyleSheet("""
                 QWidget { background-color: #f3ead3; border-radius: 8px; }
-                #albumArtLabel { background-color: #e9e0c8; }
+                #albumArtLabel { background-color: #e9e0c8; border-radius: 6px; }
                 #infoAndControlsWidget { background-color: #f0e7cf; border-top: 1px solid #e5d5b8; }
                 #miniPlayerTitle { color: #4a2c2a; font-weight: bold; }
                 #miniTimeLabel { color: #654321; font-size: 11px; }
@@ -209,7 +252,7 @@ class MiniPlayer(QWidget):
         else: # Dark Theme
             self.setStyleSheet("""
                 QWidget { background-color: #2a2a2a; border-radius: 8px; }
-                #albumArtLabel { background-color: #1e1e1e; }
+                #albumArtLabel { background-color: #1e1e1e; border-radius: 6px; }
                 #infoAndControlsWidget { background-color: #262626; border-top: 1px solid #3a3a3a; }
                 #miniPlayerTitle { color: #f0f0f0; font-weight: bold; }
                 #miniTimeLabel { color: #aaa; font-size: 11px; }
@@ -219,7 +262,6 @@ class MiniPlayer(QWidget):
                 #miniProgressBar::sub-page { background: #e76f51; border-radius: 2px; }
             """)
         self.update_playback_state(self.main_player._is_playing())
-
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton: self._drag_pos = event.globalPosition().toPoint()
     def mouseMoveEvent(self, event):
@@ -227,10 +269,6 @@ class MiniPlayer(QWidget):
             self.move(self.pos() + event.globalPosition().toPoint() - self._drag_pos)
             self._drag_pos = event.globalPosition().toPoint()
     def mouseReleaseEvent(self, event): self._drag_pos = None
-    def update_track_title(self, title):
-        metrics = self.track_title.fontMetrics()
-        elided_title = metrics.elidedText(title, Qt.ElideRight, self.track_title.width() - 10)
-        self.track_title.setText(elided_title)
     def update_playback_state(self, is_playing):
         self.play_pause_btn.setIcon(self.icons['pause'] if is_playing else self.icons['play'])
     def update_album_art(self, pixmap):
@@ -2668,7 +2706,7 @@ class ThumbnailFetcher(QThread):
         self.item_data = item_data
 
     def run(self):
-        if not HAVE_REQUESTS or not self.item_data:
+        if not self.item_data:
             return
 
         thumb_url = None
@@ -2686,8 +2724,23 @@ class ThumbnailFetcher(QThread):
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     info = ydl.extract_info(url, download=False)
                     thumb_url = info.get('thumbnail')
-            
-            if thumb_url:
+
+            # --- NEW: Logic for Local Files ---
+            elif item_type == 'local' and HAVE_REQUESTS:
+                # Use ffmpeg to extract a frame 10 seconds in
+                # This command pipes the raw image data to stdout
+                command = [
+                    'ffmpeg', '-i', url, '-ss', '00:00:10.000',
+                    '-vframes', '1', '-f', 'image2pipe', '-'
+                ]
+                # Run the command, capturing the output
+                result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+                if result.stdout:
+                    self.thumbnailReady.emit(result.stdout)
+                return # We already emitted, so we can exit here
+            # --- END NEW LOGIC ---
+
+            if thumb_url and HAVE_REQUESTS:
                 r = requests.get(thumb_url, timeout=8)
                 if r.status_code == 200:
                     self.thumbnailReady.emit(r.content)
@@ -10896,59 +10949,52 @@ class MediaPlayer(QMainWindow):
         item = self.playlist[index]
         url = item.get('url', '')
 
-        # --- Set site-specific options (from play_current) ---
         try:
             if item.get('type') == 'bilibili':
                 self.mpv['referrer'] = item.get('url') or 'https://www.bilibili.com'
                 self.mpv['http-header-fields'] = 'Referer: https://www.bilibili.com,Origin: https://www.bilibili.com,User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36'
                 self.mpv['ytdl-raw-options'] = f"cookies={str(COOKIES_BILI)},add-header=Referer: https://www.bilibili.com,add-header=User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-                self.mpv['ytdl-format'] = 'bv*[vcodec^=avc1][height<=720]+ba/best[height<=720]/best'
-            else:
+                # --- THIS IS THE FIX ---
+                # Request the best separate video and audio streams up to 720p without codec restrictions.
+                self.mpv['ytdl-format'] = 'bv*[height<=720]+ba/best[height<=720]/best'
+            else: # For YouTube and others
                 self.mpv['referrer'] = ''
                 self.mpv['http-header-fields'] = ''
                 self.mpv['ytdl-raw-options'] = ''
-                self.mpv['ytdl-format'] = 'best[height<=720]/bv*[height<=720]+ba/best'
+                self.mpv['ytdl-format'] = 'best[height<=720]/best'
         except Exception as e:
             logger.error(f"Error setting mpv options: {e}")
 
-        # --- Load the file with start position ---
         start_pos_sec = max(0.0, float(start_pos_ms) / 1000.0)
         logger.info(f"Loading track '{item.get('title')}': url={url}, start_sec={start_pos_sec}, play={should_play}")
         
         try:
             if start_pos_sec > 0:
-                # FIX: Use proper format for start parameter
                 self.mpv.loadfile(url, 'replace', start=str(start_pos_sec))
             else:
                 self.mpv.loadfile(url, 'replace')
         except Exception as e:
             logger.error(f"mpv loadfile command failed: {e}")
-            # Fallback to basic play method
             try:
                 self.mpv.play(url)
                 if start_pos_sec > 0:
-                    # Apply seek after loading
                     QTimer.singleShot(500, lambda: setattr(self.mpv, 'time_pos', start_pos_sec))
             except Exception as e2:
                 logger.error(f"Fallback play also failed: {e2}")
 
-        # --- Set playback state ---
         self.mpv.pause = not should_play
         
-        # --- Handle resume enforcement ---
         if start_pos_ms > 0:
             self._resume_target_ms = start_pos_ms
             self._resume_enforce_until = time.time() + 20.0
             self._restore_saved_position_attempt(url, start_pos_ms, 1)
             self.requestTimerSignal.emit(350, lambda: self._maybe_reapply_resume('start'))
 
-        # --- Update UI ---
         self._set_track_title(item.get('title', 'Unknown'))
         self._update_up_next()
         self.progress.setValue(start_pos_ms)
         self.time_label.setText(format_time(start_pos_ms))
         
-        # --- Defer highlight to ensure UI is ready ---
         QTimer.singleShot(100, self._highlight_current_row)
 
     # Playback
@@ -11748,10 +11794,10 @@ class MediaPlayer(QMainWindow):
             add("↓ / -", "Volume Down")
             add("S", "Toggle Shuffle")
             add("R", "Toggle Repeat")
+            add("C", "Toggle Collapse/Expand All Groups") # <-- ADDED THIS LINE
             add("F", "Toggle Fullscreen")
             add("Ctrl + L", "Add Link from URL")
             add("Delete", "Remove Selected Item(s)")
-            # DEBUG removed
             
             layout.addLayout(form)
             btns = QDialogButtonBox(QDialogButtonBox.Close); btns.rejected.connect(dlg.reject); layout.addWidget(btns)
