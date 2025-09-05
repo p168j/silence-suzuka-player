@@ -6958,26 +6958,58 @@ class MediaPlayer(QMainWindow):
             except Exception as e:
                 logger.warning(f"Failed to force-apply theme to widgets: {e}")
 
+
+    def _get_first_visible_index(self):
+        """Get the index of the first item as it appears visually in the tree."""
+        try:
+            # Traverse the tree in visual order from the top
+            for i in range(self.playlist_tree.topLevelItemCount()):
+                item = self.playlist_tree.topLevelItem(i)
+                if not item or item.isHidden():
+                    continue
+                
+                data = item.data(0, Qt.UserRole)
+                
+                # Case 1: It's a group header. Find the first playable child.
+                if isinstance(data, tuple) and data[0] == 'group':
+                    if item.childCount() > 0:
+                        for j in range(item.childCount()):
+                            child = item.child(j)
+                            if not child.isHidden():
+                                child_data = child.data(0, Qt.UserRole)
+                                if isinstance(child_data, tuple) and child_data[0] == 'current':
+                                    return child_data[1]  # Return the playlist index of the first child
+                
+                # Case 2: It's a top-level item itself (not in a group).
+                elif isinstance(data, tuple) and data[0] == 'current':
+                    return data[1]  # Return the playlist index of this item
+            
+            return None # No playable items found
+        except Exception as e:
+            logger.error(f"Error getting first visible index: {e}")
+            return None
+
     def _play_all_library(self):
-        """Plays the entire library from the beginning."""
+        """Plays the entire library from the beginning, respecting the visual order."""
         if not self.playlist:
             QMessageBox.information(self, "No Media", "No media found in current playlist.")
             return
 
-        # Find the first item as it appears in the tree (respecting the visual order)
+        # Find the first item as it appears in the tree to respect visual order
         first_index = self._get_first_visible_index()
         
         if first_index is not None:
+            # Set the scope to the entire library FIRST
+            self.play_scope = None
+            self._update_scope_label()
+            
+            # Now set the index to the correct first item and play
             self.current_index = first_index
+            self.status.showMessage("Playing all media in library...", 3000)
+            self.play_current()
         else:
-            self.current_index = 0  # Fallback
-        
-        # Clear the playback scope to play entire library
-        self.play_scope = None
-        self.status.showMessage("Playing all media in library...", 3000)
-        self._update_scope_label()
-        
-        self.play_current()
+            # Fallback for an empty or un-parsable tree
+            self.status.showMessage("No playable items found in the library.", 3000)
 
     def _get_first_visible_index(self):
         """Get the index of the first item as it appears visually in the tree."""
@@ -10627,12 +10659,6 @@ class MediaPlayer(QMainWindow):
             self._refresh_playlist_widget()
             
             self.status.showMessage(f"Cleared {count} videos (Ctrl+Z to undo)", 4000)
-
-    def _play_all_library(self):
-        """Plays the entire library from the beginning."""
-        if not self.playlist:
-            QMessageBox.information(self, "No Media", "No media found in current playlist.")
-            return
 
         # Optional: Remove duplicates while preserving order
         seen = set()
