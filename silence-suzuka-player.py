@@ -3515,7 +3515,7 @@ class MediaPlayer(QMainWindow):
 
         # Create 4 parallel workers for faster title resolution
         self.ytdl_workers = []
-        for i in range(4):
+        for i in range(10):
             worker = YtdlManager(self)
             worker.titleResolved.connect(self._on_title_resolved)
             worker.error.connect(lambda e: print(f"Title resolution error: {e}"))
