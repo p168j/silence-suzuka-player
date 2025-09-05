@@ -6960,21 +6960,52 @@ class MediaPlayer(QMainWindow):
 
     def _play_all_library(self):
         """Plays the entire library from the beginning."""
-        if self.playlist:
-            # Ensure the playlist reflects the current user-defined order
-            if hasattr(self, 'current_playlist') and self.current_playlist:
-                playlist_to_play = self.current_playlist
-            else:
-                playlist_to_play = self.playlist
+        if not self.playlist:
+            QMessageBox.information(self, "No Media", "No media found in current playlist.")
+            return
 
-            self.status.showMessage("Playing all media in library...", 3000)
-            self.play_scope = None
-            self._update_scope_label()
+        # Find the first item as it appears in the tree (respecting the visual order)
+        first_index = self._get_first_visible_index()
+        
+        if first_index is not None:
+            self.current_index = first_index
+        else:
+            self.current_index = 0  # Fallback
+        
+        # Clear the playback scope to play entire library
+        self.play_scope = None
+        self.status.showMessage("Playing all media in library...", 3000)
+        self._update_scope_label()
+        
+        self.play_current()
 
-            # Start playback from the beginning of the current playlist order
-            self.current_index = 0
-            self.play_current(playlist_to_play)
-
+    def _get_first_visible_index(self):
+        """Get the index of the first item as it appears visually in the tree."""
+        try:
+            # Traverse the tree in visual order
+            for i in range(self.playlist_tree.topLevelItemCount()):
+                item = self.playlist_tree.topLevelItem(i)
+                if not item:
+                    continue
+                
+                data = item.data(0, Qt.UserRole)
+                
+                # If it's a group with children
+                if isinstance(data, tuple) and data[0] == 'group':
+                    for j in range(item.childCount()):
+                        child = item.child(j)
+                        child_data = child.data(0, Qt.UserRole)
+                        if isinstance(child_data, tuple) and child_data[0] == 'current':
+                            return child_data[1]  # Return the playlist index
+                # If it's a direct item (not in a group)
+                elif isinstance(data, tuple) and data[0] == 'current':
+                    return data[1]  # Return the playlist index
+            
+            return None
+        except Exception as e:
+            print(f"Error getting first visible index: {e}")
+            return None
+        
     def toggle_theme(self):
         self.theme = 'vinyl' if getattr(self, 'theme', 'dark') != 'vinyl' else 'dark'
         
@@ -10599,41 +10630,32 @@ class MediaPlayer(QMainWindow):
 
     def _play_all_library(self):
         """Plays the entire library from the beginning."""
-        # This section de-duplicates your playlist, which seems intentional.
-        seen = set()
-        combined = []
-        for it in self.playlist:
-            u = it.get('url')
-            if not u or u in seen:
-                continue
-            seen.add(u)
-            combined.append({'title': it.get('title', u), 'url': u, 'type': it.get('type'), 'playlist': it.get('playlist')})
-        
-        if not combined:
+        if not self.playlist:
             QMessageBox.information(self, "No Media", "No media found in current playlist.")
             return
 
-        # --- THIS IS THE FIX ---
-        # Find the first playlist in the library and start playback from it.
-        for item in combined:
-            if item.get('playlist'):  # Check if the item belongs to the first playlist.
-                self.current_index = combined.index(item)
-                break
-        else:
-            self.current_index = 0  # Default to the first item if no playlist is found.
-
-        # Explicitly clear the playback scope. This tells the 'Next' button
-        # to use the entire library, not the last group you played.
+        # Optional: Remove duplicates while preserving order
+        seen = set()
+        deduplicated = []
+        for it in self.playlist:
+            u = it.get('url')
+            if u and u not in seen:
+                seen.add(u)
+                deduplicated.append(it)  # Keep the original item, not a new dict
+        
+        if deduplicated != self.playlist:
+            # Only update if we actually removed duplicates
+            self.playlist = deduplicated
+            self._save_current_playlist()
+            self._refresh_playlist_widget()
+        
+        # Play from the beginning
+        self.current_index = 0
         self.play_scope = None
         self.status.showMessage("Playing all media in library...", 3000)
         self._update_scope_label()
-        # --- END FIX ---
-
-        self.playlist = combined
-        self._save_current_playlist()
-        self._refresh_playlist_widget()
         self.play_current()
-            
+                
     def _prepare_and_load_track(self, index, start_pos_ms=0, should_play=False):
         """A unified method to load a track into mpv, set options, and optionally play it."""
         if not (0 <= index < len(self.playlist)):
