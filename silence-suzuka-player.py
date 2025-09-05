@@ -3408,9 +3408,47 @@ class PlaylistTree(QTreeWidget):
         print("Column 0 width (Title):", self.columnWidth(0))
         print("Column 1 width (Duration):", self.columnWidth(1))
 
+    def dragMoveEvent(self, event):
+        """
+        While dragging, if the user holds the right mouse button, treat that
+        as a cancel gesture: ignore the drag movement so the UI doesn't show a
+        drop indicator and the eventual drop will be ignored.
+        """
+        try:
+            if event.mouseButtons() & Qt.RightButton:
+                # Cancel visual feedback for a possible drop while right button held
+                event.ignore()
+                try:
+                    if hasattr(self, 'player') and getattr(self.player, 'status', None):
+                        self.player.status.showMessage("Drag cancelled (right-click held)", 1200)
+                except Exception:
+                    pass
+                return
+        except Exception:
+            # If anything goes wrong, fallback to default behavior
+            pass
+
+        # Default behavior
+        super().dragMoveEvent(event)
+
     def dropEvent(self, event):
         """Handle drop events for both internal reordering and external files/URLs."""
-        
+
+        # If the right mouse button is being held at drop time, cancel the drop.
+        # This gives the user an easy way to abort a drag/reorder operation.
+        try:
+            if event.mouseButtons() & Qt.RightButton:
+                event.ignore()
+                try:
+                    if hasattr(self, 'player') and getattr(self.player, 'status', None):
+                        self.player.status.showMessage("Drop cancelled (right-click)", 1500)
+                except Exception:
+                    pass
+                return
+        except Exception:
+            # Continue into normal handling if the check fails for any reason
+            pass
+
         # --- CASE 1: Internal move (reordering items within the playlist) ---
         if event.source() == self and event.proposedAction() == Qt.MoveAction:
             try:
@@ -3432,7 +3470,7 @@ class PlaylistTree(QTreeWidget):
                     if isinstance(data, tuple) and data[0] == 'current':
                         original_index = data[1]
                         if 0 <= original_index < len(self.player.playlist):
-                           dragged_items_data.append(self.player.playlist[original_index])
+                            dragged_items_data.append(self.player.playlist[original_index])
 
                 # Remove dragged items from the main playlist to create a temporary list
                 temp_playlist = [item for item in self.player.playlist if item not in dragged_items_data]
