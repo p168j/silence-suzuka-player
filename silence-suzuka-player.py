@@ -10539,34 +10539,41 @@ class MediaPlayer(QMainWindow):
             self.status.showMessage(f"Cleared {count} videos (Ctrl+Z to undo)", 4000)
 
     def _play_all_library(self):
-            """Plays the entire library from the beginning."""
-            # This section de-duplicates your playlist, which seems intentional.
-            seen = set()
-            combined = []
-            for it in self.playlist:
-                u = it.get('url')
-                if not u or u in seen:
-                    continue
-                seen.add(u)
-                combined.append({'title': it.get('title', u), 'url': u, 'type': it.get('type'), 'playlist': it.get('playlist')})
-            
-            if not combined:
-                QMessageBox.information(self, "No Media", "No media found in current playlist.")
-                return
+        """Plays the entire library from the beginning."""
+        # This section de-duplicates your playlist, which seems intentional.
+        seen = set()
+        combined = []
+        for it in self.playlist:
+            u = it.get('url')
+            if not u or u in seen:
+                continue
+            seen.add(u)
+            combined.append({'title': it.get('title', u), 'url': u, 'type': it.get('type'), 'playlist': it.get('playlist')})
+        
+        if not combined:
+            QMessageBox.information(self, "No Media", "No media found in current playlist.")
+            return
 
-            # --- THIS IS THE FIX ---
-            # Explicitly clear the playback scope. This tells the 'Next' button
-            # to use the entire library, not the last group you played.
-            self.play_scope = None
-            self.status.showMessage("Playing all media in library...", 3000)
-            self._update_scope_label()
-            # --- END FIX ---
+        # --- THIS IS THE FIX ---
+        # Find the first playlist in the library and start playback from it.
+        for item in combined:
+            if item.get('playlist'):  # Check if the item belongs to the first playlist.
+                self.current_index = combined.index(item)
+                break
+        else:
+            self.current_index = 0  # Default to the first item if no playlist is found.
 
-            self.playlist = combined
-            self.current_index = 0
-            self._save_current_playlist()
-            self._refresh_playlist_widget()
-            self.play_current()
+        # Explicitly clear the playback scope. This tells the 'Next' button
+        # to use the entire library, not the last group you played.
+        self.play_scope = None
+        self.status.showMessage("Playing all media in library...", 3000)
+        self._update_scope_label()
+        # --- END FIX ---
+
+        self.playlist = combined
+        self._save_current_playlist()
+        self._refresh_playlist_widget()
+        self.play_current()
             
     def _prepare_and_load_track(self, index, start_pos_ms=0, should_play=False):
         """A unified method to load a track into mpv, set options, and optionally play it."""
