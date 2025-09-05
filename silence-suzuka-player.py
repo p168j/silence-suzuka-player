@@ -2147,9 +2147,16 @@ class SearchBar(QLineEdit):
         super().inputMethodEvent(event)
 
     def _on_text_changed(self, text):
-        """Start a timer to debounce inputs, unless IME is active."""
-        if not self._ime_composing:
-            self._search_timer.start(300)
+        # Capture the current playlist header expansion state
+        if hasattr(self.parent(), '_get_tree_expansion_state'):
+            expansion_state = self.parent()._get_tree_expansion_state()
+
+        # Apply filtering logic
+        self._apply_search_filter()
+
+        # Restore the playlist header expansion state
+        if hasattr(self.parent(), '_refresh_playlist_widget'):
+            self.parent()._refresh_playlist_widget(expansion_state=expansion_state)
 
     def _apply_search_filter(self):
         """Apply the search filter logic."""
@@ -9516,6 +9523,9 @@ class MediaPlayer(QMainWindow):
             return False
     
     def _add_url_to_playlist(self, url: str):
+        if not url.strip():
+            self._show_status_message("No URL provided.", timeout=3000)
+            return
         try:
             logger.info(f"Adding URL to playlist: {url}")
             self.status.showMessage("Loading...", 2000)
@@ -9540,6 +9550,8 @@ class MediaPlayer(QMainWindow):
         except Exception as e:
             logger.error(f"Failed to add URL to playlist: {e}")
             self.status.showMessage(f"Failed to add URL: {e}", 3000)
+
+            self._show_status_message(f"Added URL: {url}", timeout=3000)
 
     def _fetch_all_durations(self):
         """Fetch durations for all items in playlist with cancel support"""
@@ -9841,6 +9853,8 @@ class MediaPlayer(QMainWindow):
             except Exception:
                 pass
     def _on_add_media_clicked(self):
+        # Capture the current playlist header expansion state
+        expansion_state = self._get_tree_expansion_state()
         """Handler for the Add Media button. Checks clipboard first, then opens dialog."""
         # Try to offer the clipboard URL. The function returns True if it handled it.
         was_handled = self._maybe_offer_clipboard_url()
@@ -9848,6 +9862,9 @@ class MediaPlayer(QMainWindow):
         # If the clipboard was empty or the user declined, open the standard dialog.
         if not was_handled:
             self.add_link_dialog()            
+        
+        # Restore the playlist header expansion state
+        self._refresh_playlist_widget(expansion_state=expansion_state)
 
     def add_local_files(self):
         # Preserve expansion state so groups don't collapse
