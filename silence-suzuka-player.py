@@ -137,6 +137,7 @@ class VolumeIconLabel(QLabel):
         QToolTip.showText(QCursor.pos(), f"Volume: {new_volume}%", self)
         event.accept()
 
+
 class MiniPlayer(QWidget):
     def __init__(self, main_player_instance, theme, icons, parent=None):
         super().__init__(parent)
@@ -667,6 +668,8 @@ class PlaylistManagerDialog(QDialog):
         self._load_subscriptions()
         if self.player and hasattr(self.player, '_subscription_manager'):
             self.player._subscription_manager.subscriptionListUpdated.connect(self._load_subscriptions)
+            # Connect our new signal to its handler method
+            self.player._subscription_manager.subscriptionTitleResolved.connect(self._on_subscription_title_resolved)
         if parent and hasattr(parent, '_apply_dialog_theme'):
             parent._apply_dialog_theme(self)
         self._size_and_center_relative_to_parent(parent)
@@ -851,6 +854,23 @@ class PlaylistManagerDialog(QDialog):
             self.player.status.showMessage("Manually checking all subscriptions...", 3000)
             self.player._subscription_manager.force_check()
     
+    def _on_subscription_title_resolved(self, url, title):
+        """Update a subscription's name in the list after it's been fetched."""
+        try:
+            # Find the subscription in the manager's list and update its name
+            for sub in self.player._subscription_manager.subscriptions:
+                if isinstance(sub, dict) and sub.get('url') == url:
+                    sub['name'] = title
+                    break
+            
+            # Now, save the updated list back to the JSON file
+            self.player._subscription_manager.save_subscriptions()
+            
+            # And finally, refresh the table in the UI to show the new title
+            self._load_subscriptions()
+        except Exception as e:
+            print(f"Error updating subscription title in UI: {e}")
+
     def showEvent(self, event):
         super().showEvent(event)
         if not self._initial_load_done:
@@ -12476,6 +12496,7 @@ class SubscriptionManager(QThread):
     newVideosFound = Signal(str, list)
     logMessage = Signal(str)
     subscriptionListUpdated = Signal()
+    subscriptionTitleResolved = Signal(str, str)
 
     def __init__(self, player, parent=None):
         super().__init__(parent)
@@ -12552,34 +12573,52 @@ class SubscriptionManager(QThread):
             return []
 
     def add_subscription(self, url, callback_on_finish):
+        import threading
+        from PySide6.QtCore import QTimer
+        from PySide6.QtWidgets import QMessageBox
+        import subprocess
+        import json
+
+        # --- Step 1: Immediately add the subscription with the URL as a placeholder ---
         try:
-            # Check for duplicates
             if any(isinstance(sub, dict) and sub.get('url') == url for sub in self.subscriptions):
                 QMessageBox.warning(self.player, "Duplicate", "This URL is already subscribed.")
-                # Still call the callback to ensure the dialog UI is responsive
-                if callback_on_finish:
-                    callback_on_finish()
+                if callback_on_finish: callback_on_finish()
                 return
 
-            # Use the URL as a temporary name. The title will be fetched on the next check.
-            name = url
-            
-            new_sub = {
-                "url": url,
-                "name": name, # Placeholder name
-                "type": "youtube" if "youtube" in url else "bilibili",
-                "last_checked": None # It will be checked on the next cycle
-            }
+            new_sub = { "url": url, "name": url, "type": "youtube" if "youtube" in url.lower() else "bilibili", "last_checked": None }
             self.subscriptions.append(new_sub)
             self.save_subscriptions()
             self.logMessage.emit(f"Added subscription: {url}")
+            
+            # --- Step 2: Immediately refresh the UI to show the placeholder ---
+            if callback_on_finish:
+                callback_on_finish()
 
         except Exception as e:
             QMessageBox.warning(self.player, "Error", f"Could not add subscription:\n{e}")
-        finally:
-            # Ensure the callback to refresh the UI is always called
-            if callback_on_finish:
-                callback_on_finish()
+            if callback_on_finish: callback_on_finish()
+            return
+
+        # --- Step 3: Start a background task to fetch the real title ---
+        def fetch_title_and_update():
+            try:
+                result = subprocess.run(
+                    ["yt-dlp", "--dump-single-json", "--flat-playlist", url],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    encoding="utf-8", check=True, timeout=30
+                )
+                data = json.loads(result.stdout)
+                fetched_name = data.get("title", None)
+
+                if fetched_name:
+                    # --- THIS IS THE KEY CHANGE ---
+                    # Emit our new, specific signal with the result
+                    self.subscriptionTitleResolved.emit(url, fetched_name)
+            except Exception as e:
+                self.sub_logger.warning(f"Could not fetch title for new subscription {url}: {e}")
+
+        threading.Thread(target=fetch_title_and_update, daemon=True).start()
 
 
     def remove_subscription(self, url):
