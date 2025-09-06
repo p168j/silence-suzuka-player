@@ -676,9 +676,8 @@ class PlaylistManagerDialog(QDialog):
         tabs = QTabWidget()
         main_layout.addWidget(tabs)
 
-        # --- Tab 1: Playlists (No changes here) ---
+        # --- Tab 1: Playlists ---
         playlists_widget = QWidget()
-        # ... (existing playlist tab UI setup remains the same) ...
         layout_for_splitter = QVBoxLayout(playlists_widget)
         layout_for_splitter.setContentsMargins(0, 0, 0, 0)
         left_panel = QWidget()
@@ -696,13 +695,16 @@ class PlaylistManagerDialog(QDialog):
         left_layout.addWidget(self.playlist_list)
         quick_actions = QHBoxLayout()
         self.new_btn = QPushButton("📁 New")
+        self.new_btn.setToolTip("Save current playlist as new")
         self.new_btn.clicked.connect(self._save_current_playlist)
         self.import_btn = QPushButton("📂 Import")
+        self.import_btn.setToolTip("Import M3U playlist")
         self.import_btn.clicked.connect(self._import_playlist)
         quick_actions.addWidget(self.new_btn)
         quick_actions.addWidget(self.import_btn)
         quick_actions.addStretch()
         left_layout.addLayout(quick_actions)
+        
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(8, 0, 0, 0)
@@ -747,21 +749,17 @@ class PlaylistManagerDialog(QDialog):
         layout_for_splitter.addWidget(splitter)
         tabs.addTab(playlists_widget, "Playlists")
 
-        # --- Tab 2: Subscriptions (Consolidated and Corrected) ---
+        # --- Tab 2: Subscriptions ---
         subscriptions_widget = QWidget()
         subs_layout = QVBoxLayout(subscriptions_widget)
         subs_layout.setContentsMargins(12, 12, 12, 12)
         subs_layout.setSpacing(8)
-        
         subs_header = QLabel("Playlist Subscriptions")
         subs_header.setFont(QFont("Arial", 14, QFont.Bold))
         subs_layout.addWidget(subs_header)
-        
         subs_info = QLabel("The player will automatically check these playlists for new videos and add them to your library.")
         subs_info.setWordWrap(True)
         subs_layout.addWidget(subs_info)
-        
-        # **FIX**: Ensure self.subs_table is used, not self.subs_list
         self.subs_table = QTableWidget()
         self.subs_table.setColumnCount(2)
         self.subs_table.setHorizontalHeaderLabels(["Playlist Name", "URL"])
@@ -770,7 +768,6 @@ class PlaylistManagerDialog(QDialog):
         self.subs_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.subs_table.setAlternatingRowColors(True)
         subs_layout.addWidget(self.subs_table)
-        
         subs_actions_layout = QHBoxLayout()
         add_sub_btn = QPushButton("＋ Add Subscription")
         add_sub_btn.clicked.connect(self._add_subscription)
@@ -778,26 +775,23 @@ class PlaylistManagerDialog(QDialog):
         remove_sub_btn.clicked.connect(self._remove_subscription)
         check_now_btn = QPushButton("🔄 Check Now")
         check_now_btn.clicked.connect(self._check_subscriptions_now)
-        
         subs_actions_layout.addWidget(add_sub_btn)
         subs_actions_layout.addWidget(remove_sub_btn)
         subs_actions_layout.addStretch()
         subs_actions_layout.addWidget(check_now_btn)
         subs_layout.addLayout(subs_actions_layout)
-        
         tabs.addTab(subscriptions_widget, "Subscriptions")
+        
         self.setLayout(main_layout)
 
     def _load_subscriptions(self):
-        """Corrected method to populate the QTableWidget."""
+        """Load and display the list of subscribed URLs."""
         try:
             if self.player and hasattr(self.player, '_subscription_manager'):
-                # **FIX**: This now correctly targets self.subs_table
                 self.subs_table.setRowCount(0)
                 subscriptions = self.player._subscription_manager.subscriptions
                 self.subs_table.setRowCount(len(subscriptions))
                 for row, sub in enumerate(subscriptions):
-                    # Handle both old (string) and new (dict) subscription formats
                     if isinstance(sub, str):
                         name, url = "Unknown (Legacy)", sub
                     else:
@@ -811,14 +805,16 @@ class PlaylistManagerDialog(QDialog):
                 self.subs_table.horizontalHeader().setStretchLastSection(True)
         except Exception as e:
             print(f"Error loading subscriptions into UI: {e}")
-            
+
     def _add_subscription(self):
+        """Show a dialog to add a new subscription URL."""
         url, ok = QInputDialog.getText(self, "Add Subscription", "Enter YouTube or Bilibili Playlist URL:")
         if ok and url:
             if self.player and hasattr(self.player, '_subscription_manager'):
                 self.player._subscription_manager.add_subscription(url.strip(), self._load_subscriptions)
 
     def _remove_subscription(self):
+        """Remove the selected subscription URL."""
         selected_rows = self.subs_table.selectionModel().selectedRows()
         if not selected_rows:
             QMessageBox.warning(self, "No Selection", "Please select a subscription to remove.")
@@ -838,9 +834,17 @@ class PlaylistManagerDialog(QDialog):
             self._safe_refresh_playlist_list()
             self._initial_load_done = True
             
-    def closeEvent(self, event): self._is_destroyed = True; super().closeEvent(event)
-    def reject(self): self._is_destroyed = True; super().reject()
-    def accept(self): self._is_destroyed = True; super().accept()
+    def closeEvent(self, event):
+        self._is_destroyed = True
+        super().closeEvent(event)
+
+    def reject(self):
+        self._is_destroyed = True
+        super().reject()
+
+    def accept(self):
+        self._is_destroyed = True
+        super().accept()
 
     def _safe_refresh_playlist_list(self):
         try:
@@ -848,141 +852,16 @@ class PlaylistManagerDialog(QDialog):
             try: _ = self.playlist_list.count()
             except RuntimeError: return
             self._refresh_playlist_list()
-        except Exception: pass
+        except Exception:
+            pass
     
-    def _setup_ui(self):
-        main_layout = QVBoxLayout()
-        tabs = QTabWidget()
-
-        # --- Tab 1: Playlists (Existing UI) ---
-        playlists_widget = QWidget()
-        layout_for_splitter = QVBoxLayout(playlists_widget)
-        layout_for_splitter.setContentsMargins(0, 0, 0, 0)
-
-        # Left panel - Playlist list
-        left_panel = QWidget()
-        left_layout = QVBoxLayout(left_panel)
-        left_layout.setContentsMargins(0, 0, 8, 0)
-        
-        header_label = QLabel("Saved Playlists")
-        header_label.setFont(QFont("Arial", 14, QFont.Bold))
-        left_layout.addWidget(header_label)
-        
-        self._add_search_and_filter_controls(left_layout)
-        
-        self.playlist_list = QListWidget()
-        self.playlist_list.currentItemChanged.connect(self._on_playlist_selected)
-        self.playlist_list.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.playlist_list.customContextMenuRequested.connect(self._show_playlist_context_menu)
-        self.playlist_list.setAlternatingRowColors(True)
-        left_layout.addWidget(self.playlist_list)
-        
-        quick_actions = QHBoxLayout()
-        self.new_btn = QPushButton("📁 New")
-        self.new_btn.setToolTip("Save current playlist as new")
-        self.new_btn.clicked.connect(self._save_current_playlist)
-        self.import_btn = QPushButton("📂 Import")
-        self.import_btn.setToolTip("Import M3U playlist")
-        self.import_btn.clicked.connect(self._import_playlist)
-        quick_actions.addWidget(self.new_btn)
-        quick_actions.addWidget(self.import_btn)
-        quick_actions.addStretch()
-        left_layout.addLayout(quick_actions)
-        
-        # Right panel - Playlist details
-        right_panel = QWidget()
-        right_layout = QVBoxLayout(right_panel)
-        right_layout.setContentsMargins(8, 0, 0, 0)
-        
-        self.details_header = QLabel("Select a playlist to view details")
-        self.details_header.setFont(QFont("Arial", 14, QFont.Bold))
-        right_layout.addWidget(self.details_header)
-        
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        self.details_widget = QWidget()
-        self.details_layout = QVBoxLayout(self.details_widget)
-        scroll_area.setWidget(self.details_widget)
-        right_layout.addWidget(scroll_area, 1)
-        
-        load_group = QGroupBox("Load Options")
-        load_layout = QFormLayout(load_group)
-        self.load_mode_combo = QComboBox()
-        self.load_mode_combo.addItem("Replace current playlist", "replace")
-        self.load_mode_combo.addItem("Add to current playlist", "append")
-        self.load_mode_combo.addItem("Insert at current position", "insert")
-        load_layout.addRow("Mode:", self.load_mode_combo)
-        self.auto_play_check = QCheckBox("Start playing after load")
-        self.auto_play_check.setChecked(True)
-        load_layout.addRow("", self.auto_play_check)
-        right_layout.addWidget(load_group)
-        
-        button_layout = QHBoxLayout()
-        self.load_btn = QPushButton("📂 Load Playlist")
-        self.load_btn.setEnabled(False)
-        self.load_btn.clicked.connect(self.accept)
-        self.export_btn = QPushButton("💾 Export M3U")
-        self.export_btn.setEnabled(False)
-        self.export_btn.clicked.connect(self._export_selected)
-        close_btn = QPushButton("Close")
-        close_btn.clicked.connect(self.reject)
-        button_layout.addWidget(self.export_btn)
-        button_layout.addStretch()
-        button_layout.addWidget(close_btn)
-        button_layout.addWidget(self.load_btn)
-        right_layout.addLayout(button_layout)
-        
-        splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(left_panel)
-        splitter.addWidget(right_panel)
-        splitter.setSizes([300, 600])
-        layout_for_splitter.addWidget(splitter)
-
-        tabs.addTab(playlists_widget, "Playlists")
-
-        # --- Tab 2: Subscriptions (New UI) ---
-        subscriptions_widget = QWidget()
-        subs_layout = QVBoxLayout(subscriptions_widget)
-        subs_layout.setContentsMargins(12, 12, 12, 12)
-        subs_layout.setSpacing(8)
-
-        subs_header = QLabel("Playlist Subscriptions")
-        subs_header.setFont(QFont("Arial", 14, QFont.Bold))
-        subs_layout.addWidget(subs_header)
-
-        subs_info = QLabel("The player will automatically check these playlists for new videos and add them to your library.")
-        subs_info.setWordWrap(True)
-        subs_layout.addWidget(subs_info)
-
-        self.subs_list = QListWidget()
-        self.subs_list.setAlternatingRowColors(True)
-        subs_layout.addWidget(self.subs_list)
-
-        subs_actions_layout = QHBoxLayout()
-        add_sub_btn = QPushButton("＋ Add Subscription")
-        add_sub_btn.clicked.connect(self._add_subscription)
-        remove_sub_btn = QPushButton("－ Remove Selected")
-        remove_sub_btn.clicked.connect(self._remove_subscription)
-        
-        subs_actions_layout.addWidget(add_sub_btn)
-        subs_actions_layout.addWidget(remove_sub_btn)
-        subs_actions_layout.addStretch()
-        subs_layout.addLayout(subs_actions_layout)
-
-        tabs.addTab(subscriptions_widget, "Subscriptions")
-        
-        main_layout.addWidget(tabs)
-        self.setLayout(main_layout)
-
     def _add_search_and_filter_controls(self, layout):
         """Add enhanced search and filtering controls"""
         try:
-            # Search group
             search_group = QGroupBox("Search & Filter")
             search_layout = QVBoxLayout(search_group)
             search_layout.setSpacing(6)
             
-            # Quick search bar
             search_row = QHBoxLayout()
             search_label = QLabel("🔍")
             search_label.setFixedWidth(20)
@@ -995,12 +874,10 @@ class PlaylistManagerDialog(QDialog):
             search_row.addWidget(self.search_edit)
             search_layout.addLayout(search_row)
             
-            # Advanced filters (collapsible)
             filter_frame = QFrame()
             filter_layout = QFormLayout(filter_frame)
             filter_layout.setSpacing(4)
             
-            # Item count filter
             item_count_layout = QHBoxLayout()
             self.min_items_spin = QSpinBox()
             self.min_items_spin.setRange(0, 10000)
@@ -1019,7 +896,6 @@ class PlaylistManagerDialog(QDialog):
             
             filter_layout.addRow("Items:", item_count_layout)
             
-            # Sorting controls
             sort_layout = QHBoxLayout()
             
             self.sort_field_combo = QComboBox()
@@ -1039,14 +915,12 @@ class PlaylistManagerDialog(QDialog):
             
             filter_layout.addRow("Sort by:", sort_layout)
             
-            # Clear filters button
             clear_filters_btn = QPushButton("🗑️ Clear Filters")
             clear_filters_btn.clicked.connect(self._clear_filters)
             filter_layout.addRow("", clear_filters_btn)
             
             search_layout.addWidget(filter_frame)
             
-            # Results count label
             self.results_label = QLabel("0 playlists")
             search_layout.addWidget(self.results_label)
             
@@ -1086,7 +960,6 @@ class PlaylistManagerDialog(QDialog):
     def _on_sort_changed(self, index):
         """Handle sort field changes"""
         try:
-            # Get the data ("created", "name", etc.) associated with the selected index
             field = self.sort_field_combo.itemData(index)
             self._current_sort['field'] = field
             self._apply_filters_and_sort()
@@ -1129,7 +1002,6 @@ class PlaylistManagerDialog(QDialog):
             all_playlists = list(self.saved_playlists.items())
             
             filtered = all_playlists
-            # Apply filters... (logic from original file)
             
             self._update_playlist_display(filtered)
         except Exception as e:
@@ -1160,240 +1032,12 @@ class PlaylistManagerDialog(QDialog):
                 self.playlist_list.addItem(item)
                 return
             
-            for name, playlist_data in playlists_to_show:
-                if self._is_destroyed: break
-                items = playlist_data.get('items', [])
-                metadata = playlist_data.get('metadata', {})
-                created = metadata.get('created', '')
-                
-                age_str = "Unknown date"
-                if created:
-                    try:
-                        dt = datetime.fromisoformat(created)
-                        age = datetime.now() - dt
-                        if age.days == 0: age_str = "Today"
-                        elif age.days == 1: age_str = "Yesterday"
-                        elif age.days < 7: age_str = f"{age.days} days ago"
-                        else: age_str = dt.strftime("%Y-%m-%d")
-                    except (ValueError, TypeError): pass
-                
-                display_text = f"{name}\n{len(items)} items • {age_str}"
-                list_item = QListWidgetItem(display_text)
-                list_item.setData(Qt.UserRole, (name, playlist_data))
-                self.playlist_list.addItem(list_item)
-                    
-        except Exception as e:
-            print(f"Update playlist display error: {e}")
-
-    def _refresh_playlist_list(self):
-        """Refresh the list of saved playlists using the enhanced filtering system"""
-        self._apply_filters_and_sort()
-
-    def _show_playlist_context_menu(self, pos):
-        item = self.playlist_list.itemAt(pos)
-        if not item or not item.data(Qt.UserRole): return
-        menu = QMenu(self)
-        self._apply_menu_theme(menu)
-        menu.addAction("✏️ Rename", self._rename_selected_playlist)
-        menu.addAction("🗑️ Delete", self._delete_selected_playlist)
-        menu.addAction("📋 Duplicate", self._duplicate_selected_playlist)
-        menu.exec(self.playlist_list.mapToGlobal(pos))
-
-    def _rename_selected_playlist(self):
-        current_item = self.playlist_list.currentItem()
-        if not current_item: return
-        name, _ = current_item.data(Qt.UserRole)
-        new_name, ok = QInputDialog.getText(self, "Rename Playlist", "New name:", QLineEdit.Normal, name)
-        if ok and new_name.strip():
-            new_name = new_name.strip()
-            if new_name in self.saved_playlists:
-                QMessageBox.warning(self, "Error", "A playlist with this name already exists.")
-                return
-            self.saved_playlists[new_name] = self.saved_playlists.pop(name)
-            self._save_playlists()
-            self._safe_refresh_playlist_list()
-
-    def _delete_selected_playlist(self):
-        current_item = self.playlist_list.currentItem()
-        if not current_item: return
-        name, data = current_item.data(Qt.UserRole)
-        reply = QMessageBox.question(self, "Delete Playlist", f"Are you sure you want to delete '{name}'?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-        if reply == QMessageBox.Yes:
-            if name in self.saved_playlists:
-                del self.saved_playlists[name]
-                self._save_playlists()
-                self._safe_refresh_playlist_list()
-                self._on_playlist_selected(None, None)
-
-    def _duplicate_selected_playlist(self):
-        current_item = self.playlist_list.currentItem()
-        if not current_item: return
-        name, data = current_item.data(Qt.UserRole)
-        new_name = f"{name} Copy"
-        i = 1
-        while new_name in self.saved_playlists:
-            i += 1
-            new_name = f"{name} Copy ({i})"
-        new_data = json.loads(json.dumps(data))
-        new_data['metadata']['created'] = datetime.now().isoformat()
-        self.saved_playlists[new_name] = new_data
-        self._save_playlists()
-        self._safe_refresh_playlist_list()
-
-    def _on_playlist_selected(self, current_item, previous_item):
-        if self._is_destroyed: return
-        for i in reversed(range(self.details_layout.count())):
-            widget = self.details_layout.itemAt(i).widget()
-            if widget: widget.setParent(None)
-
-        if not current_item or not current_item.data(Qt.UserRole):
-            self.details_header.setText("Select a playlist to view details")
-            self.load_btn.setEnabled(False)
-            self.export_btn.setEnabled(False)
-            self.selected_playlist_data = None
-            return
-
-        name, playlist_data = current_item.data(Qt.UserRole)
-        self.selected_playlist_data = playlist_data
-        self.details_header.setText(f"Details for '{name}'")
-        
-        meta_widget = PlaylistMetadataWidget({'name': name, **playlist_data})
-        self.details_layout.addWidget(meta_widget)
-        
-        items = playlist_data.get('items', [])
-        if items:
-            preview = PlaylistPreviewWidget()
-            preview.load_playlist_items(items)
-            self.details_layout.addWidget(preview)
-        
-        self.details_layout.addStretch()
-        self.load_btn.setEnabled(True)
-        self.export_btn.setEnabled(True)
-    
-    def get_selected_playlist(self):
-        return self.selected_playlist_data
-
-    def get_load_mode(self):
-        return self.load_mode_combo.currentData()
-
-    def should_auto_play(self):
-        return self.auto_play_check.isChecked()   
-    
-    def _save_current_playlist(self):
-        dialog = PlaylistSaveDialog(self.current_playlist, list(self.saved_playlists.keys()), self)
-        if dialog.exec() == QDialog.Accepted:
-            name = dialog.get_name()
-            # ... (save logic)
-            self._safe_refresh_playlist_list()
-
-    def _import_playlist(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Import M3U", "", "M3U Playlists (*.m3u *.m3u8)")
-        if not path: return
-        # ... (import logic)
-        self._safe_refresh_playlist_list()
-
-    def _export_selected(self):
-        if not self.selected_playlist_data: return
-        # ... (export logic)
-
-    def _save_playlists(self):
-        try:
-            config_file = Path(__file__).parent / 'playlists_v2.json'
-            with open(config_file, 'w', encoding='utf-8') as f:
-                json.dump(self.saved_playlists, f, indent=2)
-        except Exception as e:
-            QMessageBox.warning(self, "Save Error", f"Could not save playlists: {e}")
-
-    def _apply_menu_theme(self, menu):
-        menu.setStyleSheet("""
-            QMenu { background-color: #2a2a2a; color: #f3f3f3; border: 1px solid #4a4a4a; }
-            QMenu::item { padding: 6px 12px; }
-            QMenu::item:selected { background-color: #e76f51; }
-        """)
-
-    def _load_subscriptions(self):
-        """Load and display the list of subscribed URLs."""
-        try:
-            player = self.parent()
-            if player and hasattr(player, '_subscription_manager'):
-                self.subs_list.clear()
-                subscriptions = player._subscription_manager.subscriptions
-                for sub in subscriptions:
-                    self.subs_list.addItem(sub)
-        except Exception as e:
-            print(f"Error loading subscriptions into UI: {e}")
-
-    def _add_subscription(self):
-        """Show a dialog to add a new subscription URL."""
-        url, ok = QInputDialog.getText(self, "Add Subscription", "Enter Playlist URL:")
-        if ok and url:
-            url = url.strip()
-            player = self.parent()
-            if player and hasattr(player, '_subscription_manager'):
-                if url in player._subscription_manager.subscriptions:
-                    QMessageBox.warning(self, "Duplicate", "This URL is already in your subscriptions.")
-                    return
-                player._subscription_manager.subscriptions.append(url)
-                player._subscription_manager.save_subscriptions()
-                self._load_subscriptions()
-
-    def _remove_subscription(self):
-        """Remove the selected subscription URL."""
-        selected_item = self.subs_list.currentItem()
-        if not selected_item:
-            QMessageBox.warning(self, "No Selection", "Please select a subscription to remove.")
-            return
-
-        url_to_remove = selected_item.text()
-        player = self.parent()
-        if player and hasattr(player, '_subscription_manager'):
-            if url_to_remove in player._subscription_manager.subscriptions:
-                player._subscription_manager.subscriptions.remove(url_to_remove)
-                player._subscription_manager.save_subscriptions()
-                self._load_subscriptions()
-
-    def _update_playlist_display(self, playlists_to_show):
-        """Update the playlist list widget with filtered/sorted results"""
-        try:
-            if self._is_destroyed or not hasattr(self, 'playlist_list'):
-                return
-                
-            # Clear current list
-            self.playlist_list.clear()
-            
-            # Update results count
-            if hasattr(self, 'results_label'):
-                count = len(playlists_to_show)
-                total = len(self.saved_playlists) if self.saved_playlists else 0
-                if count == total:
-                    self.results_label.setText(f"{count} playlists")
-                else:
-                    self.results_label.setText(f"{count} of {total} playlists")
-            
-            # Handle empty results
-            if not playlists_to_show:
-                if self.saved_playlists:
-                    # There are playlists but none match filters
-                    item = QListWidgetItem("No playlists match your filters")
-                    item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
-                    item.setData(Qt.UserRole, None)
-                    self.playlist_list.addItem(item)
-                else:
-                    # No saved playlists at all
-                    item = QListWidgetItem("No saved playlists")
-                    item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
-                    item.setData(Qt.UserRole, None)
-                    self.playlist_list.addItem(item)
-                return
-            
-            # Add filtered playlists to the list
             successful_adds = 0
             for name, playlist_data in playlists_to_show:
                 if self._is_destroyed:
                     break
                     
                 try:
-                    # Validate data structure
                     if not isinstance(playlist_data, dict):
                         print(f"Warning: Invalid playlist data for '{name}', skipping")
                         continue
@@ -1406,11 +1050,9 @@ class PlaylistManagerDialog(QDialog):
                     if not isinstance(metadata, dict):
                         metadata = {}
                     
-                    # Create display text
                     item_count = len(items)
                     created = metadata.get('created', '')
                     
-                    # Safe date parsing
                     age_str = "Unknown date"
                     if created:
                         try:
@@ -1432,12 +1074,10 @@ class PlaylistManagerDialog(QDialog):
                     list_item = QListWidgetItem(display_text)
                     list_item.setData(Qt.UserRole, (name, playlist_data))
                     
-                    # Add icon based on content (with error handling)
                     try:
                         icon_size = QSize(24, 24)
                         icon_set = False
 
-                        # Check for YouTube content
                         if any(item.get('type') == 'youtube' for item in items if isinstance(item, dict)):
                             try:
                                 icon = load_svg_icon(str(APP_DIR / 'icons/youtube-fa7.svg'), icon_size)
@@ -1446,7 +1086,6 @@ class PlaylistManagerDialog(QDialog):
                             except Exception as e:
                                 print(f"Warning: Could not load YouTube icon: {e}")
                         
-                        # Check for Bilibili content
                         elif any(item.get('type') == 'bilibili' for item in items if isinstance(item, dict)):
                             try:
                                 icon = load_svg_icon(str(APP_DIR / 'icons/bilibili-fa7.svg'), icon_size)
@@ -1455,13 +1094,11 @@ class PlaylistManagerDialog(QDialog):
                             except Exception as e:
                                 print(f"Warning: Could not load Bilibili icon: {e}")
                         
-                        # Fallback icon
                         if not icon_set:
                             list_item.setIcon(self._create_source_icon('local'))
                             
                     except Exception as e:
                         print(f"Warning: Error setting icon for playlist '{name}': {e}")
-                        # Continue without icon
                     
                     self.playlist_list.addItem(list_item)
                     successful_adds += 1
@@ -1470,17 +1107,14 @@ class PlaylistManagerDialog(QDialog):
                     print(f"Error creating list item for playlist '{name}': {e}")
                     continue
             
-            # Update results count to reflect successful additions
             if hasattr(self, 'results_label') and successful_adds != len(playlists_to_show):
                 current_text = self.results_label.text()
                 self.results_label.setText(f"{current_text} ({successful_adds} displayed)")
                     
         except Exception as e:
             print(f"Update playlist display error: {e}")
-            # Show error message to user
             if hasattr(self, 'results_label'):
                 self.results_label.setText("⚠️ Display error")
-            # Try to add at least an error item
             try:
                 if hasattr(self, 'playlist_list'):
                     self.playlist_list.clear()
@@ -1490,18 +1124,14 @@ class PlaylistManagerDialog(QDialog):
                     self.playlist_list.addItem(error_item)
             except Exception:
                 pass
-    
+
     def _refresh_playlist_list(self):
         """Refresh the list of saved playlists using the enhanced filtering system"""
         try:
             if self._is_destroyed:
                 return
-                
-            # Validate playlist_list exists and is accessible
             if not hasattr(self, 'playlist_list'):
                 return
-                
-            # Test C++ object validity
             try:
                 _ = self.playlist_list.count()
             except RuntimeError:
@@ -1509,14 +1139,13 @@ class PlaylistManagerDialog(QDialog):
             except Exception:
                 return
             
-            # Use the new filtering and sorting system
             self._apply_filters_and_sort()
                 
         except Exception as e:
             print(f"_refresh_playlist_list error: {e}")
             import traceback
             traceback.print_exc()
-    
+
     def _create_source_icon(self, source_type):
         """Create a simple colored icon for source types"""
         pixmap = QPixmap(16, 16)
@@ -1595,7 +1224,6 @@ class PlaylistManagerDialog(QDialog):
                 del self.saved_playlists[name]
                 self._save_playlists()
                 self._safe_refresh_playlist_list()
-                # Clear details panel
                 self._on_playlist_selected(None, None)
 
     def _duplicate_selected_playlist(self):
@@ -1612,7 +1240,6 @@ class PlaylistManagerDialog(QDialog):
             i += 1
             new_name = f"{new_name_base} ({i})"
         
-        # Create a deep copy
         new_data = json.loads(json.dumps(data))
         new_data['metadata']['created'] = datetime.now().isoformat()
         new_data['metadata']['description'] = f"Copy of {name}"
@@ -1626,7 +1253,6 @@ class PlaylistManagerDialog(QDialog):
         if self._is_destroyed or not hasattr(self, 'details_layout'):
             return
 
-        # Clear existing details
         for i in reversed(range(self.details_layout.count())):
             widget = self.details_layout.itemAt(i).widget()
             if widget:
@@ -1642,38 +1268,29 @@ class PlaylistManagerDialog(QDialog):
         name, playlist_data = current_item.data(Qt.UserRole)
         self.selected_playlist_data = playlist_data
         
-        # Update header
         self.details_header.setText(f"Details for '{name}'")
         
-        # Add metadata widget
         meta_data_with_name = {'name': name, **playlist_data}
         metadata_widget = PlaylistMetadataWidget(meta_data_with_name)
         self.details_layout.addWidget(metadata_widget)
 
-        # Add preview widget if items exist
         items = playlist_data.get('items', [])
         if items:
             preview_widget = PlaylistPreviewWidget()
             preview_widget.load_playlist_items(items)
             
-            # SOLUTION 1: Make the preview widget expand to fill available space
             preview_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-            # Remove the fixed height constraint to let it grow
-            preview_widget.setMaximumHeight(16777215)  # Qt's QWIDGETSIZE_MAX
-            preview_widget.setMinimumHeight(300)  # Increase minimum height for better visibility
+            preview_widget.setMaximumHeight(16777215)
+            preview_widget.setMinimumHeight(300)
             
             self.details_layout.addWidget(preview_widget)
 
-        # SOLUTION 2: Only add stretch if there's NO content, or reduce the stretch
-        # Instead of always adding stretch, only add it when there's minimal content
         if not items:
             self.details_layout.addStretch()
         else:
-            # Add a smaller spacer instead of full stretch when there is content
             spacer = QSpacerItem(0, 10, QSizePolicy.Minimum, QSizePolicy.Minimum)
             self.details_layout.addItem(spacer)
 
-        # Enable action buttons
         self.load_btn.setEnabled(True)
         self.export_btn.setEnabled(True)
     
@@ -1716,8 +1333,6 @@ class PlaylistManagerDialog(QDialog):
             self._save_playlists()
             self._safe_refresh_playlist_list()
 
-        
-
     def _import_playlist(self):
         """Import an M3U playlist file."""
         path, _ = QFileDialog.getOpenFileName(self, "Import M3U", "", "M3U Playlists (*.m3u *.m3u8)")
@@ -1731,7 +1346,6 @@ class PlaylistManagerDialog(QDialog):
                     s = line.strip()
                     if not s or s.startswith('#'):
                         continue
-                    # Basic type guessing
                     url_lower = s.lower()
                     media_type = 'local'
                     if 'youtube.com' in url_lower or 'youtu.be' in url_lower:
@@ -1800,8 +1414,6 @@ class PlaylistManagerDialog(QDialog):
 
     def _apply_menu_theme(self, menu):
         """Apply a basic theme to a context menu."""
-        # This is a simplified theme application. A more robust solution would
-        # inherit the theme from the main window.
         menu.setStyleSheet("""
             QMenu {
                 background-color: #2a2a2a;
