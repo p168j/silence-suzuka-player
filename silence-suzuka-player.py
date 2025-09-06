@@ -814,14 +814,37 @@ class PlaylistManagerDialog(QDialog):
                 self.player._subscription_manager.add_subscription(url.strip(), self._load_subscriptions)
 
     def _remove_subscription(self):
-        """Remove the selected subscription URL."""
+        """Remove the selected subscription URL with confirmation and UI refresh."""
         selected_rows = self.subs_table.selectionModel().selectedRows()
         if not selected_rows:
             QMessageBox.warning(self, "No Selection", "Please select a subscription to remove.")
             return
-        url_to_remove = self.subs_table.item(selected_rows[0].row(), 1).text()
+
+        # Get details of the item to be removed for the confirmation message
+        row = selected_rows[0].row()
+        name_to_remove = self.subs_table.item(row, 0).text()
+        url_to_remove = self.subs_table.item(row, 1).text()
+
+        # --- START OF FIX ---
+        
+        # 1. Add a confirmation dialog for better user experience
+        reply = QMessageBox.question(
+            self, "Remove Subscription",
+            f"Are you sure you want to remove this subscription?\n\n- {name_to_remove}",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+
+        if reply != QMessageBox.Yes:
+            return # User cancelled the action
+
+        # 2. Call the existing logic to remove the subscription from the manager
         if self.player and hasattr(self.player, '_subscription_manager'):
             self.player._subscription_manager.remove_subscription(url_to_remove)
+            
+            # 3. Explicitly call _load_subscriptions to refresh the table in the dialog
+            self._load_subscriptions()
+            
+        # --- END OF FIX ---
 
     def _check_subscriptions_now(self):
         if self.player and hasattr(self.player, '_subscription_manager'):
@@ -12529,35 +12552,35 @@ class SubscriptionManager(QThread):
             return []
 
     def add_subscription(self, url, callback_on_finish):
-        import threading
-        def fetch_and_add():
-            try:
-                if any(isinstance(sub, dict) and sub.get('url') == url for sub in self.subscriptions):
-                    QTimer.singleShot(0, lambda: QMessageBox.warning(self.player, "Duplicate", "This URL is already subscribed."))
-                    return
+        try:
+            # Check for duplicates
+            if any(isinstance(sub, dict) and sub.get('url') == url for sub in self.subscriptions):
+                QMessageBox.warning(self.player, "Duplicate", "This URL is already subscribed.")
+                # Still call the callback to ensure the dialog UI is responsive
+                if callback_on_finish:
+                    callback_on_finish()
+                return
 
-                result = subprocess.run(
-                    ["yt-dlp", "--dump-single-json", url],
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                    encoding="utf-8", check=True, timeout=30
-                )
-                data = json.loads(result.stdout)
-                name = data.get("title", "Unknown Playlist")
-                
-                new_sub = {
-                    "url": url, "name": name,
-                    "type": "youtube" if "youtube" in url else "bilibili",
-                    "last_checked": datetime.now().isoformat()
-                }
-                self.subscriptions.append(new_sub)
-                self.save_subscriptions()
-                self.logMessage.emit(f"Added subscription: {name}")
-            except Exception as e:
-                QTimer.singleShot(0, lambda: QMessageBox.warning(self.player, "Error", f"Could not fetch playlist info:\n{e}"))
-            finally:
-                QTimer.singleShot(0, callback_on_finish)
+            # Use the URL as a temporary name. The title will be fetched on the next check.
+            name = url
+            
+            new_sub = {
+                "url": url,
+                "name": name, # Placeholder name
+                "type": "youtube" if "youtube" in url else "bilibili",
+                "last_checked": None # It will be checked on the next cycle
+            }
+            self.subscriptions.append(new_sub)
+            self.save_subscriptions()
+            self.logMessage.emit(f"Added subscription: {url}")
 
-        threading.Thread(target=fetch_and_add, daemon=True).start()
+        except Exception as e:
+            QMessageBox.warning(self.player, "Error", f"Could not add subscription:\n{e}")
+        finally:
+            # Ensure the callback to refresh the UI is always called
+            if callback_on_finish:
+                callback_on_finish()
+
 
     def remove_subscription(self, url):
         self.subscriptions = [sub for sub in self.subscriptions if (isinstance(sub, dict) and sub.get('url') != url) or (isinstance(sub, str) and sub != url)]
