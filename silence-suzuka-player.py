@@ -676,7 +676,9 @@ class PlaylistManagerDialog(QDialog):
         tabs = QTabWidget()
         main_layout.addWidget(tabs)
 
+        # --- Tab 1: Playlists (No changes here) ---
         playlists_widget = QWidget()
+        # ... (existing playlist tab UI setup remains the same) ...
         layout_for_splitter = QVBoxLayout(playlists_widget)
         layout_for_splitter.setContentsMargins(0, 0, 0, 0)
         left_panel = QWidget()
@@ -745,23 +747,30 @@ class PlaylistManagerDialog(QDialog):
         layout_for_splitter.addWidget(splitter)
         tabs.addTab(playlists_widget, "Playlists")
 
+        # --- Tab 2: Subscriptions (Consolidated and Corrected) ---
         subscriptions_widget = QWidget()
         subs_layout = QVBoxLayout(subscriptions_widget)
         subs_layout.setContentsMargins(12, 12, 12, 12)
         subs_layout.setSpacing(8)
+        
         subs_header = QLabel("Playlist Subscriptions")
         subs_header.setFont(QFont("Arial", 14, QFont.Bold))
         subs_layout.addWidget(subs_header)
+        
         subs_info = QLabel("The player will automatically check these playlists for new videos and add them to your library.")
         subs_info.setWordWrap(True)
         subs_layout.addWidget(subs_info)
+        
+        # **FIX**: Ensure self.subs_table is used, not self.subs_list
         self.subs_table = QTableWidget()
         self.subs_table.setColumnCount(2)
         self.subs_table.setHorizontalHeaderLabels(["Playlist Name", "URL"])
         self.subs_table.horizontalHeader().setStretchLastSection(True)
         self.subs_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.subs_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.subs_table.setAlternatingRowColors(True)
         subs_layout.addWidget(self.subs_table)
+        
         subs_actions_layout = QHBoxLayout()
         add_sub_btn = QPushButton("＋ Add Subscription")
         add_sub_btn.clicked.connect(self._add_subscription)
@@ -769,30 +778,40 @@ class PlaylistManagerDialog(QDialog):
         remove_sub_btn.clicked.connect(self._remove_subscription)
         check_now_btn = QPushButton("🔄 Check Now")
         check_now_btn.clicked.connect(self._check_subscriptions_now)
+        
         subs_actions_layout.addWidget(add_sub_btn)
         subs_actions_layout.addWidget(remove_sub_btn)
         subs_actions_layout.addStretch()
         subs_actions_layout.addWidget(check_now_btn)
         subs_layout.addLayout(subs_actions_layout)
+        
         tabs.addTab(subscriptions_widget, "Subscriptions")
+        self.setLayout(main_layout)
 
     def _load_subscriptions(self):
+        """Corrected method to populate the QTableWidget."""
         try:
             if self.player and hasattr(self.player, '_subscription_manager'):
+                # **FIX**: This now correctly targets self.subs_table
                 self.subs_table.setRowCount(0)
                 subscriptions = self.player._subscription_manager.subscriptions
                 self.subs_table.setRowCount(len(subscriptions))
                 for row, sub in enumerate(subscriptions):
+                    # Handle both old (string) and new (dict) subscription formats
                     if isinstance(sub, str):
                         name, url = "Unknown (Legacy)", sub
                     else:
-                        name, url = sub.get('name', 'Unknown Name'), sub.get('url', '')
+                        name = sub.get('name', 'Unknown Name')
+                        url = sub.get('url', '')
+                    
                     self.subs_table.setItem(row, 0, QTableWidgetItem(name))
                     self.subs_table.setItem(row, 1, QTableWidgetItem(url))
+                
                 self.subs_table.resizeColumnsToContents()
+                self.subs_table.horizontalHeader().setStretchLastSection(True)
         except Exception as e:
             print(f"Error loading subscriptions into UI: {e}")
-
+            
     def _add_subscription(self):
         url, ok = QInputDialog.getText(self, "Add Subscription", "Enter YouTube or Bilibili Playlist URL:")
         if ok and url:
