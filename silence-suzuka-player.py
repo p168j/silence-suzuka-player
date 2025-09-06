@@ -70,34 +70,51 @@ from PySide6.QtWidgets import QGraphicsBlurEffect
 from PySide6.QtGui import QPalette, QBrush
 
 
-def fetch_bilibili_playlist_flat(url):
-    """Fetch Bilibili playlist entries in one batch using yt-dlp."""
+def fetch_playlist_flat(url):
+    """
+    Fetch playlist entries in one batch using yt-dlp, detecting the platform.
+    """
     try:
-        # Run yt-dlp with flat playlist mode
+        url_lower = url.lower()
+        kind = 'bilibili' if 'bilibili.com' in url_lower else 'youtube'
+
         result = subprocess.run(
             ["yt-dlp", "--flat-playlist", "--dump-single-json", url],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             encoding="utf-8", check=True
         )
         data = json.loads(result.stdout)
+        
+        playlist_title = data.get("title", "Unknown Playlist")
+        playlist_key = data.get("id", url)
         entries = data.get("entries", [])
         
         items = []
         for entry in entries:
-            vid_id = entry.get("id")
+            video_url = entry.get("url")
             title = entry.get("title", "Unknown")
-            if vid_id:
-                video_url = f"https://www.bilibili.com/video/{vid_id}"
-                items.append({
-                    "title": title,
-                    "url": video_url,
-                    "type": "bilibili"
-                })
+            
+            if kind == 'youtube' and not video_url.startswith('http'):
+                video_url = f"https://www.youtube.com/watch?v={entry.get('id')}"
+            elif kind == 'bilibili' and not video_url.startswith('http'):
+                 video_url = f"https://www.bilibili.com/video/{entry.get('id')}"
+
+            # If title is just the ID, mark it for later resolution
+            if kind == 'bilibili' and (title == entry.get('id') or title == "Unknown"):
+                title = f"[Loading Title...] {entry.get('id')}"
+
+            items.append({
+                "title": title,
+                "url": video_url,
+                "type": kind,
+                "playlist": playlist_title,
+                "playlist_key": playlist_key
+            })
         return items
     except Exception as e:
         print(f"[BatchFetch] Failed for {url}: {e}")
         return []
-
+    
 class VolumeIconLabel(QLabel):
     """A QLabel that handles mute toggling on click and volume changes on scroll."""
     def __init__(self, main_player, parent=None):
@@ -12687,6 +12704,48 @@ class SubscriptionManager(QThread):
                 json.dump(self.subscriptions, f, indent=2)
         except Exception as e:
             self.logMessage.emit(f"Error saving subscriptions: {e}")
+
+    def check_subscription(self, sub_url):
+        """Fetches a playlist and returns a list of new items."""
+        try:
+            self.sub_logger.info(f"Fetching: {sub_url}")
+            # Use yt-dlp to get a flat list of video entries
+            playlist_items = fetch_playlist_flat(sub_url)
+            if not playlist_items:
+                self.sub_logger.warning(f"No items found for {sub_url}")
+                return []
+
+            # Load the history of seen URLs for this subscription
+            seen_urls = set()
+            history_file = APP_DIR / f"sub_history_{hash(sub_url)}.json"
+            if history_file.exists():
+                with open(history_file, 'r', encoding='utf-8') as f:
+                    seen_urls = set(json.load(f))
+
+            new_items = []
+            current_urls = set()
+            for item in playlist_items:
+                url = item.get('url')
+                if not url:
+                    continue
+                current_urls.add(url)
+                if url not in seen_urls:
+                    new_items.append(item)
+
+            if new_items:
+                self.sub_logger.info(f"Found {len(new_items)} new video(s) in {sub_url}")
+                # Save the updated list of all URLs for this subscription
+                with open(history_file, 'w', encoding='utf-8') as f:
+                    json.dump(list(seen_urls.union(current_urls)), f)
+            else:
+                self.sub_logger.info(f"No new videos found for {sub_url}")
+
+            return new_items
+
+        except Exception as e:
+            self.sub_logger.error(f"Failed to check subscription {sub_url}: {e}")
+            self.logMessage.emit(f"Error checking {sub_url}")
+            return []
 
     def add_subscription(self, url, callback_on_finish):
         import threading
