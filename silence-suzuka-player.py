@@ -2677,29 +2677,36 @@ class YtdlManager(QThread):
                         'quiet': True,
                         'no_warnings': True,
                         'skip_download': True,
-                        'socket_timeout': 10,
+                        'socket_timeout': 15, # Increased timeout
                         'retries': 2,
                     }
                     if kind == 'bilibili':
                         opts['cookiefile'] = str(COOKIES_BILI)
-                    
-                    # This is the expensive call that will now only happen once per kind.
+                        # Use our faster, more specific format selection here as well
+                        opts['format'] = 'bestvideo[height<=720][vcodec^=avc]+bestaudio[ext=m4a]/best[height<=720]'
+
                     self.ydl_instances[kind] = yt_dlp.YoutubeDL(opts)
 
-                # Use the appropriate, persistent instance
                 ydl = self.ydl_instances[kind]
                 info = ydl.extract_info(url, download=False)
-                
-                title = info.get('title') if isinstance(info, dict) else None
-                if title and title != url:
-                    self.titleResolved.emit(url, title)
+
+                if isinstance(info, dict):
+                    title = info.get('title')
+                    
+                    # --- NEW: Extract and emit stream URLs ---
+                    video_url = info.get('url')
+                    audio_url = None
+
+                    # If 'requested_formats' is present, we have separate streams
+                    if 'requested_formats' in info and len(info['requested_formats']) == 2:
+                        video_url = info['requested_formats'][0].get('url')
+                        audio_url = info['requested_formats'][1].get('url')
+                    
+                    if title and video_url:
+                        self.titleResolved.emit(url, title, video_url, audio_url)
 
             except Exception as e:
-                logger.warning(f"[YtdlManager] Failed to resolve title for {url}: {e}")
-                # Optionally emit an error signal
-                # self.error.emit(str(e))
-        
-        logger.info("[YtdlManager] Background thread finished.")
+                logger.warning(f"[YtdlManager] Failed to resolve streams for {url}: {e}")
 
 class DurationFetcher(QThread):
     progressUpdated = Signal(int, int)  # current, total
@@ -3515,7 +3522,7 @@ class MediaPlayer(QMainWindow):
         self.ytdl_workers = []
         for i in range(10):
             worker = YtdlManager(self)
-            worker.titleResolved.connect(self._on_title_resolved)
+            worker.titleResolved.connect(self._on_streams_resolved)
             worker.error.connect(lambda e: print(f"Title resolution error: {e}"))
             worker.start()
             self.ytdl_workers.append(worker)
@@ -8607,26 +8614,30 @@ class MediaPlayer(QMainWindow):
 
         except Exception as e:
             logger.error(f"Highlight row failed: {e}")
-        
-    def _on_title_resolved(self, url: str, title: str):
+
+    def _on_streams_resolved(self, original_url: str, title: str, video_url: str, audio_url: str):
+        """Handles the resolved title and stream URLs from the background worker."""
         try:
-            # Update the playlist item
+            # Update the playlist item with all the new info
             for item in self.playlist:
-                if item.get('url') == url:
+                if item.get('url') == original_url:
                     item['title'] = title
+                    item['stream_video_url'] = video_url
+                    if audio_url:
+                        item['stream_audio_url'] = audio_url
                     break
             
-            # Update the UI
-            self._update_tree_item_title(url, title)
+            # Update the UI (title only)
+            self._update_tree_item_title(original_url, title)
 
             # Update the "Now Playing" label if this is the current track
-            if 0 <= self.current_index < len(self.playlist) and self.playlist[self.current_index].get('url') == url:
+            if 0 <= self.current_index < len(self.playlist) and self.playlist[self.current_index].get('url') == original_url:
                 self._set_track_title(title)
 
-            # Save playlist to reflect updated titles
+            # Save the playlist to persist the new stream URLs
             self._save_current_playlist()
         except Exception as e:
-            print(f"Error updating title: {e}")
+            print(f"Error updating streams: {e}")
 
     def _update_item_title(self, url: str, title: str):
         """Update item title with optimized tree search"""
@@ -10806,52 +10817,61 @@ class MediaPlayer(QMainWindow):
         self.play_current()
                 
     def _prepare_and_load_track(self, index, start_pos_ms=0, should_play=False):
-        """A unified method to load a track into mpv, set options, and optionally play it."""
+        """A unified method to load a track into mpv, using pre-fetched streams if available."""
         if not (0 <= index < len(self.playlist)):
             return
 
         item = self.playlist[index]
-        url = item.get('url', '')
+        url_to_play = item.get('url', '') # Fallback to original URL
 
-        try:
-            if item.get('type') == 'bilibili':
-                self.mpv['referrer'] = item.get('url') or 'https://www.bilibili.com'
-                self.mpv['http-header-fields'] = 'Referer: https://www.bilibili.com,Origin: https://www.bilibili.com,User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36'
-                self.mpv['ytdl-raw-options'] = f"cookies={str(COOKIES_BILI)},add-header=Referer: https://www.bilibili.com,add-header=User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-                # --- THIS IS THE FIX ---
-                # Request the best separate video and audio streams up to 720p without codec restrictions.
-                self.mpv['ytdl-format'] = 'bv*[height<=720]+ba/best[height<=720]/best'
-            else: # For YouTube and others
-                self.mpv['referrer'] = ''
-                self.mpv['http-header-fields'] = ''
-                self.mpv['ytdl-raw-options'] = ''
-                self.mpv['ytdl-format'] = 'best[height<=720]/best'
-        except Exception as e:
-            logger.error(f"Error setting mpv options: {e}")
+        # --- THIS IS THE KEY LOGIC ---
+        # Check if we have pre-fetched stream URLs
+        video_stream = item.get('stream_video_url')
+        audio_stream = item.get('stream_audio_url')
+
+        if video_stream and audio_stream:
+            # If we have separate streams, tell mpv to play them
+            url_to_play = video_stream
+            self.mpv.audio_add(audio_stream)
+            logger.info(f"Playing with pre-fetched Audio/Video streams for: {item.get('title')}")
+        elif video_stream:
+            # If we have a single combined stream URL
+            url_to_play = video_stream
+            logger.info(f"Playing with pre-fetched stream for: {item.get('title')}")
+        else:
+            # Fallback to the original URL if streams aren't ready yet
+            # (This maintains the old behavior if pre-fetching is still in progress)
+            logger.info(f"No pre-fetched streams, using original URL for: {item.get('title')}")
+            try:
+                if item.get('type') == 'bilibili':
+                    # Keep the necessary headers for the fallback case
+                    self.mpv['referrer'] = item.get('url') or 'https://www.bilibili.com'
+                    self.mpv['http-header-fields'] = 'Referer: https://www.bilibili.com,Origin: https://www.bilibili.com,User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36'
+                    self.mpv['ytdl-raw-options'] = f"cookies={str(COOKIES_BILI)},add-header=Referer: https://www.bilibili.com,add-header=User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+                    self.mpv['ytdl-format'] = 'bestvideo[height<=720][vcodec^=avc]+bestaudio[ext=m4a]/best[height<=720]'
+                else:
+                    self.mpv['referrer'] = ''
+                    self.mpv['http-header-fields'] = ''
+                    self.mpv['ytdl-raw-options'] = ''
+                    self.mpv['ytdl-format'] = 'best[height<=720]/best'
+            except Exception as e:
+                logger.error(f"Error setting mpv options: {e}")
 
         start_pos_sec = max(0.0, float(start_pos_ms) / 1000.0)
-        logger.info(f"Loading track '{item.get('title')}': url={url}, start_sec={start_pos_sec}, play={should_play}")
         
         try:
             if start_pos_sec > 0:
-                self.mpv.loadfile(url, 'replace', start=str(start_pos_sec))
+                self.mpv.loadfile(url_to_play, 'replace', start=str(start_pos_sec))
             else:
-                self.mpv.loadfile(url, 'replace')
+                self.mpv.loadfile(url_to_play, 'replace')
         except Exception as e:
-            logger.error(f"mpv loadfile command failed: {e}")
-            try:
-                self.mpv.play(url)
-                if start_pos_sec > 0:
-                    QTimer.singleShot(500, lambda: setattr(self.mpv, 'time_pos', start_pos_sec))
-            except Exception as e2:
-                logger.error(f"Fallback play also failed: {e2}")
+             logger.error(f"mpv loadfile command failed: {e}")
 
         self.mpv.pause = not should_play
         
         if start_pos_ms > 0:
             self._resume_target_ms = start_pos_ms
             self._resume_enforce_until = time.time() + 20.0
-            self._restore_saved_position_attempt(url, start_pos_ms, 1)
             self.requestTimerSignal.emit(350, lambda: self._maybe_reapply_resume('start'))
 
         self._set_track_title(item.get('title', 'Unknown'))
