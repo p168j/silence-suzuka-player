@@ -26,6 +26,8 @@ build/
 *_playlists_v2.json
 *_session.json
 *_metadata_cache.json
+*_subscriptions.json
+*_subscriptions.log
 save/
 logs/
 backup/
@@ -39,6 +41,8 @@ playlists.json
 playlists_v2.json
 session.json
 metadata_cache.json
+subscriptions.json
+subscriptions.log
 
 
 # Ignore IDE/editor/project files
