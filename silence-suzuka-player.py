@@ -641,11 +641,9 @@ class PlaylistManagerDialog(QDialog):
     """Comprehensive playlist management dialog with fixed lifecycle management"""
 
     def _size_and_center_relative_to_parent(self, parent):
-        """Calculate and set size relative to the parent window."""
-        if not parent:
-            return
+        if not parent: return
         parent_geom = parent.geometry()
-        self.resize(int(parent_geom.width() * 0.60), int(parent_geom.height() * 0.70))
+        self.resize(int(parent_geom.width() * 0.7), int(parent_geom.height() * 0.75))
         self_geom = self.geometry()
         center_point = parent_geom.center()
         self_geom.moveCenter(center_point)
@@ -653,49 +651,178 @@ class PlaylistManagerDialog(QDialog):
     
     def __init__(self, saved_playlists, current_playlist, parent=None):
         super().__init__(parent)
+        self.player = parent
         self.saved_playlists = saved_playlists
         self.current_playlist = current_playlist
         self.selected_playlist_data = None
         self.load_mode = "replace"
         self._is_destroyed = False
-        self._initial_load_done = False # Flag to ensure we only load once
-        
-        self._current_filter = {
-            'name': '', 'min_items': 0, 'max_items': None,
-            'date_from': None, 'date_to': None
-        }
+        self._initial_load_done = False
+        self._current_filter = {'name': '', 'min_items': 0, 'max_items': None}
         self._current_sort = {'field': 'created', 'reverse': True}
         self._filtered_playlists = []
-
         self.setWindowTitle("Playlist Manager")
         self.setModal(True)
-
         self._setup_ui()
         self._load_subscriptions()
-
+        if self.player and hasattr(self.player, '_subscription_manager'):
+            self.player._subscription_manager.subscriptionListUpdated.connect(self._load_subscriptions)
         if parent and hasattr(parent, '_apply_dialog_theme'):
             parent._apply_dialog_theme(self)
-
         self._size_and_center_relative_to_parent(parent)
 
+    def _setup_ui(self):
+        main_layout = QVBoxLayout(self)
+        tabs = QTabWidget()
+        main_layout.addWidget(tabs)
+
+        playlists_widget = QWidget()
+        layout_for_splitter = QVBoxLayout(playlists_widget)
+        layout_for_splitter.setContentsMargins(0, 0, 0, 0)
+        left_panel = QWidget()
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(0, 0, 8, 0)
+        header_label = QLabel("Saved Playlists")
+        header_label.setFont(QFont("Arial", 14, QFont.Bold))
+        left_layout.addWidget(header_label)
+        self._add_search_and_filter_controls(left_layout)
+        self.playlist_list = QListWidget()
+        self.playlist_list.currentItemChanged.connect(self._on_playlist_selected)
+        self.playlist_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.playlist_list.customContextMenuRequested.connect(self._show_playlist_context_menu)
+        self.playlist_list.setAlternatingRowColors(True)
+        left_layout.addWidget(self.playlist_list)
+        quick_actions = QHBoxLayout()
+        self.new_btn = QPushButton("📁 New")
+        self.new_btn.clicked.connect(self._save_current_playlist)
+        self.import_btn = QPushButton("📂 Import")
+        self.import_btn.clicked.connect(self._import_playlist)
+        quick_actions.addWidget(self.new_btn)
+        quick_actions.addWidget(self.import_btn)
+        quick_actions.addStretch()
+        left_layout.addLayout(quick_actions)
+        right_panel = QWidget()
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(8, 0, 0, 0)
+        self.details_header = QLabel("Select a playlist to view details")
+        self.details_header.setFont(QFont("Arial", 14, QFont.Bold))
+        right_layout.addWidget(self.details_header)
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        self.details_widget = QWidget()
+        self.details_layout = QVBoxLayout(self.details_widget)
+        scroll_area.setWidget(self.details_widget)
+        right_layout.addWidget(scroll_area, 1)
+        load_group = QGroupBox("Load Options")
+        load_layout = QFormLayout(load_group)
+        self.load_mode_combo = QComboBox()
+        self.load_mode_combo.addItem("Replace current playlist", "replace")
+        self.load_mode_combo.addItem("Add to current playlist", "append")
+        self.load_mode_combo.addItem("Insert at current position", "insert")
+        load_layout.addRow("Mode:", self.load_mode_combo)
+        self.auto_play_check = QCheckBox("Start playing after load")
+        self.auto_play_check.setChecked(True)
+        load_layout.addRow("", self.auto_play_check)
+        right_layout.addWidget(load_group)
+        button_layout = QHBoxLayout()
+        self.load_btn = QPushButton("📂 Load Playlist")
+        self.load_btn.setEnabled(False)
+        self.load_btn.clicked.connect(self.accept)
+        self.export_btn = QPushButton("💾 Export M3U")
+        self.export_btn.setEnabled(False)
+        self.export_btn.clicked.connect(self._export_selected)
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.reject)
+        button_layout.addWidget(self.export_btn)
+        button_layout.addStretch()
+        button_layout.addWidget(close_btn)
+        button_layout.addWidget(self.load_btn)
+        right_layout.addLayout(button_layout)
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.addWidget(left_panel)
+        splitter.addWidget(right_panel)
+        splitter.setSizes([300, 600])
+        layout_for_splitter.addWidget(splitter)
+        tabs.addTab(playlists_widget, "Playlists")
+
+        subscriptions_widget = QWidget()
+        subs_layout = QVBoxLayout(subscriptions_widget)
+        subs_layout.setContentsMargins(12, 12, 12, 12)
+        subs_layout.setSpacing(8)
+        subs_header = QLabel("Playlist Subscriptions")
+        subs_header.setFont(QFont("Arial", 14, QFont.Bold))
+        subs_layout.addWidget(subs_header)
+        subs_info = QLabel("The player will automatically check these playlists for new videos and add them to your library.")
+        subs_info.setWordWrap(True)
+        subs_layout.addWidget(subs_info)
+        self.subs_table = QTableWidget()
+        self.subs_table.setColumnCount(2)
+        self.subs_table.setHorizontalHeaderLabels(["Playlist Name", "URL"])
+        self.subs_table.horizontalHeader().setStretchLastSection(True)
+        self.subs_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.subs_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        subs_layout.addWidget(self.subs_table)
+        subs_actions_layout = QHBoxLayout()
+        add_sub_btn = QPushButton("＋ Add Subscription")
+        add_sub_btn.clicked.connect(self._add_subscription)
+        remove_sub_btn = QPushButton("－ Remove Selected")
+        remove_sub_btn.clicked.connect(self._remove_subscription)
+        check_now_btn = QPushButton("🔄 Check Now")
+        check_now_btn.clicked.connect(self._check_subscriptions_now)
+        subs_actions_layout.addWidget(add_sub_btn)
+        subs_actions_layout.addWidget(remove_sub_btn)
+        subs_actions_layout.addStretch()
+        subs_actions_layout.addWidget(check_now_btn)
+        subs_layout.addLayout(subs_actions_layout)
+        tabs.addTab(subscriptions_widget, "Subscriptions")
+
+    def _load_subscriptions(self):
+        try:
+            if self.player and hasattr(self.player, '_subscription_manager'):
+                self.subs_table.setRowCount(0)
+                subscriptions = self.player._subscription_manager.subscriptions
+                self.subs_table.setRowCount(len(subscriptions))
+                for row, sub in enumerate(subscriptions):
+                    if isinstance(sub, str):
+                        name, url = "Unknown (Legacy)", sub
+                    else:
+                        name, url = sub.get('name', 'Unknown Name'), sub.get('url', '')
+                    self.subs_table.setItem(row, 0, QTableWidgetItem(name))
+                    self.subs_table.setItem(row, 1, QTableWidgetItem(url))
+                self.subs_table.resizeColumnsToContents()
+        except Exception as e:
+            print(f"Error loading subscriptions into UI: {e}")
+
+    def _add_subscription(self):
+        url, ok = QInputDialog.getText(self, "Add Subscription", "Enter YouTube or Bilibili Playlist URL:")
+        if ok and url:
+            if self.player and hasattr(self.player, '_subscription_manager'):
+                self.player._subscription_manager.add_subscription(url.strip(), self._load_subscriptions)
+
+    def _remove_subscription(self):
+        selected_rows = self.subs_table.selectionModel().selectedRows()
+        if not selected_rows:
+            QMessageBox.warning(self, "No Selection", "Please select a subscription to remove.")
+            return
+        url_to_remove = self.subs_table.item(selected_rows[0].row(), 1).text()
+        if self.player and hasattr(self.player, '_subscription_manager'):
+            self.player._subscription_manager.remove_subscription(url_to_remove)
+
+    def _check_subscriptions_now(self):
+        if self.player and hasattr(self.player, '_subscription_manager'):
+            self.player.status.showMessage("Manually checking all subscriptions...", 3000)
+            self.player._subscription_manager.force_check()
+    
     def showEvent(self, event):
         super().showEvent(event)
         if not self._initial_load_done:
             self._safe_refresh_playlist_list()
-            self._initial_load_done = True        
-    
-    def closeEvent(self, event):
-        self._is_destroyed = True
-        super().closeEvent(event)
-    
-    def reject(self):
-        self._is_destroyed = True
-        super().reject()
-    
-    def accept(self):
-        self._is_destroyed = True
-        super().accept()
-    
+            self._initial_load_done = True
+            
+    def closeEvent(self, event): self._is_destroyed = True; super().closeEvent(event)
+    def reject(self): self._is_destroyed = True; super().reject()
+    def accept(self): self._is_destroyed = True; super().accept()
+
     def _safe_refresh_playlist_list(self):
         try:
             if self._is_destroyed or not hasattr(self, 'playlist_list'): return
@@ -992,29 +1119,50 @@ class PlaylistManagerDialog(QDialog):
     def _update_playlist_display(self, playlists_to_show):
         """Update the playlist list widget with filtered/sorted results"""
         try:
-            if self._is_destroyed: return
+            if self._is_destroyed or not hasattr(self, 'playlist_list'):
+                return
+                
             self.playlist_list.clear()
+            
             if hasattr(self, 'results_label'):
-                self.results_label.setText(f"{len(playlists_to_show)} playlists")
-
+                count = len(playlists_to_show)
+                total = len(self.saved_playlists) if self.saved_playlists else 0
+                if count == total:
+                    self.results_label.setText(f"{count} playlists")
+                else:
+                    self.results_label.setText(f"{count} of {total} playlists")
+            
+            if not playlists_to_show:
+                if self.saved_playlists:
+                    item = QListWidgetItem("No playlists match your filters")
+                else:
+                    item = QListWidgetItem("No saved playlists")
+                item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
+                self.playlist_list.addItem(item)
+                return
+            
             for name, playlist_data in playlists_to_show:
+                if self._is_destroyed: break
                 items = playlist_data.get('items', [])
                 metadata = playlist_data.get('metadata', {})
                 created = metadata.get('created', '')
+                
                 age_str = "Unknown date"
                 if created:
                     try:
                         dt = datetime.fromisoformat(created)
                         age = datetime.now() - dt
                         if age.days == 0: age_str = "Today"
-                        elif age.days < 7: age_str = f"{age.days}d ago"
+                        elif age.days == 1: age_str = "Yesterday"
+                        elif age.days < 7: age_str = f"{age.days} days ago"
                         else: age_str = dt.strftime("%Y-%m-%d")
-                    except: pass
+                    except (ValueError, TypeError): pass
                 
                 display_text = f"{name}\n{len(items)} items • {age_str}"
                 list_item = QListWidgetItem(display_text)
                 list_item.setData(Qt.UserRole, (name, playlist_data))
                 self.playlist_list.addItem(list_item)
+                    
         except Exception as e:
             print(f"Update playlist display error: {e}")
 
@@ -12673,6 +12821,7 @@ class SubscriptionManager(QThread):
     """
     newVideosFound = Signal(str, list)
     logMessage = Signal(str)
+    subscriptionListUpdated = Signal()
 
     def __init__(self, player, parent=None):
         super().__init__(parent)
@@ -12702,56 +12851,15 @@ class SubscriptionManager(QThread):
         try:
             with open(CFG_SUBSCRIPTIONS, 'w', encoding='utf-8') as f:
                 json.dump(self.subscriptions, f, indent=2)
+            QTimer.singleShot(0, self.subscriptionListUpdated.emit)
         except Exception as e:
             self.logMessage.emit(f"Error saving subscriptions: {e}")
-
-    def check_subscription(self, sub_url):
-        """Fetches a playlist and returns a list of new items."""
-        try:
-            self.sub_logger.info(f"Fetching: {sub_url}")
-            # Use yt-dlp to get a flat list of video entries
-            playlist_items = fetch_playlist_flat(sub_url)
-            if not playlist_items:
-                self.sub_logger.warning(f"No items found for {sub_url}")
-                return []
-
-            # Load the history of seen URLs for this subscription
-            seen_urls = set()
-            history_file = APP_DIR / f"sub_history_{hash(sub_url)}.json"
-            if history_file.exists():
-                with open(history_file, 'r', encoding='utf-8') as f:
-                    seen_urls = set(json.load(f))
-
-            new_items = []
-            current_urls = set()
-            for item in playlist_items:
-                url = item.get('url')
-                if not url:
-                    continue
-                current_urls.add(url)
-                if url not in seen_urls:
-                    new_items.append(item)
-
-            if new_items:
-                self.sub_logger.info(f"Found {len(new_items)} new video(s) in {sub_url}")
-                # Save the updated list of all URLs for this subscription
-                with open(history_file, 'w', encoding='utf-8') as f:
-                    json.dump(list(seen_urls.union(current_urls)), f)
-            else:
-                self.sub_logger.info(f"No new videos found for {sub_url}")
-
-            return new_items
-
-        except Exception as e:
-            self.sub_logger.error(f"Failed to check subscription {sub_url}: {e}")
-            self.logMessage.emit(f"Error checking {sub_url}")
-            return []
 
     def add_subscription(self, url, callback_on_finish):
         import threading
         def fetch_and_add():
             try:
-                if any(sub.get('url') == url for sub in self.subscriptions if isinstance(sub, dict)):
+                if any(isinstance(sub, dict) and sub.get('url') == url for sub in self.subscriptions):
                     QTimer.singleShot(0, lambda: QMessageBox.warning(self.player, "Duplicate", "This URL is already subscribed."))
                     return
 
@@ -12789,24 +12897,34 @@ class SubscriptionManager(QThread):
     def stop(self):
         self._is_running = False
 
+    def upgrade_legacy_subscriptions(self):
+        needs_upgrade = any(isinstance(sub, str) for sub in self.subscriptions)
+        if not needs_upgrade:
+            return False
+
+        self.logMessage.emit("Upgrading legacy subscriptions...")
+        legacy_urls = [sub for sub in self.subscriptions if isinstance(sub, str)]
+        
+        self.subscriptions = [sub for sub in self.subscriptions if isinstance(sub, dict)]
+        
+        for url in legacy_urls:
+            self.add_subscription(url, lambda: None)
+        
+        return True
+
     def run_check(self):
         self.logMessage.emit("Checking subscriptions...")
         self.sub_logger.info("Checking subscriptions...")
-        if self.subscriptions:
-            for i, sub in enumerate(self.subscriptions):
-                if not self._is_running: break
-                
-                if isinstance(sub, str):
-                    url = sub
-                    self.logMessage.emit(f"Upgrading legacy subscription: {url}")
-                    self.add_subscription(url, lambda: None)
-                    self.subscriptions.pop(i)
-                    continue
-                elif isinstance(sub, dict):
-                    url = sub.get('url')
-                else:
-                    continue
 
+        if self.upgrade_legacy_subscriptions():
+            self.logMessage.emit("Subscription format upgraded. Refreshing list.")
+            return
+
+        if self.subscriptions:
+            for sub in self.subscriptions:
+                if not self._is_running: break
+                if not isinstance(sub, dict): continue
+                url = sub.get('url')
                 if not url: continue
 
                 new_videos = fetch_playlist_flat(url)
@@ -12815,24 +12933,27 @@ class SubscriptionManager(QThread):
                         if "[Loading Title...]" in video.get('title', ''):
                             self.player._resolve_title_parallel(video['url'], video['type'])
                     self.newVideosFound.emit(url, new_videos)
-                if isinstance(sub, dict):
-                    sub['last_checked'] = datetime.now().isoformat()
+                
+                sub['last_checked'] = datetime.now().isoformat()
             self.save_subscriptions()
 
     def run(self):
         self.logMessage.emit("Subscription manager started.")
         self.sub_logger.info("Subscription manager started.")
+        self.run_check()
+
         while self._is_running:
+            for _ in range(1800):
+                if not self._is_running or self.force_check_request:
+                    break
+                self.msleep(1000)
+            
             if self.force_check_request:
-                self.run_check()
                 self.force_check_request = False
-            else:
+
+            if self._is_running:
                 self.run_check()
 
-            # Wait for 30 minutes (1800 seconds)
-            for _ in range(1800):
-                if not self._is_running or self.force_check_request: break
-                self.msleep(1000)
         self.logMessage.emit("Subscription manager stopped.")
 
 def main():
