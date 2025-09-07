@@ -2837,7 +2837,7 @@ class PlaylistLoaderThread(QThread):
     def __init__(self, url: str, kind: str, parent=None):
         super().__init__(parent)
         self.url = url
-        self.kind = kind  # 'youtube' or 'bilibili' or 'local'
+        self.kind = kind  # 'youtube' or 'bilibili' or 'local'  
 
     def run(self):
         """Load playlist items without crashing on bad URLs"""
