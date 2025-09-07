@@ -30,4 +30,4 @@ jobs:
     - name: Run main program
       env:
         QT_QPA_PLATFORM: offscreen
-      run: python silence-suzuka-player.py
+      run: python silence_suzuka_player.py

@@ -46,7 +46,7 @@ To detect system-wide silence, the app needs to be able to "hear" what your spea
     pip install -r requirements.txt
     ```
 3.  **Configure the Player:**
-    * Run the player for the first time: `python silence-suzuka-player.py`
+    * Run the player for the first time: `python silence_suzuka_player.py`
     * Click the **Settings** (⚙️) icon.
     * Go to the **"Audio Monitor"** tab.
     * From the **"Input device"** dropdown, select the device that says **"VoiceMeeter Output"** (or similar).
@@ -55,7 +55,7 @@ To detect system-wide silence, the app needs to be able to "hear" what your spea
 
 To run the application, open your terminal in the project folder and run:
 ```bash
-python silence-suzuka-player.py
+python silence_suzuka_player.py
 ```
 You can then add media via the "Add Media" button, copy-paste or drag-and-drop files/links, or load a saved playlist.
 
