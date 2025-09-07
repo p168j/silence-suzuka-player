@@ -272,9 +272,17 @@ def fetch_playlist_flat(url):
                 if not video_url:
                     continue
 
-                # Handle missing titles
-                if kind == 'bilibili' and (not title or title == video_id or title == "Unknown"):
-                    title = f"[Loading Title...] {video_id}"
+                # FIXED: Better title handling for Bilibili
+                if kind == 'bilibili':
+                    # Check for various "no title" indicators
+                    if (not title or 
+                        title in ("Unknown", "NO TITLE", video_id) or 
+                        title.lower() in ("unknown", "no title")):
+                        # Create a loading title that will trigger resolution
+                        title = f"[Loading Title...] {video_id}"
+                    elif title == video_id:
+                        # If title is just the video ID, mark for loading
+                        title = f"[Loading Title...] {video_id}"
 
                 items.append({
                     "title": title,
@@ -11832,12 +11840,41 @@ class MediaPlayer(QMainWindow):
         self._schedule_save_current_playlist()
         self._hide_loading(f"Added {len(new_items)} new entries (Ctrl+Z to undo)", 5000)
         
-        # 6. Resolve titles in the background
-        items_needing_titles = [it for it in new_items if not it.get('title') or it['title'] == it.get('url')]
-        if items_needing_titles:
-            for item in items_needing_titles:
-                self._resolve_title_parallel(item.get('url'), item.get('type', 'local'))
+        # 6. COMPREHENSIVE FIX: Resolve titles for items that need it
+        items_needing_titles = []
+        for item in new_items:
+            title = item.get('title', '')
+            url = item.get('url', '')
+            item_type = item.get('type', '')
             
+            # More comprehensive check for items needing title resolution
+            needs_resolution = (
+                # No title at all
+                not title or
+                # Title equals URL
+                title == url or
+                # Contains loading placeholder
+                '[Loading Title...]' in title or
+                # Bilibili-specific checks
+                (item_type == 'bilibili' and (
+                    title.startswith('Bilibili Video ') or  # Our generic fallback
+                    title == item.get('id', '') or          # Title is just video ID
+                    len(title) < 8                           # Suspiciously short
+                )) or
+                # YouTube-specific checks (for completeness)
+                (item_type == 'youtube' and title.startswith('YouTube Video '))
+            )
+            
+            if needs_resolution and url and item_type:
+                items_needing_titles.append(item)
+                print(f"DEBUG: Queuing title resolution for {item_type}: {title} -> {url[:50]}...")
+        
+        # Resolve titles in background
+        if items_needing_titles:
+            print(f"DEBUG: Starting title resolution for {len(items_needing_titles)} items")
+            for item in items_needing_titles:
+                self._resolve_title_parallel(item.get('url'), item.get('type'))
+                        
     def _restart_audio_monitor(self):
         """Restart the audio monitor with new settings"""
         if hasattr(self, 'audio_monitor') and self.audio_monitor:
