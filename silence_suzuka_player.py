@@ -24,6 +24,7 @@ import io
 from pathlib import Path
 from datetime import datetime, timedelta
 from enum import Enum
+from urllib.parse import urlparse
 
 # Third-party imports
 import qtawesome as qta
@@ -88,21 +89,165 @@ class MediaType(Enum):
     LOCAL = 'local'
     UNKNOWN = 'unknown'
 
+class URLValidator:
+    @staticmethod
+    def is_supported_url(url):
+        """Check if URL is supported before trying to load it"""
+        if not url or not isinstance(url, str):
+            return False, "Invalid URL format"
+        
+        url = url.strip()
+        
+        # Check for obvious typos
+        if url.startswith('http') and not (url.startswith('http://') or url.startswith('https://')):
+            return False, "URL appears to have a typo (missing ://)"
+        
+        # Local file check
+        if not url.startswith('http'):
+            if os.path.exists(url) or url.startswith('file://'):
+                return True, ""
+            else:
+                return False, "Local file not found"
+        
+        # Supported sites
+        supported_patterns = [
+            r'youtube\.com/watch',
+            r'youtube\.com/playlist', 
+            r'youtu\.be/',
+            r'bilibili\.com/video/',
+            r'bilibili\.com/playlist/',
+            r'space\.bilibili\.com'
+        ]
+        
+        try:
+            url_lower = url.lower()
+            for pattern in supported_patterns:
+                if re.search(pattern, url_lower):
+                    return True, ""
+                    
+            # Check for YouTube/Bilibili domains even if pattern doesn't match
+            if any(domain in url_lower for domain in ['youtube.com', 'youtu.be', 'bilibili.com']):
+                return True, ""  # Let yt-dlp handle edge cases
+                
+            return False, f"Unsupported site. Supported: YouTube, Bilibili, local files"
+            
+        except Exception:
+            return False, "Invalid URL format"
+    
+    @staticmethod
+    def validate_playlist_access(url):
+        """Quick check if playlist is accessible before full extraction"""
+        try:
+            import subprocess
+            
+            # Quick metadata check with timeout
+            result = subprocess.run([
+                'yt-dlp', '--quiet', '--no-warnings', '--flat-playlist',
+                '--playlist-items', '1:3',  # Just check first 3 items
+                '--dump-single-json', url
+            ], capture_output=True, text=True, timeout=10)
+            
+            if result.returncode != 0:
+                error_output = result.stderr.lower()
+                if 'private' in error_output:
+                    return False, "This playlist is private"
+                elif 'not exist' in error_output or 'not found' in error_output:
+                    return False, "Playlist does not exist"
+                elif 'unavailable' in error_output:
+                    return False, "Playlist is unavailable"
+                else:
+                    return False, "Cannot access this playlist"
+            
+            return True, ""
+            
+        except subprocess.TimeoutExpired:
+            return False, "Playlist check timed out - may be inaccessible"
+        except Exception:
+            return True, ""  # If validation fails, let normal process handle it
+
+class NetworkErrorHandler:
+    @staticmethod
+    def safe_ytdl_call(func, url, *args, **kwargs):
+        """Safely call yt-dlp functions with user-friendly error messages"""
+        try:
+            return func(*args, **kwargs)
+        except subprocess.TimeoutExpired:
+            QMessageBox.warning(None, "Connection Timeout", 
+                f"Request timed out for:\n{url[:60]}...\n\nTry again later or check your connection.")
+            return None
+        except subprocess.CalledProcessError as e:
+            error_output = str(e.stderr) if hasattr(e, 'stderr') and e.stderr else str(e)
+            
+            # Parse common yt-dlp errors
+            if any(phrase in error_output.lower() for phrase in ['private video', 'video unavailable', 'this video is unavailable']):
+                QMessageBox.warning(None, "Video Unavailable", 
+                    f"This video is private or unavailable:\n\n{url[:60]}...")
+            elif any(phrase in error_output.lower() for phrase in ['sign in to confirm', 'age', 'restricted']):
+                QMessageBox.warning(None, "Age Restricted", 
+                    f"This video requires sign-in (age restricted):\n\n{url[:60]}...")
+            elif 'network' in error_output.lower() or 'connection' in error_output.lower():
+                QMessageBox.warning(None, "Network Error", 
+                    f"Network error loading:\n{url[:60]}...\n\nCheck your internet connection.")
+            elif 'unsupported url' in error_output.lower():
+                QMessageBox.warning(None, "Unsupported URL", 
+                    f"This URL format is not supported:\n\n{url[:60]}...")
+            else:
+                # Generic error with first 150 chars of error
+                clean_error = error_output.replace('\n', ' ').strip()[:150]
+                QMessageBox.warning(None, "Load Error", 
+                    f"Could not load:\n{url[:60]}...\n\nError: {clean_error}...")
+            return None
+        except Exception as e:
+            # Catch-all for unexpected errors
+            QMessageBox.warning(None, "Unexpected Error", 
+                f"Unexpected error loading:\n{url[:60]}...\n\n{str(e)[:150]}...")
+            return None
+
+    @staticmethod
+    def show_friendly_error(error, url, operation="load"):
+        """Show user-friendly error message"""
+        error_str = str(error).lower()
+        
+        if 'timeout' in error_str:
+            QMessageBox.warning(None, "Timeout", 
+                f"Operation timed out for {operation}:\n{url[:60]}...\n\nTry again later.")
 def fetch_playlist_flat(url):
     """
-    Fetch playlist entries in one batch using yt-dlp, detecting the platform.
+    Fetch playlist entries safely without crashing on network errors
     """
     try:
         url_lower = url.lower()
-        # --- CHANGE 1: Use the Enum for cleaner type checking ---
-        kind = MediaType.BILIBILI if 'bilibili.com' in url_lower else MediaType.YOUTUBE
+        kind = 'bilibili' if 'bilibili.com' in url_lower else 'youtube'
 
-        result = subprocess.run(
-            ["yt-dlp", "--flat-playlist", "--dump-single-json", url],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            encoding="utf-8", check=True
-        )
-        data = json.loads(result.stdout)
+        # Run yt-dlp with timeout and error handling
+        try:
+            result = subprocess.run(
+                ["yt-dlp", "--flat-playlist", "--dump-single-json", url],
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.PIPE,
+                encoding="utf-8", 
+                timeout=30,  
+                check=True
+            )
+        except subprocess.TimeoutExpired:
+            print(f"[BatchFetch] Timeout for {url}")
+            return []
+        except subprocess.CalledProcessError as e:
+            # Log but don't crash
+            print(f"[BatchFetch] Failed for {url}: Network/availability error")
+            return []
+        except Exception as e:
+            print(f"[BatchFetch] Unexpected error for {url}: {e}")
+            return []
+
+        if not result.stdout.strip():
+            return []
+            
+        try:
+            data = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            print(f"[BatchFetch] Invalid JSON response for {url}")
+            return []
         
         playlist_title = data.get("title", "Unknown Playlist")
         playlist_key = data.get("id", url)
@@ -110,30 +255,41 @@ def fetch_playlist_flat(url):
         
         items = []
         for entry in entries:
-            video_url = entry.get("url")
-            title = entry.get("title", "Unknown")
-            
-            # --- CHANGE 2: Compare against the Enum ---
-            if kind == MediaType.YOUTUBE and not video_url.startswith('http'):
-                video_url = f"https://www.youtube.com/watch?v={entry.get('id')}"
-            elif kind == MediaType.BILIBILI and not video_url.startswith('http'):
-                 video_url = f"https://www.bilibili.com/video/{entry.get('id')}"
+            if not isinstance(entry, dict):
+                continue
+                
+            try:
+                video_url = entry.get("url", "")
+                title = entry.get("title", "Unknown")
+                video_id = entry.get("id", "")
+                
+                # Build proper URLs
+                if kind == 'youtube' and not video_url.startswith('http'):
+                    video_url = f"https://www.youtube.com/watch?v={video_id}"
+                elif kind == 'bilibili' and not video_url.startswith('http'):
+                    video_url = f"https://www.bilibili.com/video/{video_id}"
 
-            # If title is just the ID, mark it for later resolution
-            if kind == MediaType.BILIBILI and (title == entry.get('id') or title == "Unknown"):
-                title = f"[Loading Title...] {entry.get('id')}"
+                if not video_url:
+                    continue
 
-            items.append({
-                "title": title,
-                "url": video_url,
-                # --- CHANGE 3: Store the raw string value from the Enum ---
-                "type": kind.value, 
-                "playlist": playlist_title,
-                "playlist_key": playlist_key
-            })
+                # Handle missing titles
+                if kind == 'bilibili' and (not title or title == video_id or title == "Unknown"):
+                    title = f"[Loading Title...] {video_id}"
+
+                items.append({
+                    "title": title,
+                    "url": video_url,
+                    "type": kind,
+                    "playlist": playlist_title,
+                    "playlist_key": playlist_key
+                })
+            except Exception:
+                continue  # Skip bad entries
+                
         return items
+        
     except Exception as e:
-        print(f"[BatchFetch] Failed for {url}: {e}")
+        print(f"[BatchFetch] Fatal error for {url}: {e}")
         return []
     
 class VolumeIconLabel(QLabel):
@@ -2676,136 +2832,219 @@ class PlaylistLoaderThread(QThread):
         self.kind = kind  # 'youtube' or 'bilibili' or 'local'
 
     def run(self):
+        """Load playlist items without crashing on bad URLs"""
         try:
             import yt_dlp
         except Exception as e:
             self.error.emit(f"yt-dlp not available: {e}")
             return
+
+        # Simple, crash-proof yt-dlp options
         ydl_opts = {
             'quiet': True,
             'no_warnings': True,
             'extract_flat': True,
             'skip_download': True,
-            'socket_timeout': 60,
-            'retries': 3,
-            'playliststart': 1,
-            'playlistend': 10000,
+            'socket_timeout': 15,
+            'retries': 1,  # Only retry once
+            'ignoreerrors': True,  # Don't crash on errors
         }
+        
         if self.kind == 'bilibili':
             ydl_opts['cookiefile'] = str(COOKIES_BILI)
+
+        target_url = self.url
+        
+        # URL preprocessing for YouTube playlists
+        if self.kind == 'youtube' and 'list=' in self.url:
+            try:
+                import urllib.parse as up
+                u = up.urlparse(self.url)
+                qs = up.parse_qs(u.query)
+                lid = (qs.get('list') or [''])[0]
+                if lid:
+                    target_url = f"https://www.youtube.com/playlist?list={lid}"
+            except:
+                pass  # Use original URL if parsing fails
+
+        # CRASH-PROOF extraction
+        info = None
         try:
-            import urllib.parse as up
-            target_url = self.url
-            if self.kind == 'youtube' and ('list=' in self.url):
-                try:
-                    u = up.urlparse(self.url)
-                    qs = up.parse_qs(u.query)
-                    lid = (qs.get('list') or [''])[0]
-                    if lid:
-                        target_url = f"https://www.youtube.com/playlist?list={lid}"
-                except Exception:
-                    pass
+            # Create new yt-dlp instance for each request - avoids conflicts
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(target_url, download=False)
+                
         except Exception as e:
-            self.error.emit(f"Failed to load playlist: {e}")
-            return
+            # Convert exception to user-friendly error and emit
+            error_msg = str(e).lower()
+            
+            if 'private' in error_msg or 'unavailable' in error_msg:
+                self.error.emit(f"Playlist is private or unavailable: {target_url}")
+            elif 'not exist' in error_msg or 'not found' in error_msg:
+                self.error.emit(f"Playlist does not exist: {target_url}")
+            elif 'network' in error_msg or 'resolve' in error_msg or 'connection' in error_msg:
+                self.error.emit(f"Network error loading playlist. Check your connection.")
+            else:
+                self.error.emit(f"Could not load playlist: {str(e)[:100]}...")
+            
+            return  # Exit cleanly without crashing
+
+        # Process results safely
         try:
-            if info is None:
-                self.itemsReady.emit([]); return
-            # If this is a playlist with 'entries'
+            if not info:
+                self.error.emit("No playlist data received")
+                return
+
+            # Handle playlist with entries
             if isinstance(info, dict) and info.get('entries'):
-                playlist_title = info.get('title') or self.url
+                playlist_title = info.get('title', 'Unknown Playlist')
                 entries = list(info.get('entries') or [])
+                
+                # DEBUG: Print what we're getting from Bilibili
+                if self.kind == 'bilibili':
+                    print(f"DEBUG: Bilibili playlist '{playlist_title}' has {len(entries)} entries")
+                    if entries:
+                        print(f"DEBUG: First entry sample keys: {list(entries[0].keys()) if entries[0] else 'Empty'}")
+                        print(f"DEBUG: First entry title field: '{entries[0].get('title', 'NO TITLE')}'" if entries else "")
+                
                 chunk = []
-                for entry in entries:
+                for i, entry in enumerate(entries):
                     if not isinstance(entry, dict):
                         continue
-                    idv = entry.get('id') or ''
-                    u = entry.get('webpage_url') or entry.get('url') or idv
-                    if not u:
-                        continue
-                    # Normalize to full URL when extractor returns IDs only
-                    if self.kind == 'bilibili' and not (u.startswith('http://') or u.startswith('https://')):
-                        u = f"https://www.bilibili.com/video/{idv or u}"
-                    if self.kind == 'youtube' and not (u.startswith('http://') or u.startswith('https://')):
-                        u = f"https://www.youtube.com/watch?v={idv or u}"
-                    title = entry.get('title') or u
-                    chunk.append({'title': title, 'url': u, 'type': self.kind, 'playlist': playlist_title, 'playlist_key': info.get('id') or self.url})
-                    if len(chunk) >= 25:
-                        self.itemsReady.emit(chunk); chunk = []
+                        
+                    try:
+                        idv = entry.get('id', '')
+                        u = entry.get('webpage_url') or entry.get('url') or idv
+                        
+                        if not u:
+                            continue
+
+                        # Build proper URLs
+                        if self.kind == 'bilibili' and not u.startswith('http'):
+                            u = f"https://www.bilibili.com/video/{idv or u}"
+                        elif self.kind == 'youtube' and not u.startswith('http'):
+                            u = f"https://www.youtube.com/watch?v={idv or u}"
+
+                        # Enhanced title extraction for Bilibili
+                        if self.kind == 'bilibili':
+                            title = (
+                                entry.get('title') or           # Primary title field
+                                entry.get('alt_title') or       # Alternative title
+                                entry.get('description', '')[:50] or  # Fallback to description
+                                f"Bilibili Video {idv or u[-8:]}"     # Final fallback with ID
+                            )
+                        else:
+                            title = entry.get('title') or f"Video {idv or u}"
+                        
+                        # DEBUG: Show what title data we're getting for first few entries
+                        if self.kind == 'bilibili' and i < 3:
+                            print(f"DEBUG: Entry {i}: id='{idv}', url='{u}', final_title='{title}'")
+                        
+                        item = {
+                            'title': title,
+                            'url': u,
+                            'type': self.kind,
+                            'playlist': playlist_title,
+                            'playlist_key': info.get('id', target_url)
+                        }
+                        
+                        chunk.append(item)
+                        
+                        # Emit in smaller chunks to avoid overwhelming UI
+                        if len(chunk) >= 20:
+                            self.itemsReady.emit(chunk)
+                            chunk = []
+                            
+                    except Exception as e:
+                        if self.kind == 'bilibili' and i < 3:
+                            print(f"DEBUG: Error processing entry {i}: {e}")
+                        continue  # Skip bad entries, don't crash
+                
+                # Emit remaining items
                 if chunk:
                     self.itemsReady.emit(chunk)
+                    
             else:
                 # Single video fallback
-                self.itemsReady.emit([{'title': info.get('title') or self.url, 'url': self.url, 'type': self.kind}])
+                title = info.get('title', target_url) if isinstance(info, dict) else target_url
+                single_item = {
+                    'title': title,
+                    'url': target_url,
+                    'type': self.kind
+                }
+                self.itemsReady.emit([single_item])
+                
         except Exception as e:
-            self.error.emit(str(e)); return
+            self.error.emit(f"Error processing playlist data: {e}")
 
 class YtdlManager(QThread):
-    """A persistent background thread to manage and reuse expensive yt-dlp instances."""
-    titleResolved = Signal(str, str)  # url, title
-    error = Signal(str)
+    titleResolved = Signal(str, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._queue = queue.Queue()
         self._should_stop = False
-        self.ydl_instances = {}  # To store one ydl instance per configuration
+        self._ydl_cache = {}  # Cache yt-dlp instances per thread
 
     def resolve(self, url: str, kind: str):
-        """Public method for the main thread to request a title resolution."""
         if url and kind:
             self._queue.put({'url': url, 'kind': kind})
 
     def stop(self):
-        """Gracefully stop the background thread."""
         self._should_stop = True
-        self._queue.put(None)  # Sentinel value to unblock the queue.get()
+        self._queue.put(None)
 
     def run(self):
-        logger.debug("[YtdlManager] Background thread started.")
-        import yt_dlp
-
+        """Run with CACHED yt-dlp instances for better performance"""
+        print(f"DEBUG: YtdlManager worker started")
+        
         while not self._should_stop:
-            job = self._queue.get()
+            try:
+                job = self._queue.get(timeout=1)
+            except queue.Empty:
+                continue
+            
             if job is None:
-                break # Exit loop if sentinel is received
+                break
 
             url = job['url']
             kind = job['kind']
+            
+            print(f"DEBUG: YtdlManager processing {kind} URL: {url[-20:]}...")
 
             try:
-                # Lazy-initialize a yt-dlp instance for this 'kind' if it doesn't exist
-                if kind not in self.ydl_instances:
-                    logger.info(f"[YtdlManager] Creating new yt-dlp instance for kind: {kind}")
+                # REUSE cached yt-dlp instance for this thread
+                cache_key = kind
+                if cache_key not in self._ydl_cache:
                     opts = {
                         'quiet': True,
                         'no_warnings': True,
                         'skip_download': True,
-                        'socket_timeout': 10,
+                        'socket_timeout': 30,  # Longer timeout
                         'retries': 2,
                     }
                     if kind == 'bilibili':
                         opts['cookiefile'] = str(COOKIES_BILI)
                     
-                    # This is the expensive call that will now only happen once per kind.
-                    self.ydl_instances[kind] = yt_dlp.YoutubeDL(opts)
+                    import yt_dlp
+                    self._ydl_cache[cache_key] = yt_dlp.YoutubeDL(opts)
+                    print(f"DEBUG: Created new yt-dlp instance for {kind}")
 
-                # Use the appropriate, persistent instance
-                ydl = self.ydl_instances[kind]
+                ydl = self._ydl_cache[cache_key]
                 info = ydl.extract_info(url, download=False)
                 
                 title = info.get('title') if isinstance(info, dict) else None
+                print(f"DEBUG: YtdlManager got title: '{title}' for {url[-20:]}...")
+                
                 if title and title != url:
                     self.titleResolved.emit(url, title)
+                    print(f"DEBUG: YtdlManager emitted title for {url[-20:]}...")
+                else:
+                    print(f"DEBUG: YtdlManager failed - no valid title for {url[-20:]}... (title='{title}')")
 
             except Exception as e:
-                logger.warning(f"[YtdlManager] Failed to resolve title for {url}: {e}")
-                # Optionally emit an error signal
-                # self.error.emit(str(e))
-        
-        logger.info("[YtdlManager] Background thread finished.")
+                print(f"DEBUG: YtdlManager error for {url[-20:]}...: {e}")
+                pass
 
 class DurationFetcher(QThread):
     progressUpdated = Signal(int, int)  # current, total
@@ -3771,14 +4010,16 @@ class MediaPlayer(QMainWindow):
         self._subscription_manager = None 
 
         # Create 4 parallel workers for faster title resolution
+        print(f"DEBUG: Creating {10} YtdlManager workers...")
         self.ytdl_workers = []
-        for i in range(10):
+        for i in range(10):  # Reduced from 10 to 4
             worker = YtdlManager(self)
             worker.titleResolved.connect(self._on_title_resolved)
-            worker.error.connect(lambda e: print(f"Title resolution error: {e}"))
             worker.start()
             self.ytdl_workers.append(worker)
+            print(f"DEBUG: Created YtdlManager worker {i}")
         self._worker_index = 0
+        print(f"DEBUG: All {len(self.ytdl_workers)} YtdlManager workers created")
         self._local_dur = LocalDurationQueue(self)
         self._local_dur.durationReady.connect(self._on_duration_ready)  # reuse existing slot
         self._local_dur.start()
@@ -9295,21 +9536,16 @@ class MediaPlayer(QMainWindow):
         
     def _add_url_to_playlist(self, url: str):
         try:
-        
-            if not url or len(url.strip()) > 2000:
-                self.status.showMessage("Invalid URL: too long or empty", 3000)
-                return
-        
-            # Basic URL format check
-            url_clean = url.strip().strip('"').strip("'")
-            if not (url_clean.startswith(('http://', 'https://')) or 
-                    self._is_local_file(url_clean) or 
-                    os.path.exists(url_clean)):
-                self.status.showMessage("Invalid URL format", 3000)
-                return
-        
             # Sanitize quotes/whitespace early
             url = (url or "").strip().strip('"').strip("'")
+            
+            # ADD VALIDATION HERE TOO:
+            is_valid, error_msg = URLValidator.is_supported_url(url)
+            if not is_valid:
+                self.status.showMessage(f"Invalid URL: {error_msg}", 4000)
+                return
+            
+            # Rest of your existing _add_url_to_playlist code stays exactly the same...
             url_lower = url.lower()
 
             if 'youtube.com' in url_lower or 'youtu.be' in url_lower:
@@ -9318,7 +9554,7 @@ class MediaPlayer(QMainWindow):
                 media_type = 'bilibili'
             else:
                 media_type = 'local'
-
+                
             # Detect playlists for network sources
             if media_type == 'youtube':
                 is_playlist = ('list=' in url_lower or '/playlist' in url_lower)
@@ -9368,16 +9604,33 @@ class MediaPlayer(QMainWindow):
                 self._add_single_item_to_tree(new_index, item)
                 self._schedule_save_current_playlist()
                 return
-
+            
             # Network playlist
             if is_playlist:
+                # VALIDATE PLAYLIST FIRST:
+                is_accessible, error_msg = URLValidator.validate_playlist_access(url)
+                if not is_accessible:
+                    QMessageBox.warning(self, "Playlist Access Error", 
+                        f"Cannot load playlist:\n{url[:80]}...\n\n{error_msg}")
+                    return
+                
                 self._show_loading("Loading playlist entries...")
                 loader = PlaylistLoaderThread(url, media_type)
                 self._playlist_loader = loader
                 loader.itemsReady.connect(self._on_playlist_items_ready)
-                loader.error.connect(lambda e: self._hide_loading(f"Playlist load failed: {e}", 5000))
+                
+                def handle_playlist_error(error_msg):
+                    try:
+                        self._hide_loading(f"Failed to load playlist", 3000)
+                        QMessageBox.warning(self, "Playlist Load Failed", 
+                            f"Could not load playlist:\n{url[:80]}...\n\nReason: {error_msg}")
+                    except Exception:
+                        print(f"Playlist load failed: {error_msg}")
+                
+                loader.error.connect(handle_playlist_error)
                 loader.finished.connect(loader.deleteLater)
                 loader.start()
+
             else:
                 # Single network item
                 display = Path(url).name or url
@@ -9617,6 +9870,14 @@ class MediaPlayer(QMainWindow):
 
         # Strip quotes and whitespace
         url_in = raw.strip().strip('"').strip("'")
+        
+        # ADD VALIDATION HERE:
+        is_valid, error_msg = URLValidator.is_supported_url(url_in)
+        if not is_valid:
+            QMessageBox.warning(self, "Invalid URL", f"Cannot add this URL:\n\n{error_msg}\n\nPlease check the URL and try again.")
+            return
+        
+        # Rest of your existing code stays the same...
         url_lower = url_in.lower()
 
         # Classify
@@ -12586,29 +12847,59 @@ class SubscriptionManager(QThread):
         return True
 
     def run_check(self):
-        self.logMessage.emit("Checking subscriptions...")
-        self.sub_logger.info("Checking subscriptions...")
+        """Check subscriptions without crashing on network errors"""
+        try:
+            self.logMessage.emit("Checking subscriptions...")
+            self.sub_logger.info("Checking subscriptions...")
 
-        if self.upgrade_legacy_subscriptions():
-            self.logMessage.emit("Subscription format upgraded. Refreshing list.")
-            return
+            if self.upgrade_legacy_subscriptions():
+                self.logMessage.emit("Subscription format upgraded. Refreshing list.")
+                return
 
-        if self.subscriptions:
+            if not self.subscriptions:
+                return
+
             for sub in self.subscriptions:
-                if not self._is_running: break
-                if not isinstance(sub, dict): continue
+                if not self._is_running: 
+                    break
+                if not isinstance(sub, dict): 
+                    continue
                 url = sub.get('url')
-                if not url: continue
+                if not url: 
+                    continue
 
-                new_videos = fetch_playlist_flat(url)
-                if new_videos:
-                    for video in new_videos:
-                        if "[Loading Title...]" in video.get('title', ''):
-                            self.player._resolve_title_parallel(video['url'], video['type'])
-                    self.newVideosFound.emit(url, new_videos)
+                try:
+                    # Check network connectivity first
+                    new_videos = fetch_playlist_flat(url)
+                    if new_videos:
+                        # Only process if we got results
+                        for video in new_videos:
+                            if "[Loading Title...]" in video.get('title', ''):
+                                try:
+                                    if hasattr(self.player, '_resolve_title_parallel'):
+                                        self.player._resolve_title_parallel(video['url'], video['type'])
+                                except Exception:
+                                    pass  # Don't crash on title resolution failure
+                        
+                        # Emit new videos found
+                        self.newVideosFound.emit(url, new_videos)
+                    
+                    sub['last_checked'] = datetime.now().isoformat()
+                    
+                except Exception as e:
+                    # Log subscription check failure but don't crash
+                    self.sub_logger.warning(f"Failed to check subscription {url}: {e}")
+                    continue
+
+            # Save subscription updates
+            try:
+                self.save_subscriptions()
+            except Exception as e:
+                self.sub_logger.error(f"Failed to save subscriptions: {e}")
                 
-                sub['last_checked'] = datetime.now().isoformat()
-            self.save_subscriptions()
+        except Exception as e:
+            # Catch-all to prevent subscription system from crashing app
+            self.sub_logger.error(f"Subscription check failed: {e}")
 
     def run(self):
         self.logMessage.emit("Subscription manager started.")
