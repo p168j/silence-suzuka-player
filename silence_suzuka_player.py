@@ -2833,18 +2833,27 @@ class ThumbnailFetcher(QThread):
 class PlaylistLoaderThread(QThread):
     itemsReady = Signal(list)
     error = Signal(str)
+    progressUpdate = Signal(int, int)  # Add progress signal
 
     def __init__(self, url: str, kind: str, parent=None):
         super().__init__(parent)
         self.url = url
-        self.kind = kind  # 'youtube' or 'bilibili' or 'local'  
+        self.kind = kind  # 'youtube' or 'bilibili' or 'local'
+        self._should_stop = False  # Add cancellation flag
+
+    def stop(self):
+        """Request the thread to stop"""
+        self._should_stop = True
 
     def run(self):
-        """Load playlist items without crashing on bad URLs"""
+        """Load playlist items with cancellation support"""
         try:
             import yt_dlp
         except Exception as e:
             self.error.emit(f"yt-dlp not available: {e}")
+            return
+
+        if self._should_stop:
             return
 
         # Simple, crash-proof yt-dlp options
@@ -2854,8 +2863,8 @@ class PlaylistLoaderThread(QThread):
             'extract_flat': True,
             'skip_download': True,
             'socket_timeout': 15,
-            'retries': 1,  # Only retry once
-            'ignoreerrors': True,  # Don't crash on errors
+            'retries': 1,
+            'ignoreerrors': True,
         }
         
         if self.kind == 'bilibili':
@@ -2873,17 +2882,21 @@ class PlaylistLoaderThread(QThread):
                 if lid:
                     target_url = f"https://www.youtube.com/playlist?list={lid}"
             except:
-                pass  # Use original URL if parsing fails
+                pass
+
+        if self._should_stop:
+            return
 
         # CRASH-PROOF extraction
         info = None
         try:
-            # Create new yt-dlp instance for each request - avoids conflicts
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(target_url, download=False)
                 
         except Exception as e:
-            # Convert exception to user-friendly error and emit
+            if self._should_stop:
+                return
+            # Handle errors as before...
             error_msg = str(e).lower()
             
             if 'private' in error_msg or 'unavailable' in error_msg:
@@ -2895,28 +2908,30 @@ class PlaylistLoaderThread(QThread):
             else:
                 self.error.emit(f"Could not load playlist: {str(e)[:100]}...")
             
-            return  # Exit cleanly without crashing
+            return
 
-        # Process results safely
+        if self._should_stop:
+            return
+
+        # Process results safely with progress updates
         try:
             if not info:
                 self.error.emit("No playlist data received")
                 return
 
-            # Handle playlist with entries
             if isinstance(info, dict) and info.get('entries'):
                 playlist_title = info.get('title', 'Unknown Playlist')
                 entries = list(info.get('entries') or [])
+                total_entries = len(entries)
                 
-                # DEBUG: Print what we're getting from Bilibili
-                if self.kind == 'bilibili':
-                    print(f"DEBUG: Bilibili playlist '{playlist_title}' has {len(entries)} entries")
-                    if entries:
-                        print(f"DEBUG: First entry sample keys: {list(entries[0].keys()) if entries[0] else 'Empty'}")
-                        print(f"DEBUG: First entry title field: '{entries[0].get('title', 'NO TITLE')}'" if entries else "")
-                
+                if self._should_stop:
+                    return
+
                 chunk = []
                 for i, entry in enumerate(entries):
+                    if self._should_stop:
+                        return
+                        
                     if not isinstance(entry, dict):
                         continue
                         
@@ -2933,20 +2948,16 @@ class PlaylistLoaderThread(QThread):
                         elif self.kind == 'youtube' and not u.startswith('http'):
                             u = f"https://www.youtube.com/watch?v={idv or u}"
 
-                        # Enhanced title extraction for Bilibili
+                        # Title extraction
                         if self.kind == 'bilibili':
                             title = (
-                                entry.get('title') or           # Primary title field
-                                entry.get('alt_title') or       # Alternative title
-                                entry.get('description', '')[:50] or  # Fallback to description
-                                f"Bilibili Video {idv or u[-8:]}"     # Final fallback with ID
+                                entry.get('title') or
+                                entry.get('alt_title') or
+                                entry.get('description', '')[:50] or
+                                f"Bilibili Video {idv or u[-8:]}"
                             )
                         else:
                             title = entry.get('title') or f"Video {idv or u}"
-                        
-                        # DEBUG: Show what title data we're getting for first few entries
-                        if self.kind == 'bilibili' and i < 3:
-                            print(f"DEBUG: Entry {i}: id='{idv}', url='{u}', final_title='{title}'")
                         
                         item = {
                             'title': title,
@@ -2958,18 +2969,19 @@ class PlaylistLoaderThread(QThread):
                         
                         chunk.append(item)
                         
+                        # Emit progress update
+                        self.progressUpdate.emit(i + 1, total_entries)
+                        
                         # Emit in smaller chunks to avoid overwhelming UI
                         if len(chunk) >= 20:
                             self.itemsReady.emit(chunk)
                             chunk = []
                             
                     except Exception as e:
-                        if self.kind == 'bilibili' and i < 3:
-                            print(f"DEBUG: Error processing entry {i}: {e}")
-                        continue  # Skip bad entries, don't crash
+                        continue
                 
                 # Emit remaining items
-                if chunk:
+                if chunk and not self._should_stop:
                     self.itemsReady.emit(chunk)
                     
             else:
@@ -2980,10 +2992,12 @@ class PlaylistLoaderThread(QThread):
                     'url': target_url,
                     'type': self.kind
                 }
-                self.itemsReady.emit([single_item])
+                if not self._should_stop:
+                    self.itemsReady.emit([single_item])
                 
         except Exception as e:
-            self.error.emit(f"Error processing playlist data: {e}")
+            if not self._should_stop:
+                self.error.emit(f"Error processing playlist data: {e}")
 
 class YtdlManager(QThread):
     titleResolved = Signal(str, str)
@@ -4953,7 +4967,7 @@ class MediaPlayer(QMainWindow):
             self.status.showMessage(f"Mark unwatched failed: {e}", 4000)
 
     def _show_loading(self, message="Loading..."):
-        """Show loading indicator as centered overlay"""
+        """Show loading indicator as centered overlay with cancel support"""
         if not hasattr(self, '_loading_overlay'):
             # Create overlay widget
             self._loading_overlay = QWidget(self)
@@ -4973,7 +4987,8 @@ class MediaPlayer(QMainWindow):
             
             # Spinner
             self._loading_progress = QProgressBar()
-            self._loading_progress.setRange(0, 0)  # Indeterminate
+            self._loading_progress.setRange(0, 100)
+            self._loading_progress.setValue(0)
             self._loading_progress.setMaximumWidth(200)
             self._loading_progress.setTextVisible(False)
             
@@ -4982,17 +4997,60 @@ class MediaPlayer(QMainWindow):
             self._loading_label.setAlignment(Qt.AlignCenter)
             self._loading_label.setStyleSheet("color: white; font-size: 14px; margin: 10px;")
             
+            # Cancel button
+            self._loading_cancel_btn = QPushButton("Cancel")
+            self._loading_cancel_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #e76f51;
+                    color: white;
+                    border: none;
+                    padding: 8px 16px;
+                    border-radius: 4px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #d86a4a;
+                }
+            """)
+            self._loading_cancel_btn.clicked.connect(self._cancel_playlist_loading)
+            
             overlay_layout.addWidget(self._loading_progress)
             overlay_layout.addWidget(self._loading_label)
+            overlay_layout.addWidget(self._loading_cancel_btn)
             
             # Position overlay in center of main window
-            self._loading_overlay.setFixedSize(250, 100)
+            self._loading_overlay.setFixedSize(280, 140)
         
         # Update message and show
         self._loading_label.setText(message)
         self._position_loading_overlay()
         self._loading_overlay.show()
         self._loading_overlay.raise_()
+
+    def _cancel_playlist_loading(self):
+        """Cancel the current playlist loading operation"""
+        try:
+            if hasattr(self, '_playlist_loader') and self._playlist_loader:
+                self._playlist_loader.stop()
+                self._playlist_loader.wait(1000)  # Wait up to 1 second
+                self._playlist_loader.deleteLater()
+                self._playlist_loader = None
+            
+            self._hide_loading()
+            self.status.showMessage("Playlist loading cancelled", 3000)
+            
+        except Exception as e:
+            print(f"Cancel playlist loading error: {e}")
+            self._hide_loading()
+
+    def _update_loading_progress(self, current, total):
+        """Update loading progress bar"""
+        if hasattr(self, '_loading_progress') and self._loading_progress:
+            progress = int((current / total) * 100) if total > 0 else 0
+            self._loading_progress.setValue(progress)
+            
+        if hasattr(self, '_loading_label') and self._loading_label:
+            self._loading_label.setText(f"Loading playlist entries... ({current}/{total})")
 
     def _hide_loading(self, final_message="", timeout=3000):
         """Hide loading overlay"""
@@ -9714,21 +9772,27 @@ class MediaPlayer(QMainWindow):
                         f"Cannot load playlist:\n{url[:80]}...\n\n{error_msg}")
                     return
                 
-                self._show_loading("Loading playlist entries...")
+                self._show_loading("Checking playlist...")
                 loader = PlaylistLoaderThread(url, media_type)
                 self._playlist_loader = loader
+                
+                # Connect all signals including progress
                 loader.itemsReady.connect(self._on_playlist_items_ready)
+                loader.progressUpdate.connect(self._update_loading_progress)
                 
                 def handle_playlist_error(error_msg):
                     try:
-                        self._hide_loading(f"Failed to load playlist", 3000)
+                        self._hide_loading()
                         QMessageBox.warning(self, "Playlist Load Failed", 
                             f"Could not load playlist:\n{url[:80]}...\n\nReason: {error_msg}")
                     except Exception:
                         print(f"Playlist load failed: {error_msg}")
                 
                 loader.error.connect(handle_playlist_error)
-                loader.finished.connect(loader.deleteLater)
+                loader.finished.connect(lambda: (
+                    loader.deleteLater(),
+                    setattr(self, '_playlist_loader', None)
+                ))
                 loader.start()
 
             else:
