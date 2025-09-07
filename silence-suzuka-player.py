@@ -6651,266 +6651,43 @@ class MediaPlayer(QMainWindow):
         self.central_widget.setPalette(palette)
         
     def _apply_vinyl_theme(self):
-        style = """
-        QMainWindow, QDialog { background-color: #f3ead3; color: #4a2c2a; font-family: '{self._ui_font}'; }
-        #titleLabel { color: #4a2c2a; font-size: 20px; font-weight: bold; font-style: italic; font-family: '{self._serif_font}'; }
-        #scopeDropdown {
-            background-color: #f0e7cf;
-            color: #4a2c2a;
-            border: 1px solid #c2a882;
-            padding: 4px 8px;
-            border-radius: 6px;
-            font-family: '{self._ui_font}';
-            font-size: 13px;
-        }
-        #scopeDropdown::drop-down {
-            border: none;
-            width: 20px;
-        }
-        #scopeDropdown::down-arrow {
-            image: url(icons/chevron-down-dark.svg);
-            border-left: 4px solid transparent;
-            border-right: 4px solid transparent;
-            border-top: 5px solid #654321;
-            margin-right: 5px;
-        }
-        #scopeDropdown:hover {
-            background-color: #e9e0c8;
-            border-color: #b6916d;
-        }
-        #scopeDropdown QAbstractItemView {
-            background-color: #faf3e0;
-            color: #4a2c2a;
-            selection-background-color: #e76f51;
-            selection-color: #f3ead3;
-            border: 1px solid #c2a882;
-        }        
-        #settingsBtn { background: transparent; color: #654321; font-size: 18px; border: none; padding: 2px 6px; min-width: 32px; min-height: 28px; border-radius: 6px; }
-        #settingsBtn:hover { background-color: rgba(0,0,0,0.03); color: #4a2c2a; }
-        #settingsBtn:pressed { background-color: rgba(0,0,0,0.08); }
-        #scopeChip { background-color: rgba(250,243,224,0.9); color: #4a2c2a; border: 1px solid #c2a882; padding: 2px 8px; border-radius: 10px; font-size: 12px; margin-left: 8px; }
-        #statsBadge { background-color: transparent; color: #654321; border: 1px solid #c2a882; padding: 4px 12px; margin-left: 8px; margin-right: 8px; border-radius: 10px; font-size: 12px; }
-        #sidebar { background-color: rgba(250, 243, 224, 0.85); border: 1px solid rgba(194, 168, 130, 0.5); border-radius: 8px; padding: 16px; }
-        #addBtn { 
-                background-color: #e76f51; 
-                color: #f3ead3; 
-                border: none; 
-                padding: 8px 12px; 
-                border-radius: 8px; 
-                font-weight: bold; 
-                margin-bottom: 8px; 
-                text-align: left;
-                qproperty-text: "  + Add Media";
-            }
-        #addBtn::menu-indicator {
-                image: url(icons/chevron-down-dark.svg);
-                subcontrol-position: right top;
-                subcontrol-origin: padding;
-                right: 10px;
-                top: 2px;
-            }
-        #addBtn:hover { background-color: #d86a4a; }
-        #addBtn:pressed { background-color: #d1603f; }
-        #miniBtn { background: transparent; color: #654321; border: none; font-size: 16px; }
-        #miniBtn:hover { color: #4a2c2a; }
-        #miniBtn:pressed { color: #654321; }
-        #playlistTree { background-color: transparent; border: none; color: #4a2c2a; font-family: '{self._serif_font}'; alternate-background-color: #f0e7cf; margin-left: 8px; }
-        #playlistTree::item {
-            min-height: 30px;        /* Reduced from 32px */
-            height: 30px;            /* Reduced from 32px */
-            padding: 6px 12px 6px 8px;  /* Tighter: 6px vertical, 8px left (was 8px, 12px) */
-            color: #3d2318;          /* Warmer brown (was #3b2d1a) */
-            line-height: 1.3;        /* Add this line for tighter text */
-        }
+        """Applies the vinyl theme by loading styles from vinyl.qss."""
+        try:
+            # Read the stylesheet from the external file
+            with open(APP_DIR / 'vinyl.qss', 'r', encoding='utf-8') as f:
+                style = f.read()
+            self.setStyleSheet(style)
+        except Exception as e:
+            logger.error(f"Failed to load vinyl theme stylesheet: {e}")
+            # Fallback to a basic background color if file fails to load
+            self.setStyleSheet("QMainWindow, QDialog { background-color: #f3ead3; }")
 
-        /* NEW: Add this rule for the playing item border */
-        #playlistTree::item[playing="true"] {
-            border-left: 3px solid #e76f51;  /* Your orange accent */
-            padding-left: 9px;               /* Compensate for border width */
-            background-color: rgba(231, 111, 81, 0.1);  /* Subtle background tint */
-        }
+        try:
+            eff = QGraphicsDropShadowEffect(self.video_frame)
+            eff.setBlurRadius(25)
+            eff.setOffset(0, 0)
+            eff.setColor(QColor(0, 0, 0, 110))
+            self.video_frame.setGraphicsEffect(eff)
+        except Exception:
+            pass
+        
+        try:
+            bg = self.centralWidget()
+            if bg:
+                # Use the SVG pattern for the background
+                path = str(APP_DIR / 'vinyl_pattern.svg').replace('\\', '/')
+                bg.setStyleSheet(f"#bgRoot {{ background-color: #f3ead3; border-image: url('{path}') 0 0 0 0 repeat repeat; }}")
+                bg.setAutoFillBackground(True)
+        except Exception as e:
+            logger.error(f"Failed to apply vinyl background pattern: {e}")
+        
+        self._update_widget_themes()
+        self._setup_button_animations()
 
-        #playlistTree::item:!selected {
-            border-bottom: 1px solid #e5d5b8;
-        }
-
-        #playlistTree::item:selected {
-            background-color: #e76f51;
-            color: #fff6d9;
-            font-weight: bold;
-        }
-        #playlistTree::item:hover { background-color: rgba(239, 227, 200, 0.5); }
-        #playlistTree::item:selected { background-color: #e76f51; color: #f3ead3; }
-        #playlistTree::item[loading="true"] {
-            color: #888888;
-            font-style: italic;
-        }
-        #videoWidget { background-color: #000; border-radius: 8px; border: 10px solid #faf3e0; }
-        /* REMOVED: #trackLabel styling - let _update_widget_themes() handle it */
-        #playPauseBtn { background-color: #e76f51; color: #f3ead3; font-size: 26px; border: none; border-radius: 30px; width: 60px; height: 60px; padding: 0px; }
-        #playPauseBtn:hover {
-        background-color: #d86a4a;
-    }
-        #playPauseBtn:pressed { background-color: #d1603f; }
-        #controlBtn { background: transparent; color: #654321; font-size: 20px; border: none; border-radius: 20px; width: 40px; height: 40px; padding: 0px; }
-        #controlBtn:hover { background-color: rgba(0,0,0,0.04); color: #4a2c2a; }
-        #controlBtn:pressed { background-color: rgba(0,0,0,0.08); }
-        QSlider::groove:horizontal { height: 6px; background-color: #c2a882; border-radius: 3px; }
-        QSlider::handle:horizontal { 
-            width: 18px; 
-            height: 18px; 
-            background-color: #4a2c2a; 
-            border-radius: 9px; 
-            margin: -6px 0; 
-        }
-        QSlider::sub-page:horizontal { background-color: #e76f51; border-radius: 3px; }
-        #timeLabel, #durLabel { font-family: '{self._ui_font}'; font-size: 13px; color: #654321; }
-        #silenceIndicator { color: #b00000; font-size: 18px; margin: 0 8px; padding-bottom: 3px; }
-        #upNext::item { min-height: 28px; height: 28px; padding: 6px 12px; }
-        #upNext::item:hover { background-color: rgba(239, 227, 200, 0.4); }
-        #upNext::item:selected { background-color: #e76f51; color: #f3ead3; }
-        #upNextHeader { 
-            background-color: rgba(250,243,224,0.9); 
-            color: #4a2c2a; 
-            border: 1px solid rgba(194, 168, 130, 0.3); 
-            border-radius: 6px; 
-            padding: 4px 8px; 
-            text-align:left; 
-        }
-        #upNextHeader:hover { background-color: #f0e7cf; }
-        #upNextHeader:pressed { background-color: #e9e0c8; }
-        #upNext { 
-            background-color: #faf3e0; 
-            border: 1px solid rgba(194, 168, 130, 0.3); 
-            border-radius: 6px; 
-            font-family: '{self._serif_font}'; 
-            alternate-background-color: #f0e7cf;
-        }
-        QProgressBar { background-color: #f0e7cf; border: 1px solid #c2a882; border-radius: 4px; text-align: center; color: #4a2c2a; }
-        QProgressBar::chunk { background-color: #e76f51; border-radius: 4px; }
-        QStatusBar { color: #4a2c2a; }
-        QMenu { background-color: #faf3e0; color: #4a2c2a; border: 1px solid #c2a882; font-size: 13px; }
-        QMenu::item { padding: 6px 12px; }
-        QMenu::item:selected { background-color: #e76f51; color: #f3ead3; }
-        QToolTip { background-color: #fff6d9; color: #4a2c2a; border: 1px solid #c2a882; padding: 4px 8px; border-radius: 6px; font-size: 9pt; }
-        QScrollBar:vertical { background: transparent; width: 12px; margin: 0px; }
-        QScrollBar::handle:vertical { background: #c2a882; min-height: 24px; border-radius: 6px; }
-        QScrollBar::handle:vertical:hover { background: #b6916d; }
-        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
-        QScrollBar:horizontal { background: transparent; height: 12px; margin: 0px; }
-        QScrollBar::handle:horizontal { background: #c2a882; min-width: 24px; border-radius: 6px; }
-        QScrollBar::handle:horizontal:hover { background: #b6916d; }
-        QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
-        QTabWidget::pane { border: 1px solid #c2a882; border-radius: 6px; }
-        QTabBar::tab { background-color: rgba(250,243,224,0.9); color: #4a2c2a; padding: 6px 10px; border: 1px solid #c2a882; border-bottom: none; border-top-left-radius: 6px; border-top-right-radius: 6px; margin-right: 2px; }
-        QTabBar::tab:selected { background-color: #f0e7cf; color: #4a2c2a; }
-        QTabBar::tab:hover { background-color: #f0e7cf; }
-        #upNext { font-family: '{self._serif_font}'; alternate-background-color: #f0e7cf; }
-        #timeLabel, #durLabel { font-family: '{self._ui_font}'; font-size: 13px; color: #654321; }
-        QLineEdit#searchBar { 
-            background-color: #f0e7cf; 
-            border: 1px solid #c2a882; 
-            border-radius: 6px; 
-            padding: 6px 10px;              /* Slightly more comfortable */
-            margin: 10px 0;                 /* More breathing room */
-            color: #3d2318;                 /* Warmer text color */
-            selection-background-color: #e76f51;
-            font-size: 13px;                /* Ensure readable size */
-        }
-        /* REMOVED: #emptyStateIcon, #emptyStateHeading, #emptyStateSubheading - let _update_widget_themes() handle them */
-        #addMediaBtn {
-        background-color: #e76f51;
-        color: #f3ead3;
-        border: none;
-        border-radius: 8px;
-        padding: 0 18px;
-        font-weight: bold;
-        font-size: 1.1em;
-        text-align: left;
-        font-family: 'Inter', 'Segoe UI', sans-serif;
-    }
-    #addMediaBtn:hover {
-        background-color: #d86a4a;
-    }
-    #addMediaBtn:pressed {
-        background-color: #d1603f;
-        opacity: 0.8;
-    }
-    #addMediaBtn::menu-indicator {
-    image: none;
-    width: 0;
-    height: 0;
-    }
-    /* Focus styling: keep keyboard-accessibility but hide default outline */
-    QPushButton:focus { outline: none; }
-    /* Themed focus ring for play/pause in vinyl theme (soft warm accent) */
-    #playPauseBtn:focus {
-        border: 2px solid rgba(231,111,81,0.18); /* soft e76f51 tint */
-        border-radius: 30px;
-        padding: 0px;
-    }    
-    QHBoxLayout#top {
-    border-bottom: 1.5px solid #e5d5b8;
-    padding-bottom: 6px;
-    margin-bottom: 8px;
-    }
-    #playlistTree::item:selected, #playlistTree::item:focus {
-    background-color: #e76f51;
-    color: #fff6d9;
-    font-weight: bold;
-    }
-    #libraryHeader {
-        background: #4a2c2a;
-        color: #f3ead3;
-        font-weight: 600;
-        padding: 12px 16px 12px 20px;  /* Increased from 8px to 12px vertical */
-        min-height: 36px;              /* Increased from 32px to 36px */
-        border-top-left-radius: 8px;
-        border-top-right-radius: 8px;
-        font-family: '{self._serif_font}';
-        margin-bottom: 4px;            /* Add space below header */
-    }
-    #addMediaContainer {
-        max-width: 220px;
-    }
-    #addMediaMain {
-        background-color: #e76f51;
-        color: #f3ead3;
-        border: none;
-        border-top-left-radius: 8px;
-        border-bottom-left-radius: 8px;
-        border-top-right-radius: 0px;
-        border-bottom-right-radius: 0px;
-        padding: 8px 16px;
-        font-weight: bold;
-        text-align: center;
-        font-family: 'Inter', 'Segoe UI', sans-serif;
-    }
-    #addMediaMain:hover {
-        background-color: #d86a4a;
-    }
-    #addMediaMain:pressed {
-        background-color: #d1603f;
-    }
-    #addMediaDropdown {
-        background-color: #d86a4a;
-        color: #f3ead3;
-        border: none;
-        border-left: 1px solid #c85f47;
-        border-top-right-radius: 8px;
-        border-bottom-right-radius: 8px;
-        font-size: 11px;
-        font-weight: bold;
-    }
-    #addMediaDropdown:hover {
-        background-color: #c85f47;
-    }
-    #addMediaDropdown:pressed {
-        background-color: #b8543e;
-    }
-    """
-        style = style.replace("{self._ui_font}", self._ui_font).replace("{self._serif_font}", self._serif_font)
-        self.setStyleSheet(style)
+        # Force style refresh on main components
+        self.update()
+        if hasattr(self, 'centralWidget') and self.centralWidget():
+            self.centralWidget().update()
         try:
             eff = QGraphicsDropShadowEffect(self.video_frame)
             eff.setBlurRadius(25)
