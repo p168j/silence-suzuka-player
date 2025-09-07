@@ -1506,6 +1506,50 @@ class PlaylistManagerDialog(QDialog):
             }
         """)
 
+class AboutDialog(QDialog):
+    """A simple dialog to show application information."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("About Silence Suzuka Player")
+        self.setFixedSize(380, 220)
+
+        # Use the parent's theme
+        if parent and hasattr(parent, '_apply_dialog_theme'):
+            parent._apply_dialog_theme(self)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+        layout.setAlignment(Qt.AlignCenter)
+
+        # App Icon
+        icon_label = QLabel()
+        app_icon = QIcon(str(APP_DIR / 'icons/app-icon.svg'))
+        icon_label.setPixmap(app_icon.pixmap(QSize(64, 64)))
+        icon_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(icon_label)
+
+        # Title
+        title_label = QLabel("Silence Suzuka Player")
+        title_label.setFont(QFont("Arial", 16, QFont.Bold))
+        title_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title_label)
+        
+        # Version (you can update this)
+        version_label = QLabel("Version 1.0.0")
+        version_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(version_label)
+
+        # GitHub Link
+        link_label = QLabel('<a href="https://github.com/p168j/silence-suzuka-player">Visit on GitHub</a>')
+        link_label.setOpenExternalLinks(True)
+        link_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(link_label)
+
+        # Close Button
+        button_box = QDialogButtonBox(QDialogButtonBox.Close)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+
 class EnhancedPlaylistManager:
     """Enhanced playlist management functionality to replace the basic save/load system"""
     
@@ -10860,6 +10904,11 @@ class MediaPlayer(QMainWindow):
         sub_log_btn.setToolTip("Show a history of subscription checks and newly added videos.")
         f_diag.addRow("", sub_log_btn)
 
+        about_btn = QPushButton("About This Application")
+        about_btn.setToolTip("Show application version and information.")
+        about_btn.clicked.connect(self.open_about_dialog)
+        f_diag.addRow("", about_btn)
+
         tabs.addTab(w_diag, "Diagnostics")
         
         # --- Buttons and Apply Logic ---
@@ -10909,6 +10958,11 @@ class MediaPlayer(QMainWindow):
         btns.accepted.connect(_apply)
         btns.rejected.connect(dlg.reject)
         dlg.exec()
+
+    def open_about_dialog(self):
+        """Creates and shows the About dialog."""
+        about_dlg = AboutDialog(self)
+        about_dlg.exec()
 
     def open_subscription_log(self):
         """Shows a dialog with the subscription log."""
