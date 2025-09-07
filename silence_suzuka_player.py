@@ -3826,6 +3826,92 @@ class MediaPlayer(QMainWindow):
         if self.mpv:
             self._apply_volume_normalization()
 
+    def _resume_incomplete_title_fetching(self):
+        """
+        Check for items that need title resolution and queue them for background fetching.
+        This handles cases where the app was closed while title fetching was in progress.
+        """
+        try:
+            items_needing_titles = []
+            
+            for i, item in enumerate(self.playlist):
+                if not isinstance(item, dict):
+                    continue
+                    
+                title = item.get('title', '')
+                url = item.get('url', '')
+                item_type = item.get('type', '')
+                
+                if not url or not item_type:
+                    continue
+                
+                # Detect items that need title resolution
+                needs_resolution = (
+                    # Contains loading placeholder
+                    '[Loading Title...]' in title or
+                    # Title is just the URL
+                    title == url or
+                    # Bilibili-specific patterns
+                    (item_type == 'bilibili' and (
+                        title.startswith('Bilibili Video ') or
+                        title.startswith('BV') and len(title) <= 12 or  # Just video ID
+                        title in ('Unknown', 'NO TITLE') or
+                        len(title) < 8
+                    )) or
+                    # YouTube-specific patterns
+                    (item_type == 'youtube' and (
+                        title.startswith('YouTube Video ') or
+                        title.startswith('https://www.youtube.com/') or
+                        title == item.get('id', '')
+                    )) or
+                    # Local files with just filename extensions
+                    (item_type == 'local' and (
+                        not title or 
+                        title == Path(url).name and len(title) < 10
+                    ))
+                )
+                
+                if needs_resolution:
+                    items_needing_titles.append((i, item))
+            
+            if items_needing_titles:
+                print(f"[STARTUP] Found {len(items_needing_titles)} items needing title resolution")
+                self.status.showMessage(f"Fetching titles for {len(items_needing_titles)} items in background...", 4000)
+                
+                # Start background title fetching
+                for index, item in items_needing_titles:
+                    url = item.get('url')
+                    item_type = item.get('type')
+                    
+                    if item_type in ('youtube', 'bilibili'):
+                        # Queue for parallel resolution
+                        self._resolve_title_parallel(url, item_type)
+                        print(f"[STARTUP] Queued title fetch for {item_type}: {url[:50]}...")
+                    elif item_type == 'local':
+                        # For local files, try to improve the title from filename
+                        try:
+                            filename = Path(url).name
+                            # Remove extension and use as title if it's better than current
+                            name_without_ext = Path(filename).stem
+                            if len(name_without_ext) > len(item.get('title', '')):
+                                item['title'] = name_without_ext
+                                print(f"[STARTUP] Updated local file title: {name_without_ext}")
+                        except Exception:
+                            pass
+                
+                # Save any local file title improvements
+                if any(item[1].get('type') == 'local' for item in items_needing_titles):
+                    self._save_current_playlist()
+                    # Refresh UI to show updated local titles
+                    QTimer.singleShot(500, lambda: self._refresh_playlist_widget())
+                    
+            else:
+                print("[STARTUP] No items need title resolution")
+                
+        except Exception as e:
+            print(f"[STARTUP] Error in title resolution resume: {e}")
+            logger.error(f"Failed to resume title fetching: {e}")
+
     def _periodic_cleanup(self):
         """Clean up memory every 5 minutes to prevent accumulation"""
         try:
@@ -7764,6 +7850,12 @@ class MediaPlayer(QMainWindow):
             try:
                 data = json.load(open(CFG_CURRENT, 'r', encoding='utf-8'))
                 self.playlist = data.get('current_playlist', [])
+                
+                # NEW: Resume title fetching for incomplete items
+                if self.playlist:
+                    # Delay the title fetching slightly to let the UI fully initialize
+                    QTimer.singleShot(2000, self._resume_incomplete_title_fetching)
+                    
             except Exception:
                 self.playlist = []
         # positions
