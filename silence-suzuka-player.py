@@ -1462,8 +1462,22 @@ class PlaylistManagerDialog(QDialog):
             config_file.parent.mkdir(exist_ok=True)
             with open(config_file, 'w', encoding='utf-8') as f:
                 json.dump(self.saved_playlists, f, indent=2, ensure_ascii=False)
+
+        except PermissionError:
+            # This error happens if the program doesn't have the rights to write a file.
+            msg = "Permission denied. Could not save the playlist file."
+            logger.error(msg)
+            QMessageBox.warning(self, "Save Error", msg)
+        except TypeError as e:
+            # This error happens if you try to save data that isn't valid for JSON.
+            msg = f"Data is not in a valid format for saving: {e}"
+            logger.error(msg)
+            QMessageBox.warning(self, "Save Error", msg)
         except Exception as e:
-            QMessageBox.warning(self, "Save Error", f"Could not save playlists: {e}")
+            # A general catch-all for any other unexpected errors.
+            msg = f"An unexpected error occurred while saving playlists: {e}"
+            logger.error(msg, exc_info=True) # exc_info=True adds the full error traceback to logs.
+            QMessageBox.warning(self, "Save Error", msg)
 
     def _apply_menu_theme(self, menu):
         """Apply a basic theme to a context menu."""
@@ -1491,52 +1505,48 @@ class EnhancedPlaylistManager:
         self._load_playlists()
     
     def _load_playlists(self):
-        """Load saved playlists from file - with debug output"""
+        """Load saved playlists from file."""
         try:
-            #p rint(f"[DEBUG] Loading playlists from: {self.config_file}")
-            # # DEBUG removed
-            
             if self.config_file.exists():
                 with open(self.config_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                # # DEBUG removed
-                # # DEBUG removed
-                
-                # Handle migration from old format
+
                 if isinstance(data, dict):
                     migrated = {}
                     for name, playlist_items in data.items():
                         if isinstance(playlist_items, list):
                             # Old format - migrate
-                            # DEBUG removed
                             migrated[name] = {
                                 'items': playlist_items,
                                 'metadata': {
                                     'created': datetime.now().isoformat(),
-                                    'total_items': len(playlist_items),
                                     'description': 'Migrated from old format',
                                     'version': '2.0'
                                 }
                             }
                         else:
                             # New format
-                            # # DEBUG removed
                             migrated[name] = playlist_items
                     
                     self.saved_playlists = migrated
-                    # # DEBUG removed
                     self._save_playlists()  # Save migrated format
             else:
-                # Try to migrate from old playlists.json
+                # Try to migrate from old playlists.json if the new one doesn't exist
                 old_file = self.config_file.parent / 'playlists.json'
-                # DEBUG removed
                 if old_file.exists():
                     self._migrate_from_old_format(old_file)
-            
-        except Exception as e:
-            print(f"Load playlists error: {e}")
-            import traceback
-            traceback.print_exc()
+
+        except FileNotFoundError:
+            logger.warning(f"Playlist file not found: {self.config_file}")
+            self.saved_playlists = {}
+        except json.JSONDecodeError:
+            logger.error(f"Error decoding JSON from {self.config_file}. The file might be corrupt.")
+            self.saved_playlists = {}
+        except PermissionError:
+            logger.error(f"Permission denied when trying to read {self.config_file}.")
+            self.saved_playlists = {}
+        except Exception as e: # A general catch-all for any other unexpected errors
+            logger.error(f"An unexpected error occurred while loading playlists: {e}", exc_info=True)
             self.saved_playlists = {}
     
     def _migrate_from_old_format(self, old_file):
