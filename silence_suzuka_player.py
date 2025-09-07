@@ -9159,6 +9159,19 @@ class MediaPlayer(QMainWindow):
         
     def _add_url_to_playlist(self, url: str):
         try:
+        
+            if not url or len(url.strip()) > 2000:
+                self.status.showMessage("Invalid URL: too long or empty", 3000)
+                return
+        
+            # Basic URL format check
+            url_clean = url.strip().strip('"').strip("'")
+            if not (url_clean.startswith(('http://', 'https://')) or 
+                    self._is_local_file(url_clean) or 
+                    os.path.exists(url_clean)):
+                self.status.showMessage("Invalid URL format", 3000)
+                return
+        
             # Sanitize quotes/whitespace early
             url = (url or "").strip().strip('"').strip("'")
             url_lower = url.lower()
