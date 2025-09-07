@@ -3446,7 +3446,11 @@ class ScrollingTreeWidget(QTreeWidget):
         # Start scrolling for the hovered item
         if current_item and current_item.parent() is None:  # Only for top-level items
             self._start_scrolling(current_item)
-
+    def clear(self):
+        # Stop timers and restore original texts
+        for item in list(self._scroll_timers):
+            self._stop_scrolling(item)
+        super().clear()
 
 # --- Player ---
 class MediaPlayer(QMainWindow):
