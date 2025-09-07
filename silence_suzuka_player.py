@@ -8259,9 +8259,9 @@ class MediaPlayer(QMainWindow):
                     item['title'] = title
                     break
             
-            # Update the UI
-            self._update_tree_item_title(url, title)
-
+            # EFFICIENT: Update just the specific item
+            self._update_single_tree_item_title(url, title)
+            
             # Update the "Now Playing" label if this is the current track
             if 0 <= self.current_index < len(self.playlist) and self.playlist[self.current_index].get('url') == url:
                 self._set_track_title(title)
@@ -8270,6 +8270,38 @@ class MediaPlayer(QMainWindow):
             self._save_current_playlist()
         except Exception as e:
             print(f"Error updating title: {e}")
+
+    def _update_single_tree_item_title(self, url: str, title: str):
+        """Update just one tree item instead of rebuilding everything"""
+        try:
+            iterator = QTreeWidgetItemIterator(self.playlist_tree)
+            while iterator.value():
+                item = iterator.value()
+                data = item.data(0, Qt.UserRole)
+                if isinstance(data, tuple) and data[0] == 'current':
+                    _, idx, item_data = data
+                    if isinstance(item_data, dict) and item_data.get('url') == url:
+                        # Update the tree item text and icon
+                        icon = playlist_icon_for_type(item_data.get('type'))
+                        if isinstance(icon, QIcon):
+                            item.setText(0, title)
+                            item.setIcon(0, icon)
+                        else:
+                            item.setText(0, f"{icon} {title}")
+                        
+                        # Clear loading style
+                        font = item.font(0)
+                        font.setItalic(False)
+                        item.setFont(0, font)
+                        item.setForeground(0, QBrush())
+                        
+                        # Update the data reference
+                        item_data['title'] = title
+                        item.setData(0, Qt.UserRole, ('current', idx, item_data))
+                        break
+                iterator += 1
+        except Exception as e:
+            print(f"Update single tree item failed: {e}")
 
     def _update_item_title(self, url: str, title: str):
         """Update item title with optimized tree search"""
