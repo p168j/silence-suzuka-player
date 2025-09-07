@@ -3608,6 +3608,31 @@ class MediaPlayer(QMainWindow):
         except Exception as e:
             print(f"Cleanup error: {e}")
 
+    def _debug_memory_usage(self):
+        """Monitor memory usage - temporary debugging"""
+        try:
+            import psutil
+            process = psutil.Process()
+            memory_mb = process.memory_info().rss / 1024 / 1024
+            
+            # Count some objects that could leak
+            qt_timers = len([obj for obj in dir(self) if 'timer' in obj.lower()])
+            playlist_size = len(self.playlist)
+            undo_size = len(self._undo_stack)
+            
+            debug_text = f"Mem: {memory_mb:.0f}MB | Playlist: {playlist_size} | Undo: {undo_size} | Timers: {qt_timers}"
+            print(debug_text)
+            self.status.showMessage(debug_text, 2000)
+            
+        except ImportError:
+            # psutil not available, use basic info
+            playlist_size = len(self.playlist)
+            undo_size = len(self._undo_stack)
+            debug_text = f"Playlist: {playlist_size} | Undo: {undo_size}"
+            self.status.showMessage(debug_text, 2000)
+        except Exception as e:
+            print(f"Debug error: {e}")
+
     def _setup_up_next_scrolling(self):
         """Setup mouse tracking and scrolling for Up Next with proper event handling."""
         if not hasattr(self, 'up_next'):
@@ -12083,6 +12108,8 @@ class MediaPlayer(QMainWindow):
             # Playlist navigation
             QShortcut(QKeySequence(Qt.Key_Home), self, self._navigate_to_top)
             QShortcut(QKeySequence(Qt.Key_End), self, self._navigate_to_bottom)
+
+            QShortcut(QKeySequence(Qt.Key_F12), self, self._debug_memory_usage)
             
     def _toggle_mute(self):
         """Toggles the player's mute status."""
