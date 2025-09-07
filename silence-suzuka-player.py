@@ -9,65 +9,75 @@ Silence Auto-Player (mpv edition)
 - Theme styling (Dark) and optional thumbnails
 """
 
+# Standard library imports
 import sys
 import os
 import json
 import time
 import logging
 import zipfile
-import qtawesome as qta
 import re
 import queue
 import warnings
 import subprocess
-import json
-from PySide6.QtGui import QIcon
-from pathlib import Path
-from datetime import datetime
-from datetime import datetime, timedelta
-from pathlib import Path
-from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout,
-    QLabel, QLineEdit, QTextEdit, QPushButton, QListWidget, QListWidgetItem,
-    QTableWidget, QTableWidgetItem, QHeaderView, QSplitter, QGroupBox,
-    QComboBox, QCheckBox, QSpinBox, QProgressBar, QMessageBox, QFileDialog,
-    QInputDialog, QMenu, QFrame, QScrollArea, QWidget, QAbstractItemView,
-    QDialogButtonBox, QTabWidget, QTreeWidget, QTreeWidgetItem
-)
-from PySide6.QtCore import Qt, QTimer, Signal, QThread, QSize
-from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter, QColor, QBrush
-from PySide6.QtGui import QIcon, QPixmap, QPainter
-from PySide6.QtSvg import QSvgRenderer
-from PySide6.QtCore import QSize, QRectF, QByteArray
-from PySide6.QtCore import QTimer
-from PySide6.QtGui import QCursor
-from PySide6.QtGui import QShortcut
-from PySide6.QtWidgets import QProxyStyle, QStyle, QStyledItemDelegate
-from PySide6.QtGui import QPainter, QColor, QPolygon
-from PySide6.QtCore import QPoint
-from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QPen, QBrush, QFont, QFontDatabase, QFontMetrics, QPalette
-from PySide6.QtCore import QTimer, QEvent
-from PySide6.QtGui import QInputMethodEvent
-from PySide6.QtWidgets import QLineEdit
-from datetime import datetime, timedelta
-from pathlib import Path
-from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout,
-    QLabel, QLineEdit, QTextEdit, QPushButton, QListWidget, QListWidgetItem,
-    QTableWidget, QTableWidgetItem, QHeaderView, QSplitter, QGroupBox,
-    QComboBox, QCheckBox, QSpinBox, QProgressBar, QMessageBox, QFileDialog,
-    QInputDialog, QMenu, QFrame, QScrollArea, QWidget, QAbstractItemView,
-    QDialogButtonBox, QTabWidget, QTreeWidget, QTreeWidgetItem
-)
-from PySide6.QtCore import Qt, QTimer, Signal, QThread, QSize
-from PySide6.QtGui import QFont, QIcon, QPixmap, QPainter, QColor, QBrush
-from PySide6.QtWidgets import QGraphicsColorizeEffect
-from PySide6.QtWidgets import QStyleOptionViewItem, QStyle
-from PySide6.QtCore import QRect
 import io
-from PySide6.QtCore import QBuffer
-from PySide6.QtWidgets import QGraphicsBlurEffect
-from PySide6.QtGui import QPalette, QBrush
+from pathlib import Path
+from datetime import datetime, timedelta
+
+# Third-party imports
+import qtawesome as qta
+
+# PySide6 Core imports
+from PySide6.QtCore import (
+    Qt, QTimer, Signal, QThread, QSize, QRectF, QByteArray, QPoint, 
+    QEvent, QRect, QBuffer
+)
+
+# PySide6 GUI imports  
+from PySide6.QtGui import (
+    QIcon, QPixmap, QPainter, QColor, QPen, QBrush, QFont, QFontDatabase, 
+    QFontMetrics, QPalette, QCursor, QShortcut, QInputMethodEvent, QPolygon,
+    QKeySequence, QAction, QGuiApplication
+)
+
+# PySide6 SVG imports
+from PySide6.QtSvg import QSvgRenderer
+
+# PySide6 Widgets imports
+from PySide6.QtWidgets import (
+    # Core widgets
+    QApplication, QMainWindow, QWidget, QDialog,
+    
+    # Layout widgets
+    QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout, QStackedLayout,
+    
+    # Display widgets
+    QLabel, QLineEdit, QTextEdit, QProgressBar, QTreeWidget, QTreeWidgetItem,
+    QListWidget, QListWidgetItem, QTableWidget, QTableWidgetItem,
+    QScrollArea, QSplitter, QFrame,
+    
+    # Input widgets
+    QPushButton, QCheckBox, QComboBox, QSpinBox, QDoubleSpinBox, QSlider,
+    
+    # Container widgets
+    QGroupBox, QTabWidget,
+    
+    # Dialog widgets
+    QMessageBox, QFileDialog, QInputDialog, QDialogButtonBox,
+    
+    # Menu widgets
+    QMenu, QSystemTrayIcon,
+    
+    # Advanced widgets
+    QHeaderView, QAbstractItemView, QStatusBar,
+    
+    # Style and effects
+    QProxyStyle, QStyle, QStyledItemDelegate, QStyleOptionViewItem,
+    QGraphicsColorizeEffect, QGraphicsBlurEffect, QGraphicsDropShadowEffect,
+    
+    # Special widgets
+    QProgressDialog, QToolTip, QSizePolicy, QSpacerItem
+)
 
 
 def fetch_playlist_flat(url):
@@ -6290,257 +6300,14 @@ class MediaPlayer(QMainWindow):
             print(f"Vinyl bg pattern failed: {e}")
 
     def _apply_dark_theme(self):
-        style = """
-        QMainWindow, QDialog { background-color: #1e1e1e; color: #f3f3f3; font-family: '{self._ui_font}'; }
-        #titleLabel { color: #f3f3f3; font-size: 20px; font-weight: bold; font-style: italic; font-family: '{self._serif_font}'; }
-        #scopeDropdown {
-            background-color: #2a2a2a;
-            color: #f3f3f3;
-            border: 1px solid #4a4a4a;
-            padding: 4px 8px;
-            border-radius: 6px;
-            font-family: '{self._ui_font}';
-            font-size: 13px;
-        }
-        #scopeDropdown::drop-down {
-            border: none;
-            width: 20px;
-        }
-        #scopeDropdown::down-arrow {
-            image: none;
-            border-left: 4px solid transparent;
-            border-right: 4px solid transparent;
-            border-top: 5px solid #b3b3b3;
-            margin-right: 5px;
-        }
-        #scopeDropdown:hover {
-            background-color: #3a3a3a;
-            border-color: #5a5a5a;
-        }
-        #scopeDropdown QAbstractItemView {
-            background-color: #2a2a2a;
-            color: #f3f3f3;
-            selection-background-color: #e76f51;
-            selection-color: #f3f3f3;
-            border: 1px solid #4a4a4a;
-        }        
-        #settingsBtn { background: transparent; color: #b3b3b3; font-size: 18px; border: none; padding: 2px 6px; min-width: 32px; min-height: 28px; border-radius: 6px; }
-        #settingsBtn:hover { background-color: rgba(255,255,255,0.08); color: #f3f3f3; }
-        #settingsBtn:pressed { background-color: rgba(255,255,255,0.2); }
-        #scopeChip { background-color: rgba(48,48,48,0.9); color: #f3f3f3; border: 1px solid #4a4a4a; padding: 2px 8px; border-radius: 10px; font-size: 12px; margin-left: 8px; }
-        #statsBadge { background-color: transparent; color: #b3b3b3; border: 1px solid #4a4a4a; padding: 4px 12px; margin-left: 8px; margin-right: 8px; border-radius: 10px; font-size: 12px; }
-        #sidebar { background-color: rgba(30, 30, 30, 0.85); border: 1px solid rgba(80, 80, 80, 0.5); border-radius: 8px; padding: 16px; }
-        #addBtn { 
-                background-color: #e76f51; 
-                color: #f3f3f3; 
-                border: none; 
-                padding: 8px 12px; 
-                border-radius: 8px; 
-                font-weight: bold; 
-                margin-bottom: 8px; 
-                text-align: left;
-                qproperty-text: "  + Add Media";
-            }
-        #addBtn::menu-indicator {
-                image: url(icons/chevron-down-light.svg);
-                subcontrol-position: right top;
-                subcontrol-origin: padding;
-                right: 10px;
-                top: 2px;
-            }
-        #addBtn:hover { background-color: #d86a4a; }
-        #addBtn:pressed { background-color: #d1603f; }
-        #miniBtn { background: transparent; color: #b3b3b3; border: none; font-size: 16px; }
-        #miniBtn:hover { color: #ffffff; }
-        #miniBtn:pressed { color: #888888; }
-        #playlistTree { background-color: transparent; border: none; color: #f3f3f3; font-family: '{self._serif_font}'; alternate-background-color: #2a2a2a; margin-left: 8px; }
-        #playlistTree::item {
-            min-height: 32px;
-            height: 32px;
-            padding: 8px 16px 8px 12px;
-            color: #c9c9c9;
-        }
-        /* NEW: Add this rule for the playing item border */
-        #playlistTree::item[playing="true"] {
-            border-left: 3px solid #1DB954;  /* Spotify green */
-            padding-left: 9px;               /* Compensate for border width */
-            background-color: rgba(29, 185, 84, 0.1);  /* Subtle background tint */
-        }
-        #playlistTree::item:!selected {
-            border-bottom: 1px solid #3a3a3a;
-        }
-        #playlistTree::item:hover { background-color: rgba(255, 85, 85, 0.15); }
-        #playlistTree::item:selected { background-color: #e76f51; color: #ffffff; }
-        #playlistTree::item[loading="true"] {
-            color: #888888;
-            font-style: italic;
-        }
-        #videoWidget { background-color: #000; border-radius: 8px; border: 10px solid #1e1e1e; }
-        #playPauseBtn { background-color: #e76f51; color: #f3f3f3; font-size: 26px; border: none; border-radius: 30px; width: 60px; height: 60px; padding: 0px; }
-        #playPauseBtn:hover { background-color: #d86a4a; }
-        #playPauseBtn:pressed { background-color: #d1603f; }
-        #controlBtn { background: transparent; color: #b3b3b3; font-size: 20px; border: none; border-radius: 20px; width: 40px; height: 40px; padding: 0px; }
-        #controlBtn:hover { background-color: rgba(255,255,255,0.1); color: #f3f3f3; }
-        #controlBtn:pressed { background-color: rgba(255,255,255,0.2); }
-        QSlider::groove:horizontal { height: 6px; background-color: #4a4a4a; border-radius: 3px; }
-        QSlider::handle:horizontal { 
-            width: 18px; 
-            height: 18px; 
-            background-color: #d0d0d0; 
-            border-radius: 9px; 
-            margin: -6px 0; 
-        }
-        QSlider::sub-page:horizontal { background-color: #e76f51; border-radius: 3px; }
-        #timeLabel, #durLabel { font-family: '{self._ui_font}'; font-size: 13px; color: #b3b3b3; }
-        #silenceIndicator { color: #e76f51; font-size: 18px; margin: 0 8px; padding-bottom: 3px; }
-        #upNext::item { 
-            min-height: 26px;        /* Slightly smaller */
-            height: 26px; 
-            padding: 5px 8px;        /* Tighter padding */
-            line-height: 1.3;        /* Add consistent line height */
-        }
-        #upNext::item:hover { background-color: rgba(255, 85, 85, 0.08); }
-        #upNext::item:selected { background-color: #e76f51; color: #f3f3f3; }
-        #upNext { 
-            background-color: #2a2a2a; 
-            border: 1px solid #4a4a4a; 
-            border-radius: 6px; 
-            font-family: '{self._serif_font}'; 
-            alternate-background-color: #353535;
-        }
-        #upNextHeader { background-color: rgba(48,48,48,0.9); color: #f3f3f3; border: 1px solid #4a4a4a; border-radius: 6px; padding: 4px 8px; text-align:left; }
-        #upNextHeader:hover { background-color: #2a2a2a; }
-        #upNextHeader:pressed { background-color: #1e1e1e; }
-        #upNext { 
-            background-color: #2a2a2a; 
-            border: 1px solid #4a4a4a; 
-            border-radius: 6px; 
-            font-family: '{self._serif_font}'; 
-            alternate-background-color: #353535;
-            color: #d0d0d0;
-        }
-        QProgressBar { background-color: #2a2a2a; border: 1px solid #3a3a3a; border-radius: 4px; text-align: center; color: #f3f3f3; }
-        QProgressBar::chunk { background-color: #e76f51; border-radius: 4px; }
-        QStatusBar { color: #f3f3f3; }
-        QMenu { background-color: #2a2a2a; color: #f3f3f3; border: 1px solid #4a4a4a; font-size: 13px; }
-        QMenu::item { padding: 6px 12px; }
-        QMenu::item:selected { background-color: #e76f51; color: #f3f3f3; }
-        QToolTip { background-color: #1e1e1e; color: #f3f3f3; border: 1px solid #3a3a3a; padding: 4px 8px; border-radius: 6px; font-size: 9pt; }
-        QScrollBar:vertical { background: transparent; width: 12px; margin: 0px; }
-        QScrollBar::handle:vertical { background: #4a4a4a; min-height: 24px; border-radius: 6px; }
-        QScrollBar::handle:vertical:hover { background: #5a5a5a; }
-        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
-        QScrollBar:horizontal { background: transparent; height: 12px; margin: 0px; }
-        QScrollBar::handle:horizontal { background: #4a4a4a; min-width: 24px; border-radius: 6px; }
-        QScrollBar::handle:horizontal:hover { background: #5a5a5a; }
-        QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
-        QTabWidget::pane { border: 1px solid #4a4a4a; border-radius: 6px; }
-        QTabBar::tab { background-color: rgba(48,48,48,0.9); color: #f3f3f3; padding: 6px 10px; border: 1px solid #4a4a4a; border-bottom: none; border-top-left-radius: 6px; border-top-right-radius: 6px; margin-right: 2px; }
-        QTabBar::tab:selected { background-color: #2a2a2a; color: #f3f3f3; }
-        QTabBar::tab:hover { background-color: #2a2a2a; }
-        #timeLabel, #durLabel { font-family: '{self._ui_font}'; font-size: 13px; color: #b3b3b3; }
-        QLineEdit#searchBar { background-color: #2a2a2a; border: 1px solid #3a3a3a; border-radius: 6px; padding: 4px 8px; margin: 8px 0; color: #f3f3f3; selection-background-color: #e76f51; }
-        #addMediaBtn {
-            background-color: #e76f51;
-            color: #f3f3f3;
-            border: none;
-            border-radius: 8px;
-            padding: 0 18px;
-            font-weight: bold;
-            font-size: 1.1em;
-            text-align: left;
-            font-family: 'Inter', 'Segoe UI', sans-serif;
-        }
-        #addMediaBtn:hover {
-            background-color: #d86a4a;
-        }
-        #addMediaBtn:pressed {
-            background-color: #d1603f;
-            opacity: 0.8;
-        }
-        #addMediaBtn::menu-indicator {
-        image: none;
-        width: 0;
-        height: 0;
-        }
-        QPushButton:focus { outline: none; }
-        #playPauseBtn:focus {
-            border: 2px solid rgba(255,255,255,0.2);
-            border-radius: 30px;
-            padding: 0px;
-        }    
-        QHBoxLayout#top {
-        border-bottom: 1.5px solid #3a3a3a;
-        padding-bottom: 6px;
-        margin-bottom: 8px;
-        }
-        #playlistTree::item:selected, #playlistTree::item:focus {
-        background-color: #e76f51;
-        color: #f3f3f3;
-        font-weight: bold;
-        }
-        #libraryHeader {
-            background: linear-gradient(135deg, #e76f51 0%, #d86a4a 100%);
-            color: #b3b3b3;
-            font-weight: 700;
-            padding: 8px 16px 8px 20px;
-            min-height: 32px;
-            border-top-left-radius: 8px;
-            border-top-right-radius: 8px;
-            font-family: '{self._serif_font}';
-        }
-        #emptyStateLabel {
-            color: #b3b3b3;
-            font-size: 14px;
-            font-family: '{self._ui_font}';
-        }
-        #noTrackPlayingLabel {
-            color: #b3b3b3;
-            font-size: 14px;
-            font-family: '{self._ui_font}';
-            margin-top: 10px;
-        }
-                #addMediaContainer {
-            max-width: 220px;
-        }
-        #addMediaMain {
-            background-color: #e76f51;
-            color: #f3f3f3;
-            border: none;
-            border-top-left-radius: 8px;
-            border-bottom-left-radius: 8px;
-            border-top-right-radius: 0px;
-            border-bottom-right-radius: 0px;
-            padding: 8px 16px;
-            font-weight: bold;
-            text-align: center;
-            font-family: 'Inter', 'Segoe UI', sans-serif;
-        }
-        #addMediaMain:hover {
-            background-color: #d86a4a;
-        }
-        #addMediaMain:pressed {
-            background-color: #d1603f;
-        }
-        #addMediaDropdown {
-            background-color: #d86a4a;
-            color: #f3f3f3;
-            border: none;
-            border-left: 1px solid #c85f47;
-            border-top-right-radius: 8px;
-            border-bottom-right-radius: 8px;
-            font-size: 11px;
-            font-weight: bold;
-        }
-        #addMediaDropdown:hover {
-            background-color: #c85f47;
-        }
-        #addMediaDropdown:pressed {
-            background-color: #b8543e;
-        }
-        """
-        style = style.replace("{self._ui_font}", self._ui_font).replace("{self._serif_font}", self._serif_font)
-        self.setStyleSheet(style)
+        try:
+            with open(APP_DIR / 'dark.qss', 'r', encoding='utf-8') as f:
+                style = f.read()
+            # You can still use .replace() for dynamic font names
+            style = style.replace("{self._ui_font}", self._ui_font).replace("{self._serif_font}", self._serif_font)
+            self.setStyleSheet(style)
+        except Exception as e:
+            logger.error(f"Failed to load dark theme stylesheet: {e}")
 
         try:
             eff = QGraphicsDropShadowEffect(self.video_frame)
