@@ -3469,6 +3469,101 @@ class MediaPlayer(QMainWindow):
         if self.mpv:
             self._apply_volume_normalization()
 
+    def _setup_up_next_scrolling(self):
+        """Setup mouse tracking and scrolling for Up Next with proper event handling."""
+        if not hasattr(self, 'up_next'):
+            return
+
+        self.up_next.setMouseTracking(True)
+        self._scroll_timer = QTimer(self)
+        self._scroll_item = None
+        self._scroll_pos = 0
+        self._original_text = ""
+
+        # Use an event filter on the viewport for more reliable events
+        self.up_next.viewport().installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        """Event filter to manage hover and scrolling for the Up Next list."""
+        # Handle the Up Next list's viewport events
+        if obj == self.up_next.viewport():
+            if event.type() == QEvent.Enter:
+                pass # Handled by mouseMove
+            elif event.type() == QEvent.Leave:
+                self._stop_scrolling() # Stop scrolling when mouse leaves the widget
+                return True
+            elif event.type() == QEvent.MouseMove:
+                item = self.up_next.itemAt(event.pos())
+                if item != self._scroll_item:
+                    self._stop_scrolling()
+                    if item:
+                        self._start_scrolling(item)
+                return True
+
+        # Handle IME events for the search bar
+        if obj == self.search_bar:
+            if event.type() == QEvent.InputMethod:
+                self._ime_composing = event.preeditString() != ""
+            elif event.type() == QEvent.KeyPress and not self._ime_composing:
+                # When not composing, allow the timer-based search to proceed
+                pass
+
+        return super().eventFilter(obj, event)
+
+
+    def _start_scrolling(self, item):
+        """Start scrolling text for a given item if it overflows."""
+        if not item:
+            return
+
+        original_text = item.text(0)
+        font_metrics = self.up_next.fontMetrics()
+        text_width = font_metrics.horizontalAdvance(original_text)
+        available_width = self.up_next.columnWidth(0) - 25 # Margin for icon/padding
+
+        if text_width <= available_width:
+            return # No need to scroll
+
+        self._scroll_item = item
+        self._original_text = original_text
+        self._scroll_pos = 0
+        self._scroll_timer.timeout.connect(self._scroll_step)
+        self._scroll_timer.start(180)
+
+    def _scroll_step(self):
+        """Perform one step of the scrolling animation."""
+        if not self._scroll_item:
+            self._stop_scrolling()
+            return
+
+        pos = self._scroll_pos
+        text_to_scroll = self._original_text + "   "
+        scrolled_text = text_to_scroll[pos:] + text_to_scroll[:pos]
+
+        try:
+            # Check if the item still exists before updating its text
+            if self.up_next.isPersistentEditorOpen(self._scroll_item, 0) is False:
+                self._scroll_item.setText(0, scrolled_text)
+        except RuntimeError:
+            # This can happen if the item is deleted while scrolling
+            self._stop_scrolling()
+            return
+
+        self._scroll_pos = (self._scroll_pos + 1) % len(text_to_scroll)
+
+    def _stop_scrolling(self):
+        """Stop the scrolling animation and restore original text."""
+        self._scroll_timer.stop()
+        self._scroll_timer.disconnect()
+        if self._scroll_item:
+            try:
+                self._scroll_item.setText(0, self._original_text)
+            except RuntimeError:
+                pass # Item might have been deleted
+        self._scroll_item = None
+        self._original_text = ""
+        self._scroll_pos = 0
+
     def _apply_volume_normalization(self):
         """Applies the volume normalization filter using mpv's audio filters."""
         if not self.mpv:
@@ -4406,30 +4501,7 @@ class MediaPlayer(QMainWindow):
             
             self._loading_overlay.move(x, y)        
 
-    def _setup_up_next_scrolling(self):
-        """Setup mouse tracking and scrolling for Up Next"""
-        if not hasattr(self, 'up_next'):
-            return
-        
-        # # DEBUG removed
-        
-        # Enable mouse tracking
-        self.up_next.setMouseTracking(True)
-        
-        # Initialize scroll state
-        self._scroll_timer = QTimer(self)
-        self._scroll_item = None
-        self._scroll_pos = 0
-        self._original_text = ""
-        self._mouse_debounce_timer = QTimer(self)
-        self._mouse_debounce_timer.setSingleShot(True)
-        self._pending_item = None
-        
-        # Store original mouse event handlers
-        self._original_mouse_move = self.up_next.mouseMoveEvent
-        self._original_leave_event = self.up_next.leaveEvent
-        
-        # --- FIX: Define the handlers and ACTUALLY assign them ---
+    
     def on_mouse_move(event):
         # Call original handler first
         self._original_mouse_move(event)
@@ -4500,69 +4572,8 @@ class MediaPlayer(QMainWindow):
         self.up_next.mouseMoveEvent = on_mouse_move
         self.up_next.leaveEvent = on_leave
 
-    def _handle_item_change(self, item):
-        """Handle item change with better debouncing"""
-        # Only process if this is genuinely a different item
-        if item == self._scroll_item:
-            return
-            
-        # Always stop current scrolling first
-        if self._scroll_item:
-            self._stop_scrolling()
-        
-        # Use debounce to prevent rapid switching
-        self._pending_item = item
-        self._mouse_debounce_timer.stop()
-        
-        # Safely disconnect previous connections
-        try:
-            self._mouse_debounce_timer.timeout.disconnect()
-        except (RuntimeError, TypeError):
-            # No connections to disconnect, that's fine
-            pass
-        
-        # Only connect and start if we have a valid item
-        if item:
-            self._mouse_debounce_timer.timeout.connect(lambda: self._start_scrolling(item))
-            self._mouse_debounce_timer.start(150)  # 150ms debounce
-
-    def _start_scrolling(self, item):
-        """Start scrolling for an item"""
-        if not item:
-            return
-        
-        text = item.text(0)
-        original_text = text
-        
-        # Remove emoji prefixes for width calculation
-        clean_text = text
-        if text.startswith(("🔴 ", "🐟 ", "🎬 ")):
-            clean_text = text[2:]
-        
-        # # DEBUG removed
-        
-        # Check if text needs scrolling
-        font_metrics = self.up_next.fontMetrics()
-        text_width = font_metrics.horizontalAdvance(clean_text)
-        available_width = self.up_next.columnWidth(0) - 60  # Conservative margin
-        
-        # # DEBUG removed
-        
-        if text_width <= available_width:
-            # DEBUG removed
-            return
-        
-        # Stop any existing timer and disconnect ALL connections
-        if self._scroll_timer.isActive():
-            self._scroll_timer.stop()
-            # --- FIX: Disconnect ALL previous connections ---
-            self._scroll_timer.disconnect()
-        
-        # Start scrolling
-        self._scroll_item = item
-        self._original_text = original_text
-        self._scroll_pos = 0
-        
+    
+    
         def scroll_step():
             if not self._scroll_item or self._scroll_item != item:
                 # # DEBUG removed
@@ -4589,33 +4600,6 @@ class MediaPlayer(QMainWindow):
         self._scroll_timer.start(180)
         # # DEBUG removed
 
-    def _update_item_text(self, item, text):
-        """Safely update item text in main thread"""
-        if item and item == self._scroll_item:
-            item.setText(0, text)
-
-    def _stop_scrolling(self):
-        """Stop scrolling and restore text"""
-        # # DEBUG removed
-        
-        if self._scroll_timer.isActive():
-            self._scroll_timer.stop()
-            # # DEBUG removed
-        
-        if self._scroll_item and self._original_text:
-            try:
-                # Immediately restore text
-                self._scroll_item.setText(0, self._original_text)
-                # # DEBUG removed
-            except Exception as e:
-                # DEBUG removed
-                pass
-        
-        # Clear state
-        self._scroll_item = None
-        self._original_text = ""
-        self._scroll_pos = 0
-        # # DEBUG removed
 
     def _reset_silence_counter(self):
         """Reset the silence detection timer - call when app starts playing."""
@@ -5468,7 +5452,6 @@ class MediaPlayer(QMainWindow):
         except Exception:
             pass
         # Note: Up Next now uses ScrollingTreeWidget, so no custom scrolling setup needed
-        # self._setup_up_next_scrolling()    
 
         # DEBUG: Test if undo system is set up
         # print("=== UNDO SYSTEM CHECK ===")
@@ -8465,9 +8448,12 @@ class MediaPlayer(QMainWindow):
             data = item.data(0, Qt.UserRole)
             if isinstance(data, tuple) and data[0] == 'next':
                 idx = data[1]
-                self._play_index(idx)
-        except Exception:
-            pass
+                # --- FIX: Set the current index directly, then play ---
+                if 0 <= idx < len(self.playlist):
+                    self.current_index = idx
+                    self.play_current() # This will handle everything else
+        except Exception as e:
+            logger.error(f"Error handling Up Next click: {e}")
 
     def _show_up_next_menu(self, pos):
         try:
