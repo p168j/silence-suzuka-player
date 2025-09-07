@@ -1506,6 +1506,50 @@ class PlaylistManagerDialog(QDialog):
             }
         """)
 
+class AboutDialog(QDialog):
+    """A simple dialog to show application information."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("About Silence Suzuka Player")
+        self.setFixedSize(380, 220)
+
+        # Use the parent's theme
+        if parent and hasattr(parent, '_apply_dialog_theme'):
+            parent._apply_dialog_theme(self)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+        layout.setAlignment(Qt.AlignCenter)
+
+        # App Icon
+        icon_label = QLabel()
+        app_icon = QIcon(str(APP_DIR / 'icons/app-icon.svg'))
+        icon_label.setPixmap(app_icon.pixmap(QSize(64, 64)))
+        icon_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(icon_label)
+
+        # Title
+        title_label = QLabel("Silence Suzuka Player")
+        title_label.setFont(QFont("Arial", 16, QFont.Bold))
+        title_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title_label)
+        
+        # Version (you can update this)
+        version_label = QLabel("Version 1.0.0")
+        version_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(version_label)
+
+        # GitHub Link
+        link_label = QLabel('<a href="https://github.com/p168j/silence-suzuka-player">Visit on GitHub</a>')
+        link_label.setOpenExternalLinks(True)
+        link_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(link_label)
+
+        # Close Button
+        button_box = QDialogButtonBox(QDialogButtonBox.Close)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+
 class EnhancedPlaylistManager:
     """Enhanced playlist management functionality to replace the basic save/load system"""
     
@@ -10860,6 +10904,29 @@ class MediaPlayer(QMainWindow):
         sub_log_btn.setToolTip("Show a history of subscription checks and newly added videos.")
         f_diag.addRow("", sub_log_btn)
 
+        reset_btn = QPushButton("Reset All Settings to Default")
+        reset_btn.setToolTip("Restore all settings across all tabs to their original values.")
+        f_diag.addRow("", reset_btn)
+
+        def on_reset_clicked():
+            reply = QMessageBox.question(
+                self, 
+                "Reset Settings", 
+                "Are you sure you want to reset all settings to their default values?\n\nThis cannot be undone.",
+                QMessageBox.Yes | QMessageBox.No, 
+                QMessageBox.No # Default button is 'No'
+            )
+            if reply == QMessageBox.Yes:
+                self._reset_settings_to_default()
+                dlg.accept() # Close the settings dialog after resetting
+
+        reset_btn.clicked.connect(on_reset_clicked)
+
+        about_btn = QPushButton("About This Application")
+        about_btn.setToolTip("Show application version and information.")
+        about_btn.clicked.connect(self.open_about_dialog)
+        f_diag.addRow("", about_btn)
+
         tabs.addTab(w_diag, "Diagnostics")
         
         # --- Buttons and Apply Logic ---
@@ -10909,6 +10976,41 @@ class MediaPlayer(QMainWindow):
         btns.accepted.connect(_apply)
         btns.rejected.connect(dlg.reject)
         dlg.exec()
+
+    def _reset_settings_to_default(self):
+        """Resets all user-configurable settings to their default values."""
+        try:
+            # Define all the default values here
+            self.theme = 'vinyl'
+            self.auto_play_enabled = True
+            self.smart_autostart_enabled = True
+            self.afk_timeout_minutes = 15
+            self.silence_duration_s = 300.0
+            self.show_up_next = True
+            self.group_singles = True
+            self.completed_percent = 95
+            self.skip_completed = False
+            self.monitor_system_output = True
+            self.silence_threshold = 0.03
+            self.resume_threshold = 0.045
+            self.log_level = 'INFO'
+            
+            # Save the new default settings to the config file
+            self._save_settings()
+            
+            # Apply the changes visually
+            self.toggle_theme() # Easiest way to force a full theme refresh
+            
+            self.status.showMessage("Settings have been reset to default.", 3000)
+            
+        except Exception as e:
+            logger.error(f"Failed to reset settings: {e}")
+            self.status.showMessage("Error: Could not reset settings.", 4000)
+
+    def open_about_dialog(self):
+        """Creates and shows the About dialog."""
+        about_dlg = AboutDialog(self)
+        about_dlg.exec()
 
     def open_subscription_log(self):
         """Shows a dialog with the subscription log."""

@@ -10904,6 +10904,24 @@ class MediaPlayer(QMainWindow):
         sub_log_btn.setToolTip("Show a history of subscription checks and newly added videos.")
         f_diag.addRow("", sub_log_btn)
 
+        reset_btn = QPushButton("Reset All Settings to Default")
+        reset_btn.setToolTip("Restore all settings across all tabs to their original values.")
+        f_diag.addRow("", reset_btn)
+
+        def on_reset_clicked():
+            reply = QMessageBox.question(
+                self, 
+                "Reset Settings", 
+                "Are you sure you want to reset all settings to their default values?\n\nThis cannot be undone.",
+                QMessageBox.Yes | QMessageBox.No, 
+                QMessageBox.No # Default button is 'No'
+            )
+            if reply == QMessageBox.Yes:
+                self._reset_settings_to_default()
+                dlg.accept() # Close the settings dialog after resetting
+
+        reset_btn.clicked.connect(on_reset_clicked)
+
         about_btn = QPushButton("About This Application")
         about_btn.setToolTip("Show application version and information.")
         about_btn.clicked.connect(self.open_about_dialog)
@@ -10958,6 +10976,36 @@ class MediaPlayer(QMainWindow):
         btns.accepted.connect(_apply)
         btns.rejected.connect(dlg.reject)
         dlg.exec()
+
+    def _reset_settings_to_default(self):
+        """Resets all user-configurable settings to their default values."""
+        try:
+            # Define all the default values here
+            self.theme = 'vinyl'
+            self.auto_play_enabled = True
+            self.smart_autostart_enabled = True
+            self.afk_timeout_minutes = 15
+            self.silence_duration_s = 300.0
+            self.show_up_next = True
+            self.group_singles = True
+            self.completed_percent = 95
+            self.skip_completed = False
+            self.monitor_system_output = True
+            self.silence_threshold = 0.03
+            self.resume_threshold = 0.045
+            self.log_level = 'INFO'
+            
+            # Save the new default settings to the config file
+            self._save_settings()
+            
+            # Apply the changes visually
+            self.toggle_theme() # Easiest way to force a full theme refresh
+            
+            self.status.showMessage("Settings have been reset to default.", 3000)
+            
+        except Exception as e:
+            logger.error(f"Failed to reset settings: {e}")
+            self.status.showMessage("Error: Could not reset settings.", 4000)
 
     def open_about_dialog(self):
         """Creates and shows the About dialog."""
