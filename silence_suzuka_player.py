@@ -9766,7 +9766,7 @@ class MediaPlayer(QMainWindow):
         items_needing_duration = [
             (i, item) for i, item in enumerate(self.playlist)
             if item.get('type') in ('youtube', 'bilibili', 'local')
-               and not item.get('duration')
+            and not item.get('duration')
         ]
         
         if not items_needing_duration:
@@ -9780,14 +9780,15 @@ class MediaPlayer(QMainWindow):
         )
         
         if reply == QMessageBox.Yes:
+            # Show cancellable progress dialog FIRST
+            self._show_duration_progress(len(items_needing_duration))
+            
             # Create duration fetcher with cancel support
             self._duration_fetcher = DurationFetcher(items_needing_duration, self)
             self._duration_fetcher.progressUpdated.connect(self._on_duration_progress)
             self._duration_fetcher.durationReady.connect(self._on_duration_ready)
             self._duration_fetcher.finished.connect(self._on_duration_fetch_complete)
             
-            # Show cancellable progress dialog
-            self._show_duration_progress(len(items_needing_duration))
             self._duration_fetcher.start()
 
     def _show_duration_progress(self, total):
@@ -9795,17 +9796,20 @@ class MediaPlayer(QMainWindow):
         from PySide6.QtWidgets import QProgressDialog
         self._duration_progress = QProgressDialog("Fetching durations...", "Cancel", 0, total, self)
         self._duration_progress.setWindowModality(Qt.WindowModal)
+        self._duration_progress.setMinimumDuration(0)  # Show immediately
+        self._duration_progress.setValue(0)  # Start at 0
         self._duration_progress.canceled.connect(self._cancel_duration_fetch)
         self._duration_progress.show()
 
     def _cancel_duration_fetch(self):
         """Cancel the duration fetching operation"""
-        if hasattr(self, '_duration_fetcher'):
+        if hasattr(self, '_duration_fetcher') and self._duration_fetcher:
             self._duration_fetcher.stop()
+            self.status.showMessage("Duration fetching cancelled", 3000)
 
     def _on_duration_progress(self, current, total):
         """Update progress dialog"""
-        if hasattr(self, '_duration_progress'):
+        if hasattr(self, '_duration_progress') and self._duration_progress:
             self._duration_progress.setValue(current)
             self._duration_progress.setLabelText(f"Fetching durations... ({current}/{total})")
 
@@ -9847,8 +9851,9 @@ class MediaPlayer(QMainWindow):
 
     def _on_duration_fetch_complete(self):
         """Clean up after duration fetching"""
-        if hasattr(self, '_duration_progress'):
+        if hasattr(self, '_duration_progress') and self._duration_progress:
             self._duration_progress.close()
+            self._duration_progress = None  # Clear reference
         self.status.showMessage("Duration fetching complete", 3000)
 
     def _schedule_save_current_playlist(self):
