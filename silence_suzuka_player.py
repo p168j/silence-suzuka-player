@@ -165,39 +165,51 @@ class MiniPlayer(QWidget):
         self.main_player = main_player_instance
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setWindowTitle("Mini Player")
+        self.setAttribute(Qt.WA_TranslucentBackground) # Make window transparent
         self.setFixedWidth(220)
         self.resize(220, 320)
         self._drag_pos = None
-        
-        # --- NEW: Variables for title scrolling ---
+
+        # --- Variables for title scrolling ---
         self._scroll_timer = QTimer(self)
         self._scroll_timer.timeout.connect(self._scroll_title_step)
         self._scroll_pos = 0
         self._full_title = ""
-        # --- END NEW ---
-        
+
+        # --- Components for the blurred background ---
+        self.background_label = QLabel(self)
+        self.blur_effect = QGraphicsBlurEffect()
+        self.blur_effect.setBlurRadius(35) # You can adjust the blur intensity here
+        self.background_label.setGraphicsEffect(self.blur_effect)
+        self.theme_overlay = QWidget(self) # This widget provides the theme tint
+
+        # Build the UI on top of the background components
         self._setup_ui()
         self.update_theme_and_icons(theme, icons)
 
     def _setup_ui(self):
-        # ... (This method is unchanged from the last fix) ...
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(0)
+        # This layout will contain the actual controls (buttons, labels, etc.)
+        self.content_layout = QVBoxLayout(self)
+        self.content_layout.setContentsMargins(8, 8, 8, 8)
+        self.content_layout.setSpacing(0)
+
         self.album_art = QLabel()
         self.album_art.setObjectName("albumArtLabel")
         self.album_art.setAlignment(Qt.AlignCenter)
         self.album_art.mousePressEvent = lambda e: self.main_player.toggle_play_pause()
-        layout.addWidget(self.album_art, 1)
+        self.content_layout.addWidget(self.album_art, 1)
+
         self.info_and_controls = QWidget()
         self.info_and_controls.setObjectName("infoAndControlsWidget")
         info_layout = QVBoxLayout(self.info_and_controls)
         info_layout.setContentsMargins(10, 8, 10, 8)
-        layout.addWidget(self.info_and_controls)
+        self.content_layout.addWidget(self.info_and_controls)
+
         self.track_title = QLabel("No Track Playing")
         self.track_title.setObjectName("miniPlayerTitle")
         self.track_title.setAlignment(Qt.AlignCenter)
         info_layout.addWidget(self.track_title)
+
         progress_layout = QHBoxLayout()
         self.time_label = QLabel("0:00")
         self.time_label.setObjectName("miniTimeLabel")
@@ -209,6 +221,7 @@ class MiniPlayer(QWidget):
         progress_layout.addWidget(self.progress_bar, 1)
         progress_layout.addWidget(self.duration_label)
         info_layout.addLayout(progress_layout)
+
         controls_layout = QHBoxLayout()
         controls_layout.setContentsMargins(0, 4, 0, 0)
         self.prev_btn = QPushButton()
@@ -227,11 +240,62 @@ class MiniPlayer(QWidget):
         controls_layout.addStretch()
         controls_layout.addWidget(self.show_main_btn)
         info_layout.addLayout(controls_layout)
-        # --- NEW: Enable mouse tracking on the title for hover events ---
+
         self.track_title.setMouseTracking(True)
         self.track_title.installEventFilter(self)
 
-    # --- NEW: Event filter to catch hover events on the title ---
+    def resizeEvent(self, event):
+        # Ensure background widgets resize with the window
+        super().resizeEvent(event)
+        self.background_label.resize(self.size())
+        self.theme_overlay.resize(self.size())
+
+    def update_album_art(self, pixmap):
+        # Set the main (sharp) album art in the center
+        self.album_art.setPixmap(pixmap.scaled(self.album_art.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+        # Set the blurred background to fill the entire window
+        bg_pixmap = pixmap.scaled(self.size(), Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+        self.background_label.setPixmap(bg_pixmap)
+
+    def update_theme_and_icons(self, theme, icons):
+        self.icons = icons
+        self.prev_btn.setIcon(self.icons['previous'])
+        self.play_pause_btn.setIcon(self.icons['play'])
+        self.next_btn.setIcon(self.icons['next'])
+        self.show_main_btn.setIcon(self.icons['show_main'])
+        self.volume_icon_label.setPixmap(self.icons['volume'].pixmap(QSize(20, 20)))
+
+        # Define the theme tint and the stylesheet for the UI controls
+        if theme == 'vinyl':
+            self.theme_overlay.setStyleSheet("background-color: rgba(243, 234, 211, 0.7); border-radius: 8px;")
+            stylesheet = """
+                QWidget { background-color: transparent; }
+                #albumArtLabel { background-color: rgba(233, 224, 200, 0.5); border-radius: 6px; }
+                #infoAndControlsWidget { background-color: rgba(240, 231, 207, 0.7); border-top: 1px solid rgba(229, 213, 184, 0.8); }
+                #miniPlayerTitle { color: #4a2c2a; font-weight: bold; }
+                #miniTimeLabel { color: #654321; font-size: 11px; }
+                QPushButton { border: none; background-color: transparent; }
+                #miniProgressBar::groove { height: 4px; background: rgba(217, 206, 178, 0.8); border-radius: 2px; }
+                #miniProgressBar::handle { background: #4a2c2a; width: 10px; height: 10px; border-radius: 5px; margin: -3px 0; }
+                #miniProgressBar::sub-page { background: #4a2c2a; border-radius: 2px; }
+            """
+        else:  # Dark Theme
+            self.theme_overlay.setStyleSheet("background-color: rgba(20, 20, 20, 0.7); border-radius: 8px;")
+            stylesheet = """
+                QWidget { background-color: transparent; }
+                #albumArtLabel { background-color: rgba(30, 30, 30, 0.5); border-radius: 6px; }
+                #infoAndControlsWidget { background-color: rgba(38, 38, 38, 0.7); border-top: 1px solid rgba(58, 58, 58, 0.8); }
+                #miniPlayerTitle { color: #f0f0f0; font-weight: bold; }
+                #miniTimeLabel { color: #aaa; font-size: 11px; }
+                QPushButton { border: none; background-color: transparent; }
+                #miniProgressBar::groove { height: 4px; background: rgba(74, 74, 74, 0.8); border-radius: 2px; }
+                #miniProgressBar::handle { background: #d0d0d0; width: 10px; height: 10px; border-radius: 5px; margin: -3px 0; }
+                #miniProgressBar::sub-page { background: #e76f51; border-radius: 2px; }
+            """
+        self.setStyleSheet(stylesheet)
+        self.update_playback_state(self.main_player._is_playing())
+
     def eventFilter(self, obj, event):
         if obj == self.track_title:
             if event.type() == QEvent.Enter:
@@ -240,78 +304,45 @@ class MiniPlayer(QWidget):
                 self._stop_title_scroll()
         return super().eventFilter(obj, event)
 
-    # --- NEW: Methods to control the title scrolling ---
     def _start_title_scroll(self):
         metrics = self.track_title.fontMetrics()
         text_width = metrics.horizontalAdvance(self._full_title)
-        # Only scroll if the text is actually wider than the label
         if text_width > self.track_title.width():
             self._scroll_pos = 0
-            self._scroll_timer.start(200) # Scroll speed
+            self._scroll_timer.start(200)
 
     def _stop_title_scroll(self):
         self._scroll_timer.stop()
-        self.update_track_title(self._full_title) # Restore elided text
+        self.update_track_title(self._full_title)
 
     def _scroll_title_step(self):
-        text_to_scroll = self._full_title + "   " # Add padding
+        text_to_scroll = self._full_title + "   "
         scrolled_text = text_to_scroll[self._scroll_pos:] + text_to_scroll[:self._scroll_pos]
         self.track_title.setText(scrolled_text)
         self._scroll_pos = (self._scroll_pos + 1) % len(text_to_scroll)
 
     def update_track_title(self, title):
-        # Stop any active scroll and store the new full title
         self._scroll_timer.stop()
         self._full_title = title
-        # Set the initial elided text
         metrics = self.track_title.fontMetrics()
         elided_title = metrics.elidedText(title, Qt.ElideRight, self.track_title.width() - 10)
         self.track_title.setText(elided_title)
 
-    # ... (the rest of the MiniPlayer methods are unchanged) ...
-    def update_theme_and_icons(self, theme, icons):
-        self.icons = icons
-        self.prev_btn.setIcon(self.icons['previous'])
-        self.play_pause_btn.setIcon(self.icons['play'])
-        self.next_btn.setIcon(self.icons['next'])
-        self.show_main_btn.setIcon(self.icons['show_main'])
-        self.volume_icon_label.setPixmap(self.icons['volume'].pixmap(QSize(20, 20)))
-        if theme == 'vinyl':
-            self.setStyleSheet("""
-                QWidget { background-color: #f3ead3; border-radius: 8px; }
-                #albumArtLabel { background-color: #e9e0c8; border-radius: 6px; }
-                #infoAndControlsWidget { background-color: #f0e7cf; border-top: 1px solid #e5d5b8; }
-                #miniPlayerTitle { color: #4a2c2a; font-weight: bold; }
-                #miniTimeLabel { color: #654321; font-size: 11px; }
-                QPushButton { border: none; }
-                #miniProgressBar::groove { height: 4px; background: #d9ceb2; border-radius: 2px; }
-                #miniProgressBar::handle { background: #4a2c2a; width: 10px; height: 10px; border-radius: 5px; margin: -3px 0; }
-                #miniProgressBar::sub-page { background: #4a2c2a; border-radius: 2px; }
-            """)
-        else: # Dark Theme
-            self.setStyleSheet("""
-                QWidget { background-color: #2a2a2a; border-radius: 8px; }
-                #albumArtLabel { background-color: #1e1e1e; border-radius: 6px; }
-                #infoAndControlsWidget { background-color: #262626; border-top: 1px solid #3a3a3a; }
-                #miniPlayerTitle { color: #f0f0f0; font-weight: bold; }
-                #miniTimeLabel { color: #aaa; font-size: 11px; }
-                QPushButton { border: none; }
-                #miniProgressBar::groove { height: 4px; background: #4a4a4a; border-radius: 2px; }
-                #miniProgressBar::handle { background: #d0d0d0; width: 10px; height: 10px; border-radius: 5px; margin: -3px 0; }
-                #miniProgressBar::sub-page { background: #e76f51; border-radius: 2px; }
-            """)
-        self.update_playback_state(self.main_player._is_playing())
     def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton: self._drag_pos = event.globalPosition().toPoint()
+        if event.button() == Qt.LeftButton:
+            self._drag_pos = event.globalPosition().toPoint()
+
     def mouseMoveEvent(self, event):
         if self._drag_pos:
             self.move(self.pos() + event.globalPosition().toPoint() - self._drag_pos)
             self._drag_pos = event.globalPosition().toPoint()
-    def mouseReleaseEvent(self, event): self._drag_pos = None
+
+    def mouseReleaseEvent(self, event):
+        self._drag_pos = None
+
     def update_playback_state(self, is_playing):
         self.play_pause_btn.setIcon(self.icons['pause'] if is_playing else self.icons['play'])
-    def update_album_art(self, pixmap):
-        self.album_art.setPixmap(pixmap.scaled(self.album_art.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
     def update_progress(self, position, duration):
         self.progress_bar.setRange(0, duration)
         self.progress_bar.setValue(position)
@@ -3841,31 +3872,40 @@ class MediaPlayer(QMainWindow):
         self._max_undo_operations = 10  # Limit undo history
 
     def _get_mini_player_icons(self):
-        """Returns a dictionary of icons for the mini-player based on the current theme."""
-        eject_icon_path = APP_DIR / 'icons/eject.svg'
-        # Use a standard Qt icon as a fallback if the file is missing
-        eject_icon = QIcon(str(eject_icon_path)) if eject_icon_path.exists() else self.style().standardIcon(QStyle.SP_ArrowUp)
+        """Returns a dictionary of icons for the mini-player, tinted to match the theme."""
+        
+        # Define the source icon files we will be using
+        show_main_icon_path = APP_DIR / 'icons' / 'chevron-down-dark.svg' 
+        volume_icon_path = APP_DIR / 'icons' / 'volume.svg'
+        next_icon_path = APP_DIR / 'icons' / 'next.svg'
+        prev_icon_path = APP_DIR / 'icons' / 'previous.svg'
+
+        # Define a standard size for all mini player control icons
+        icon_size = QSize(20, 20)
 
         if self.theme == 'vinyl':
+            # --- Vinyl Theme: Tint all icons to the theme's dark brown for consistency ---
+            vinyl_icon_color = "#4a2c2a"
+            
             return {
-                'play': self._play_icon_normal,
+                'play': self._play_icon_normal,     # Keep the orange accent for play/pause
                 'pause': self._pause_icon_normal,
-                'next': self.next_icon_vinyl,
-                'previous': self.prev_icon_vinyl,
-                'volume': self.volume_icon,
-                'show_main': eject_icon
+                'next': QIcon(_render_svg_tinted(str(next_icon_path), icon_size, vinyl_icon_color)),
+                'previous': QIcon(_render_svg_tinted(str(prev_icon_path), icon_size, vinyl_icon_color)),
+                'volume': QIcon(_render_svg_tinted(str(volume_icon_path), icon_size, vinyl_icon_color)),
+                'show_main': QIcon(_render_svg_tinted(str(show_main_icon_path), icon_size, vinyl_icon_color))
             }
         else: # Dark theme
-            volume_icon = QIcon(_render_svg_tinted(str(APP_DIR / 'icons/volume.svg'), QSize(20,20), "#FFFFFF"))
-            show_main_icon = QIcon(_render_svg_tinted(str(eject_icon_path), QSize(20,20), "#FFFFFF")) if eject_icon_path.exists() else self.style().standardIcon(QStyle.SP_ArrowUp)
+            # --- Dark Theme: Tint all icons to white for consistency ---
+            dark_icon_color = "#FFFFFF"
 
             return {
-                'play': self._play_icon_normal,
+                'play': self._play_icon_normal,     # Keep the orange accent for play/pause
                 'pause': self._pause_icon_normal,
-                'next': self.next_icon_dark,
-                'previous': self.prev_icon_dark,
-                'volume': volume_icon,
-                'show_main': show_main_icon
+                'next': QIcon(_render_svg_tinted(str(next_icon_path), icon_size, dark_icon_color)),
+                'previous': QIcon(_render_svg_tinted(str(prev_icon_path), icon_size, dark_icon_color)),
+                'volume': QIcon(_render_svg_tinted(str(volume_icon_path), icon_size, dark_icon_color)),
+                'show_main': QIcon(_render_svg_tinted(str(show_main_icon_path), icon_size, dark_icon_color))
             }
 
     def _on_mini_player_seek(self):
@@ -4920,7 +4960,7 @@ class MediaPlayer(QMainWindow):
         top.addWidget(self.stats_btn)
         top.addWidget(self.settings_btn)
         
-        self.mini_player_btn = QPushButton("🗔️") # A picture-in-picture style icon
+        self.mini_player_btn = QPushButton("🖼️") # A picture-in-picture style icon
         self.mini_player_btn.setObjectName('settingsBtn')
         self.mini_player_btn.setToolTip("Switch to Mini Player")
         self.mini_player_btn.clicked.connect(self._toggle_mini_player)
