@@ -3579,6 +3579,35 @@ class MediaPlayer(QMainWindow):
         if self.mpv:
             self._apply_volume_normalization()
 
+    def _periodic_cleanup(self):
+        """Clean up memory every 5 minutes to prevent accumulation"""
+        try:
+            # 1. Limit undo history (keep last 10 operations)
+            if len(self._undo_stack) > 10:
+                self._undo_stack = self._undo_stack[-10:]
+            
+            # 2. Limit saved playback positions (keep last 1000 videos)
+            if len(self.playback_positions) > 1000:
+                items = list(self.playback_positions.items())
+                self.playback_positions = dict(items[-800:])
+                self._save_positions()
+                
+            # 3. Limit daily stats (keep last 365 days)
+            daily_stats = self.listening_stats.get('daily', {})
+            if len(daily_stats) > 365:
+                from datetime import datetime, timedelta
+                cutoff_date = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')
+                
+                new_daily = {}
+                for date, time_seconds in daily_stats.items():
+                    if date >= cutoff_date:
+                        new_daily[date] = time_seconds
+                
+                self.listening_stats['daily'] = new_daily
+                
+        except Exception as e:
+            print(f"Cleanup error: {e}")
+
     def _setup_up_next_scrolling(self):
         """Setup mouse tracking and scrolling for Up Next with proper event handling."""
         if not hasattr(self, 'up_next'):
@@ -3791,6 +3820,9 @@ class MediaPlayer(QMainWindow):
 
         self._undo_stack = []  # Stack of undo operations
         self._max_undo_operations = 10  # Limit undo history
+        self._cleanup_timer = QTimer(self)
+        self._cleanup_timer.timeout.connect(self._periodic_cleanup)
+        self._cleanup_timer.start(300000)  # 300,000 ms = 5 minutes
 
         self._init_subscription_manager()
 
@@ -3870,6 +3902,9 @@ class MediaPlayer(QMainWindow):
 
         self._undo_stack = []  # Stack of undo operations
         self._max_undo_operations = 10  # Limit undo history
+        self._cleanup_timer = QTimer(self)
+        self._cleanup_timer.timeout.connect(self._periodic_cleanup)
+        self._cleanup_timer.start(300000)  # 300,000 ms = 5 minutes
 
     def _get_mini_player_icons(self):
         """Returns a dictionary of icons for the mini-player, tinted to match the theme."""
@@ -5160,7 +5195,7 @@ class MediaPlayer(QMainWindow):
         self.search_bar.returnPressed.connect(lambda: self.filter_playlist(self.search_bar.text()))
 
         # Initialize search timer
-        self._search_timer = QTimer()
+        self._search_timer = QTimer(self)
         self._search_timer.setSingleShot(True)
 
         def do_filter():
@@ -5671,6 +5706,7 @@ class MediaPlayer(QMainWindow):
 
             fetcher = ThumbnailFetcher(item, self)
             fetcher.thumbnailReady.connect(self._on_thumbnail_ready)
+            fetcher.finished.connect(fetcher.deleteLater)
             fetcher.start()
         else:
             self.mini_player.update_theme_and_icons(self.theme, self._get_mini_player_icons())
@@ -7205,6 +7241,49 @@ class MediaPlayer(QMainWindow):
             self.raise_()
 
     def closeEvent(self, e):
+        # STOP ALL TIMERS FIRST to prevent memory leaks
+        try:
+            timers_to_stop = [
+                '_search_timer', 'pos_timer', 'badge_timer', 'silence_timer',
+                '_track_scroll_timer', '_scroll_timer'
+            ]
+            for timer_name in timers_to_stop:
+                timer = getattr(self, timer_name, None)
+                if timer and hasattr(timer, 'stop'):
+                    timer.stop()
+                    timer.deleteLater()
+        except Exception as e:
+            print(f"Timer cleanup error: {e}")
+        
+        # CLEAN UP WORKER THREADS
+        try:
+            # Stop YT-DLP workers
+            if hasattr(self, 'ytdl_workers'):
+                for worker in self.ytdl_workers:
+                    if worker:
+                        worker.stop()
+                        worker.wait(1000)  # 1 second timeout
+                        worker.deleteLater()
+            
+            # Stop local duration worker
+            if hasattr(self, '_local_dur'):
+                self._local_dur.stop()
+                self._local_dur.wait(1000)
+                self._local_dur.deleteLater()
+                
+            # Stop any running playlist loaders
+            if hasattr(self, '_playlist_loader'):
+                self._playlist_loader.terminate()
+                self._playlist_loader.deleteLater()
+                
+            # Stop duration fetcher
+            if hasattr(self, '_duration_fetcher'):
+                self._duration_fetcher.stop()
+                self._duration_fetcher.deleteLater()
+                
+        except Exception as e:
+            print(f"Worker cleanup error: {e}")
+
         # Gracefully stop monitors/threads and persist settings
         try:
             if getattr(self, 'audio_monitor', None):
@@ -9484,14 +9563,27 @@ class MediaPlayer(QMainWindow):
             print(f"Background title resolve setup failed: {e}")
 
     def _cleanup_title_worker(self, worker):
-        """Clean up finished title worker."""
+        """Clean up finished title worker and prevent accumulation."""
         try:
             if worker in self._title_workers:
                 self._title_workers.remove(worker)
             worker.deleteLater()
+            
+            # Prevent unlimited accumulation of workers
+            if len(self._title_workers) > 50:  # Safety limit
+                # Clean up oldest workers
+                old_workers = self._title_workers[:25]
+                for old_worker in old_workers:
+                    try:
+                        old_worker.stop()
+                        old_worker.deleteLater()
+                        self._title_workers.remove(old_worker)
+                    except Exception:
+                        pass
+                        
         except Exception:
-            pass        
-        
+            pass
+            
     def add_link_dialog(self):
         from PySide6.QtWidgets import QInputDialog
         raw, ok = QInputDialog.getText(self, "Add Media Link", "Enter YouTube/Bilibili URL, playlist, or local path:")
@@ -9668,20 +9760,88 @@ class MediaPlayer(QMainWindow):
         return self._playlist_manager.save_current_playlist()
 
     def load_playlist_dialog(self):
-        print("DEBUG: load_playlist_dialog called - which version?")
         """Enhanced load playlist - replaces the old method"""
         if not hasattr(self, '_playlist_manager'):
             self._playlist_manager = EnhancedPlaylistManager(self, APP_DIR)
         
-        return self._playlist_manager.load_playlist_dialog()
-        def _unique_playlist_name(self, base):
-            base = (base or 'Playlist').strip()
-            if base not in self.saved_playlists:
-                return base
-            i = 2
-            while f"{base} ({i})" in self.saved_playlists:
-                i += 1
-            return f"{base} ({i})"
+        if not self._playlist_manager.saved_playlists:
+            reply = QMessageBox.question(
+                self, "No Saved Playlists",
+                "No saved playlists found.\n\nWould you like to save the current playlist?",
+                QMessageBox.Yes | QMessageBox.No
+            )
+            if reply == QMessageBox.Yes:
+                self._playlist_manager.save_current_playlist()
+            return
+        
+        # Create dialog WITHOUT storing as instance variable
+        dialog = PlaylistManagerDialog(
+            self._playlist_manager.saved_playlists, 
+            self.playlist, 
+            self  
+        )
+        
+        try:
+            # Show the dialog and handle result
+            result = dialog.exec()
+            
+            if result == QDialog.Accepted:
+                selected_data = dialog.get_selected_playlist()
+                load_mode = dialog.get_load_mode()
+                should_auto_play = dialog.should_auto_play()
+                
+                if not selected_data:
+                    return
+
+                items_to_load = selected_data.get('items', [])
+                if not items_to_load:
+                    QMessageBox.warning(
+                        self, "Load Error", 
+                        "Selected playlist is empty."
+                    )
+                    return
+                
+                # Store undo data
+                undo_data = {
+                    'old_playlist': self.playlist.copy(),
+                    'old_current_index': self.current_index,
+                    'was_playing': self._is_playing(),
+                    'load_mode': load_mode,
+                    'items_loaded': len(items_to_load)
+                }
+                self._add_undo_operation('load_playlist', undo_data)
+
+                # Apply the load mode
+                if load_mode == 'replace':
+                    self.playlist = [item.copy() for item in items_to_load]
+                    self.current_index = 0
+                elif load_mode == 'append':
+                    self.playlist.extend([item.copy() for item in items_to_load])
+                elif load_mode == 'insert':
+                    insert_pos = max(0, self.current_index + 1)
+                    for i, item in enumerate(items_to_load):
+                        self.playlist.insert(insert_pos + i, item.copy())
+
+                # Save and refresh
+                self._save_current_playlist()
+                self._refresh_playlist_widget()
+                self.play_scope = None
+                self._update_scope_label()
+                self._update_up_next()
+
+                # Auto-play if requested
+                if should_auto_play and self.playlist:
+                    if load_mode == 'replace':
+                        self.current_index = 0
+                    self.play_current()
+
+                self.status.showMessage(f"Loaded playlist ({len(items_to_load)} items)", 4000)
+
+        finally:
+            # CRITICAL: Always clean up dialog
+            dialog.close()
+            dialog.deleteLater()
+            dialog = None
 
     def on_tree_item_double_clicked(self, item, column):
         data = item.data(0, Qt.UserRole)
@@ -11806,28 +11966,33 @@ class MediaPlayer(QMainWindow):
             print(f"Schedule search filter error: {e}")
 
     def _on_search_text_changed(self, text):
-        """Simplified search with better Japanese support"""
+        """Optimized search with better Japanese support and deduplication"""
         try:
-            # # DEBUG removed  # DEBUG LINE
+            # Early exit if text hasn't actually changed
+            if hasattr(self, '_last_search_text') and self._last_search_text == text:
+                return
+            self._last_search_text = text
             
             # Stop any existing timer
             self._search_timer.stop()
+            
+            # Empty search = immediate clear
+            if not text.strip():
+                self._show_all_items()
+                return
             
             # Always use a delay, but adjust based on content
             has_cjk = any(ord(char) > 127 for char in text)
             
             if has_cjk:
-                # For Japanese/Chinese/Korean, wait longer
-                delay = 750
+                delay = 750  # For Japanese/Chinese/Korean, wait longer
             else:
-                # For ASCII, still use a small delay for consistency
-                delay = 200
-                
-            # # DEBUG removed  # DEBUG LINE
+                delay = 150  # Reduced from 200 for snappier feel
+                    
             self._search_timer.start(delay)
             
         except Exception as e:
-            print(f"Search text changed error: {e}")          
+            print(f"Search text changed error: {e}")
 
     # Silence + AFK handlers
     def on_silence_detected(self):
