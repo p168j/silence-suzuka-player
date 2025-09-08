@@ -6247,28 +6247,37 @@ class MediaPlayer(QMainWindow):
 
     def _sync_mini_player_ui(self):
         """Updates all mini-player UI elements to match the main player's state."""
-        if not hasattr(self, 'mini_player') or not self.mini_player:
-            return
+        try:
+            # This 'if' and everything below it needs to be indented under the 'try'
+            if not hasattr(self, 'mini_player') or not self.mini_player:
+                return
 
-        self.mini_player.update_playback_state(self._is_playing())
+            self.mini_player.update_playback_state(self._is_playing())
 
-        if 0 <= self.current_index < len(self.playlist):
-            item = self.playlist[self.current_index]
-            self.mini_player.update_track_title(item.get('title', 'Unknown'))
-            
-            pos = int(self._last_play_pos_ms or 0)
-            dur = self.progress.maximum()
-            self.mini_player.update_progress(pos, dur)
+            if 0 <= self.current_index < len(self.playlist):
+                item = self.playlist[self.current_index]
+                self.mini_player.update_track_title(item.get('title', 'Unknown'))
 
-            fetcher = ThumbnailFetcher(item, self)
-            fetcher.thumbnailReady.connect(self._on_thumbnail_ready)
-            fetcher.finished.connect(fetcher.deleteLater)
-            fetcher.start()
-        else:
-            self.mini_player.update_theme_and_icons(self.theme, self._get_mini_player_icons())
-            self.mini_player.update_track_title("No Track Playing")
-            self.mini_player.update_album_art(QPixmap())
-            self.mini_player.update_progress(0, 0)
+                pos = int(self._last_play_pos_ms or 0)
+                dur = self.progress.maximum()
+                self.mini_player.update_progress(pos, dur)
+
+                fetcher = ThumbnailFetcher(item, self)
+                fetcher.thumbnailReady.connect(self._on_thumbnail_ready)
+                fetcher.finished.connect(fetcher.deleteLater)
+                fetcher.start()
+            else:
+                self.mini_player.update_theme_and_icons(self.theme, self._get_mini_player_icons())
+                self.mini_player.update_track_title("No Track Playing")
+                self.mini_player.update_album_art(QPixmap())
+                self.mini_player.update_progress(0, 0)
+
+        except RuntimeError:
+            # This 'except' block should be at the same indentation level as the 'try'
+            # This error means the C++ part of the mini_player widget was deleted.
+            # We can safely nullify our reference to it.
+            print("Mini-player was closed or destroyed. Cleaning up reference.")
+            self.mini_player = None
 
     def _show_main_player_from_mini(self):
         """Hides the mini-player and shows the main window."""
@@ -12686,6 +12695,7 @@ class MediaPlayer(QMainWindow):
             # Seeking
             QShortcut(QKeySequence(Qt.Key_Right), self, lambda: self._seek_relative(5))
             QShortcut(QKeySequence(Qt.Key_Left), self, lambda: self._seek_relative(-5))
+            QShortcut(QKeySequence(Qt.Key_J), self, lambda: self._seek_relative(-5))
 
             # Volume
             QShortcut(QKeySequence(Qt.Key_Up), self, self._volume_up)
