@@ -4008,6 +4008,8 @@ class MediaPlayer(QMainWindow):
             self._save_current_playlist()
             
         except Exception as e:
+            print(f"Title update failed for {url}: {e}")  
+            logger.error(f"Title update failed for {url}: {e}") 
             # Don't let title resolution crash the app
             logger.error(f"Safe title update failed for {url}: {e}")
 
@@ -12118,8 +12120,25 @@ class MediaPlayer(QMainWindow):
         # --- END FIX ---
 
         # 2. Update the internal playlist data structure
-        self.playlist.extend(new_items)
-        
+        def add_items_progressively():
+            batch_size = 20
+            for i in range(0, len(new_items), batch_size):
+                batch = new_items[i:i + batch_size]
+                self.playlist.extend(batch)
+                
+                # Update UI incrementally
+                for j, item in enumerate(batch):
+                    self._add_single_item_to_tree(len(self.playlist) - len(batch) + j, item)
+                
+                # Process events to keep UI responsive
+                QApplication.processEvents()
+                
+                # Show progress
+                self.status.showMessage(f"Added {min(i + batch_size, len(new_items))}/{len(new_items)} items...", 1000)
+
+        # Run progressively
+        QTimer.singleShot(0, add_items_progressively)
+
         # --- BATCHED UI UPDATE ---
         # 3. Define the function that will process one batch of new items
         def add_batch_to_ui(batch, start_offset):
