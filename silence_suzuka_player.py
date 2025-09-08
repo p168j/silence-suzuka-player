@@ -12728,6 +12728,7 @@ class MediaPlayer(QMainWindow):
             QShortcut(QKeySequence(Qt.Key_Right), self, lambda: self._seek_relative(5))
             QShortcut(QKeySequence(Qt.Key_Left), self, lambda: self._seek_relative(-5))
             QShortcut(QKeySequence(Qt.Key_J), self, lambda: self._seek_relative(-5))
+            QShortcut(QKeySequence(Qt.Key_L), self, lambda: self._seek_relative(10))
 
             # Volume
             QShortcut(QKeySequence(Qt.Key_Up), self, self._volume_up)
