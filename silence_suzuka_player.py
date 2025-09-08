@@ -3625,6 +3625,24 @@ class PlaylistTree(QTreeWidget):
                 if source_index >= 0 and target_index >= 0:
                     parent.takeChild(source_index)
                     parent.insertChild(target_index, source_item)
+                    
+                    # *** FIX STARTS HERE ***
+                    # Rebuild the playlist from the tree's new order
+                    new_playlist = []
+                    for i in range(self.topLevelItemCount()):
+                        top_item = self.topLevelItem(i)
+                        data = top_item.data(0, Qt.UserRole)
+                        if isinstance(data, tuple) and data[0] == 'current':
+                            new_playlist.append(data[2])
+                        elif isinstance(data, tuple) and data[0] == 'group':
+                            for j in range(top_item.childCount()):
+                                child = top_item.child(j)
+                                child_data = child.data(0, Qt.UserRole)
+                                if isinstance(child_data, tuple) and child_data[0] == 'current':
+                                    new_playlist.append(child_data[2])
+                    self.player.playlist = new_playlist
+                    # *** FIX ENDS HERE ***
+                    
                     event.accept()
                     return
 
@@ -3682,7 +3700,7 @@ class PlaylistTree(QTreeWidget):
                         new_items.append({'index': len(self.player.playlist) - 1, 'item': self.player.playlist[-1]})
 
             # Save, refresh, and record undo for added items
-            self.player._save_current_playlist()  # Access the method from the parent player
+            self.player._save_current_playlist()
             self._refresh_playlist_widget(expansion_state=expansion_state)
             event.acceptProposedAction()
 
