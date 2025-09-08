@@ -3923,7 +3923,7 @@ class ScrollingTreeWidget(QTreeWidget):
         super().mouseMoveEvent(event)
         
         # Get item under mouse
-        current_item = self.itemAt(event.pos())
+        current_item = self.itemAt(event.position().toPoint())
         
         # Stop scrolling for all items except the hovered one
         for item in list(self._scroll_timers.keys()):
@@ -4292,7 +4292,7 @@ class MediaPlayer(QMainWindow):
                 self._stop_scrolling() # Stop scrolling when mouse leaves the widget
                 return True
             elif event.type() == QEvent.MouseMove:
-                item = self.up_next.itemAt(event.pos())
+                item = self.up_next.itemAt(event.position().toPoint())
                 if item != self._scroll_item:
                     self._stop_scrolling()
                     if item:
@@ -4748,7 +4748,7 @@ class MediaPlayer(QMainWindow):
             mime_data = event.mimeData()
 
             # Handle reordering of items
-            target_item = self.itemAt(event.pos())
+            target_item = self.itemAt(event.position().toPoint())
             source_item = self.currentItem()
 
             if source_item and target_item:
