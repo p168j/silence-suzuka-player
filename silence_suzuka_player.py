@@ -4254,17 +4254,7 @@ class MediaPlayer(QMainWindow):
         self._playlist_manager = None
         self._subscription_manager = None 
 
-        # Create 4 parallel workers for faster title resolution
-        print(f"DEBUG: Creating {10} YtdlManager workers...")
-        self.ytdl_workers = []
-        for i in range(10):  # Reduced from 10 to 4
-            worker = YtdlManager(self)
-            worker.titleResolved.connect(self._on_title_resolved)
-            worker.start()
-            self.ytdl_workers.append(worker)
-            print(f"DEBUG: Created YtdlManager worker {i}")
-        self._worker_index = 0
-        print(f"DEBUG: All {len(self.ytdl_workers)} YtdlManager workers created")
+
         self._local_dur = LocalDurationQueue(self)
         self._local_dur.durationReady.connect(self._on_duration_ready)  # reuse existing slot
         self._local_dur.start()
@@ -4381,6 +4371,18 @@ class MediaPlayer(QMainWindow):
         self.statusMessageSignal.connect(self._show_status_message)
         self.titleUpdateRequested.connect(self._update_title_safely) 
         self._build_ui()
+
+        # Create 4 parallel workers for faster title resolution
+        print(f"DEBUG: Creating {10} YtdlManager workers...")
+        self.ytdl_workers = []
+        for i in range(10):  # Reduced from 10 to 4
+            worker = YtdlManager(self)
+            worker.titleResolved.connect(self._on_title_resolved)
+            worker.start()
+            self.ytdl_workers.append(worker)
+            print(f"DEBUG: Created YtdlManager worker {i}")
+        self._worker_index = 0
+        print(f"DEBUG: All {len(self.ytdl_workers)} YtdlManager workers created")
 
         # Override the playlist methods with enhanced versions
         def enhanced_save():
