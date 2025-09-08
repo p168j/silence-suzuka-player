@@ -4013,6 +4013,10 @@ class MediaPlayer(QMainWindow):
             # Don't let title resolution crash the app
             logger.error(f"Safe title update failed for {url}: {e}")
 
+    def _toggle_unwatched_shortcut(self):
+        """Toggles the 'unwatched only' filter via a hotkey."""
+        self.unwatched_btn.setChecked(not self.unwatched_btn.isChecked())
+
     def _periodic_cleanup(self):
         """Enhanced cleanup to prevent memory leaks"""
         try:
@@ -12740,6 +12744,7 @@ class MediaPlayer(QMainWindow):
             # Toggles
             QShortcut(QKeySequence(Qt.Key_S), self, self._toggle_shuffle_shortcut)
             QShortcut(QKeySequence(Qt.Key_R), self, self._toggle_repeat_shortcut)
+            QShortcut(QKeySequence(Qt.Key_U), self, self._toggle_unwatched_shortcut)
 
             QShortcut(QKeySequence(Qt.Key_C), self, self._toggle_all_groups)
             QShortcut(QKeySequence(Qt.Key_X), self, self._expand_all_groups)
