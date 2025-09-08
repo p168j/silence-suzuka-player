@@ -21,6 +21,7 @@ import queue
 import warnings
 import subprocess
 import io
+import threading
 from pathlib import Path
 from datetime import datetime, timedelta
 from enum import Enum
@@ -4230,8 +4231,6 @@ class MediaPlayer(QMainWindow):
                 print("Volume normalization disabled.")
         except Exception as e:
             print(f"Error applying volume normalization: {e}")
-
-    
 
         # --- 1. LOAD ALL THREE ICONS HERE ---
         # This replaces the previous icon loading logic for the tray.
