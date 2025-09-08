@@ -3602,327 +3602,88 @@ class PlaylistTree(QTreeWidget):
         self.setAcceptDrops(True)
         self.setDropIndicatorShown(True)
         self.setDragDropMode(QAbstractItemView.InternalMove)
-        self.setDefaultDropAction(Qt.MoveAction)  # Add this line for better drag-and-drop
         self.setWordWrap(False)
         self.setTextElideMode(Qt.ElideRight)
-        
-        # Enhanced drag-and-drop configuration for group reordering
-        self.setAnimated(True)  # Smooth expand/collapse animations
-
-    def _get_tree_expansion_state(self):
-        """Get current expansion state of all groups."""
-        state = {}
-        try:
-            for i in range(self.topLevelItemCount()):
-                item = self.topLevelItem(i)
-                if not item:
-                    continue
-                    
-                data = item.data(0, Qt.UserRole)
-                if isinstance(data, tuple) and data[0] == 'group':
-                    key = self.player._group_effective_key(data[1] if len(data) > 1 else None, item)
-                    if key:
-                        state[key] = item.isExpanded()
-        except Exception:
-            pass
-        return state
 
     def dropEvent(self, event):
-        """Handle drag-and-drop events to reorder items, groups, or add files/URLs."""
+        """Handle drag-and-drop events to reorder items or add files/URLs."""
         try:
+            # Retrieve the tree's expansion state
             expansion_state = self._get_tree_expansion_state()
-            print(f"DEBUG: Captured expansion state: {expansion_state}")
             mime_data = event.mimeData()
 
-            # Handle internal drag-and-drop reordering
-            source_item = self.currentItem()
+            # Handle reordering of items
             target_item = self.itemAt(event.pos())
+            source_item = self.currentItem()
 
-            # Check if dragging above the first group
-            if not target_item:  # If target_item is None, assume it's above everything
-                print("DEBUG: Dragging to empty space above the first group")
-                target_item = self.topLevelItem(0)  # Force target to the first group
-            elif target_item == self.topLevelItem(0):  # Explicitly check for the first group
-                print("DEBUG: Dragging to the very first group")
+            if source_item and target_item:
+                # Reordering logic
+                parent = source_item.parent() or self.invisibleRootItem()
+                source_index = parent.indexOfChild(source_item)
+                target_index = parent.indexOfChild(target_item)
 
-            if source_item and target_item and not mime_data.hasUrls() and not mime_data.hasText():
-                success = self._handle_internal_reorder(source_item, target_item, expansion_state)
-                if success:
+                if source_index >= 0 and target_index >= 0:
+                    parent.takeChild(source_index)
+                    parent.insertChild(target_index, source_item)
                     event.accept()
                     return
 
-            # Handle external file/URL drops (existing logic)
-            self._handle_external_drops(event, expansion_state)
+            # Additional logic for file/URL drops
+            added = 0
+            skipped = 0
+            new_items = []  # for undo
 
-        except Exception as e:
-            print(f"Drop event error: {e}")
-            event.ignore()
+            def _norm_local(u: str) -> str:
+                import os
+                p = _path_from_url_or_path(u or "")
+                try:
+                    return os.path.normcase(os.path.abspath(p))
+                except Exception:
+                    return p
 
-    def _handle_internal_reorder(self, source_item, target_item, expansion_state):
-        """Handle reordering of items within the tree."""
-        try:
-            source_data = source_item.data(0, Qt.UserRole)
-            target_data = target_item.data(0, Qt.UserRole)
+            if mime_data.hasUrls():
+                existing_local = set(
+                    _norm_local(it.get('url'))
+                    for it in self.player.playlist
+                    if isinstance(it, dict) and it.get('type') == 'local' and it.get('url')
+                )
 
-            if not isinstance(source_data, tuple) or not isinstance(target_data, tuple):
-                return False
+                for url in mime_data.urls():
+                    file_path = url.toLocalFile()
+                    if file_path:
+                        nf = _norm_local(file_path)
+                        if nf in existing_local:
+                            skipped += 1
+                            continue
 
-            source_type = source_data[0]
-            target_type = target_data[0]
+                        item = {
+                            'title': Path(file_path).name,
+                            'url': file_path,
+                            'type': 'local'
+                        }
+                        self.player.playlist.append(item)
+                        new_items.append({'index': len(self.player.playlist) - 1, 'item': item})
+                        existing_local.add(nf)
+                        added += 1
 
-            # ADD THIS DEBUG LINE HERE
-            print(f"DEBUG: _handle_internal_reorder - source_type: {source_type}, target_type: {target_type}")
-            print(f"DEBUG: source_data: {source_data}")
-            print(f"DEBUG: target_data: {target_data}")
+                        if hasattr(self.player, '_local_dur'):
+                            self.player._local_dur.enqueue(len(self.player.playlist) - 1, self.player.playlist[-1])
+                    else:
+                        # Web URL (no dedupe here; handled inside _add_url_to_playlist)
+                        self.player._add_url_to_playlist(url.toString())
 
-            # Case 1: Moving individual items
-            if source_type == 'current' and target_type == 'current':
-                return self._reorder_individual_items(source_item, target_item, source_data, target_data, expansion_state)
-            
-            # Case 2: Moving groups/headers
-            elif source_type == 'group' and target_type == 'group':
-                return self._reorder_groups(source_item, target_item, source_data, target_data, expansion_state)
-            
-            # Case 3: Moving item to a group header (add to beginning of group)
-            elif source_type == 'current' and target_type == 'group':
-                return self._move_item_to_group(source_item, target_item, source_data, target_data, expansion_state)
-            
-            print("DEBUG: No matching case found, returning False")
-            return False
+            elif mime_data.hasText():
+                text = (mime_data.text() or "").strip().strip('"').strip("'")
+                if text:
+                    # Route through the unified path handler (it dedupes and enqueues)
+                    before_len = len(self.player.playlist)
+                    self.player._add_url_to_playlist(text)
+                    if len(self.player.playlist) > before_len:
+                        new_items.append({'index': len(self.player.playlist) - 1, 'item': self.player.playlist[-1]})
 
-        except Exception as e:
-            print(f"Internal reorder error: {e}")
-            return False
-
-    def _reorder_individual_items(self, source_item, target_item, source_data, target_data, expansion_state):
-        print("DEBUG: _reorder_individual_items called")
-        """Reorder individual playlist items."""
-        try:
-            source_idx = source_data[1]
-            target_idx = target_data[1]
-
-            if source_idx == target_idx:
-                return False
-
-            # Store undo data
-            undo_data = {
-                'playlist': [item.copy() for item in self.player.playlist],
-                'current_index': self.player.current_index,
-                'was_playing': self.player._is_playing()
-            }
-
-            # Perform the reorder in playlist data
-            item_to_move = self.player.playlist[source_idx]
-            del self.player.playlist[source_idx]
-
-            # Adjust target index
-            adjusted_target = target_idx if source_idx > target_idx else target_idx - 1
-            self.player.playlist.insert(adjusted_target, item_to_move)
-
-            # Update current_index
-            self._update_current_index_after_move(source_idx, adjusted_target)
-
-            # Save and refresh
-            self.player._add_undo_operation('move_items', undo_data)
-            self.player._save_current_playlist()
-            self.player._refresh_playlist_widget(expansion_state=expansion_state)
-
-            return True
-
-        except Exception as e:
-            print(f"Reorder individual items error: {e}")
-            return False
-
-    def _reorder_groups(self, source_item, target_item, source_data, target_data, expansion_state):
-        """Reorder entire groups by moving all their items."""
-        print("DEBUG: _reorder_groups called")
-        try:
-            # Initialize undo_data to prevent undefined errors
-            undo_data = {}
-
-            source_key = self.player._group_effective_key(source_data[1] if len(source_data) > 1 else None, source_item)
-            target_key = self.player._group_effective_key(target_data[1] if len(target_data) > 1 else None, target_item)
-
-            print(f"DEBUG: source_key: {source_key}, target_key: {target_key}")
-
-            if not source_key or not target_key or source_key == target_key:
-                print(f"DEBUG: Early return - source_key: {source_key}, target_key: {target_key}")
-                return False
-
-            # Get all indices for both groups
-            source_indices = self.player._iter_indices_for_group(source_key)
-            target_indices = self.player._iter_indices_for_group(target_key)
-
-            print(f"DEBUG: source_indices: {source_indices}, target_indices: {target_indices}")
-
-            if not source_indices:
-                print("DEBUG: No source indices found")
-                return False
-
-            # Find target position
-            if not target_indices:
-                target_position = len(self.player.playlist)
-                print(f"DEBUG: No target indices, using end position: {target_position}")
-            else:
-                target_top_index = min(target_indices)
-                print(f"DEBUG: target_top_index: {target_top_index}")
-
-                if target_top_index == 0:
-                    target_position = 0
-                    print(f"DEBUG: Moving to very top, target_position: {target_position}")
-                else:
-                    target_position = max(target_indices) + 1
-                    print(f"DEBUG: Moving after target group, target_position: {target_position}")
-
-            # Add this debug log to confirm position calculations
-            print(f"DEBUG: Final target_position: {target_position}")
-
-            # Perform the actual reordering (replace this with your reordering logic)
-            # Example: self.player.reorder(source_indices, target_position)
-            print(f"DEBUG: Reordering groups - source_indices: {source_indices}, target_position: {target_position}")
-
-            # Refresh the tree view to reflect changes
-            self.repaint()  # This forces the tree to redraw
-
-            # Add undo operation if applicable
-            # Example: self.add_undo_action(undo_data)
-
-            return True
-
-        except Exception as e:
-            print(f"Reorder groups error: {e}")
-            return False
-
-    def _move_item_to_group(self, source_item, target_item, source_data, target_data, expansion_state):
-        print("DEBUG: _move_item_to_group called")
-        """Move an individual item to the beginning of a group."""
-        try:
-            source_idx = source_data[1]
-            target_key = self.player._group_effective_key(target_data[1] if len(target_data) > 1 else None, target_item)
-
-            if not target_key:
-                return False
-
-            # Get target group indices
-            target_indices = self.player._iter_indices_for_group(target_key)
-            if not target_indices:
-                return False
-
-            target_position = min(target_indices)
-
-            # Store undo data
-            undo_data = {
-                'playlist': [item.copy() for item in self.player.playlist],
-                'current_index': self.player.current_index,
-                'was_playing': self.player._is_playing()
-            }
-
-            # Move the item
-            item_to_move = self.player.playlist.pop(source_idx)
-            
-            # Adjust target position
-            if source_idx < target_position:
-                target_position -= 1
-                
-            self.player.playlist.insert(target_position, item_to_move)
-
-            # Update the moved item's group information to match target group
-            # Get group info from target group
-            sample_item = None
-            for idx in self.player._iter_indices_for_group(target_key):
-                if 0 <= idx < len(self.player.playlist):
-                    sample_item = self.player.playlist[idx]
-                    break
-
-            if sample_item:
-                item_to_move['playlist'] = sample_item.get('playlist')
-                item_to_move['playlist_key'] = sample_item.get('playlist_key')
-
-            # Update current_index
-            if self.player.current_index == source_idx:
-                self.player.current_index = target_position
-            elif source_idx < self.player.current_index <= target_position:
-                self.player.current_index -= 1
-            elif target_position <= self.player.current_index < source_idx:
-                self.player.current_index += 1
-
-            # Save and refresh
-            self.player._add_undo_operation('move_items', undo_data)
-            self.player._save_current_playlist()
-            self.player._refresh_playlist_widget(expansion_state=expansion_state)
-
-            return True
-
-        except Exception as e:
-            print(f"Move item to group error: {e}")
-            return False
-
-    def _update_current_index_after_move(self, source_idx, target_idx):
-        """Update current_index after moving an item."""
-        if self.player.current_index == source_idx:
-            self.player.current_index = target_idx
-        elif source_idx < self.player.current_index <= target_idx:
-            self.player.current_index -= 1
-        elif target_idx <= self.player.current_index < source_idx:
-            self.player.current_index += 1
-
-    def _handle_external_drops(self, event, expansion_state):
-        """Handle drops from external sources (files, URLs)."""
-        mime_data = event.mimeData()
-        added = 0
-        skipped = 0
-        new_items = []
-
-        def _norm_local(u: str) -> str:
-            import os
-            p = _path_from_url_or_path(u or "")
-            try:
-                return os.path.normcase(os.path.abspath(p))
-            except Exception:
-                return p
-
-        if mime_data.hasUrls():
-            existing_local = set(
-                _norm_local(it.get('url'))
-                for it in self.player.playlist
-                if isinstance(it, dict) and it.get('type') == 'local' and it.get('url')
-            )
-
-            for url in mime_data.urls():
-                file_path = url.toLocalFile()
-                if file_path:
-                    nf = _norm_local(file_path)
-                    if nf in existing_local:
-                        skipped += 1
-                        continue
-
-                    item = {
-                        'title': Path(file_path).name,
-                        'url': file_path,
-                        'type': 'local'
-                    }
-                    self.player.playlist.append(item)
-                    new_items.append({'index': len(self.player.playlist) - 1, 'item': item})
-                    existing_local.add(nf)
-                    added += 1
-
-                    if hasattr(self.player, '_local_dur'):
-                        self.player._local_dur.enqueue(len(self.player.playlist) - 1, self.player.playlist[-1])
-                else:
-                    self.player._add_url_to_playlist(url.toString())
-
-        elif mime_data.hasText():
-            text = (mime_data.text() or "").strip().strip('"').strip("'")
-            if text:
-                before_len = len(self.player.playlist)
-                self.player._add_url_to_playlist(text)
-                if len(self.player.playlist) > before_len:
-                    new_items.append({'index': len(self.player.playlist) - 1, 'item': self.player.playlist[-1]})
-
-        # Save and refresh
-        if new_items or added:
-            self.player._save_current_playlist()
-            self.player._refresh_playlist_widget(expansion_state=expansion_state)
+            # Save, refresh, and record undo for added items
+            self.player._save_current_playlist()  # Access the method from the parent player
+            self._refresh_playlist_widget(expansion_state=expansion_state)
             event.acceptProposedAction()
 
             if new_items:
@@ -3938,24 +3699,23 @@ class PlaylistTree(QTreeWidget):
                     msg += f", skipped {skipped} duplicate(s)"
                 self.player.status.showMessage(msg, 4000)
 
+        except Exception as e:
+            print(f"Drop event error: {e}")
+            event.ignore()
+
     def _get_tree_expansion_state(self):
-        """Get current expansion state of all groups."""
-        state = {}
-        try:
-            for i in range(self.topLevelItemCount()):
-                item = self.topLevelItem(i)
-                if not item:
-                    continue
-                    
-                data = item.data(0, Qt.UserRole)
-                if isinstance(data, tuple) and data[0] == 'group':
-                    # Use the group key string, not the QTreeWidgetItem object
-                    key = self.player._group_effective_key(data[1] if len(data) > 1 else None, item)
-                    if key:
-                        state[key] = item.isExpanded()
-        except Exception:
-            pass
-        return state
+        """Retrieve the expansion state of the tree."""
+        expansion_state = {}
+        root = self.invisibleRootItem()
+
+        def walk(node):
+            for i in range(node.childCount()):
+                child = node.child(i)
+                expansion_state[child] = child.isExpanded()
+                walk(child)
+
+        walk(root)
+        return expansion_state
 
 class ScrollingTreeWidget(QTreeWidget):
     def __init__(self, parent=None):
@@ -11284,6 +11044,15 @@ class MediaPlayer(QMainWindow):
         except Exception as e:
             print(f"[UNDO] Error restoring move: {e}")
             return False
+            self.current_index = data.get('current_index', -1)
+            was_playing = data.get('was_playing', False)
+
+            self._save_current_playlist()
+            self._refresh_playlist_widget(expansion_state=expansion_state)
+            self._recover_current_after_change(was_playing)
+            self.status.showMessage("Reverted playlist order", 3000)
+        except Exception as e:
+            logger.error(f"Undo move items failed: {e}")
 
     def _clear_playlist(self):
         count = len(self.playlist)
