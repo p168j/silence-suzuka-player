@@ -3841,6 +3841,7 @@ class ScrollingTreeWidget(QTreeWidget):
 class MediaPlayer(QMainWindow):
     requestTimerSignal = Signal(int, object)
     statusMessageSignal = Signal(str, int)
+    titleUpdateRequested = Signal(str, str)
 
     def __init__(self):
         super().__init__()
@@ -3943,6 +3944,29 @@ class MediaPlayer(QMainWindow):
         except Exception as e:
             print(f"[STARTUP] Error in title resolution resume: {e}")
             logger.error(f"Failed to resume title fetching: {e}")
+
+    def _update_title_safely(self, url: str, title: str):
+        """Thread-safe title updates - called on main thread only"""
+        try:
+            # Update playlist data
+            for item in self.playlist:
+                if item.get('url') == url:
+                    item['title'] = title
+                    break
+            
+            # Update UI
+            self._update_single_tree_item_title(url, title)
+            
+            # Update now playing if this is current track
+            if (0 <= self.current_index < len(self.playlist) and 
+                self.playlist[self.current_index].get('url') == url):
+                self._set_track_title(title)
+            
+            # Save playlist
+            self._save_current_playlist()
+            
+        except Exception as e:
+            print(f"Safe title update failed: {e}")
 
     def _periodic_cleanup(self):
         """Clean up memory every 5 minutes to prevent accumulation"""
@@ -4260,6 +4284,7 @@ class MediaPlayer(QMainWindow):
         # --- 3. Connect Signals and Build the Rest of the App ---
         self.requestTimerSignal.connect(self._start_timer_from_main_thread)
         self.statusMessageSignal.connect(self._show_status_message)
+        self.titleUpdateRequested.connect(self._update_title_safely) 
         self._build_ui()
 
         # Override the playlist methods with enhanced versions
@@ -8785,24 +8810,8 @@ class MediaPlayer(QMainWindow):
             logger.error(f"Highlight row failed: {e}")
         
     def _on_title_resolved(self, url: str, title: str):
-        try:
-            # Update the playlist item
-            for item in self.playlist:
-                if item.get('url') == url:
-                    item['title'] = title
-                    break
-            
-            # EFFICIENT: Update just the specific item
-            self._update_single_tree_item_title(url, title)
-            
-            # Update the "Now Playing" label if this is the current track
-            if 0 <= self.current_index < len(self.playlist) and self.playlist[self.current_index].get('url') == url:
-                self._set_track_title(title)
-
-            # Save playlist to reflect updated titles
-            self._save_current_playlist()
-        except Exception as e:
-            print(f"Error updating title: {e}")
+        """Route title updates through thread-safe signal"""
+        self.titleUpdateRequested.emit(url, title)
 
     def _update_single_tree_item_title(self, url: str, title: str):
         """Update just one tree item instead of rebuilding everything"""
