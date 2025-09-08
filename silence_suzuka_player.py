@@ -2272,6 +2272,36 @@ class PlayingItemDelegate(QStyledItemDelegate):
                     painter.fillRect(option.rect, bg_color)
                     painter.restore()
 
+class DropZoneWidget(QWidget):
+    """A widget that accepts file/URL drops and provides visual feedback."""
+    def __init__(self, player, parent=None):
+        super().__init__(parent)
+        self.player = player
+        self.setAcceptDrops(True)
+        self.setObjectName("dropZone")
+        # Initial stylesheet
+        self.setStyleSheet("#dropZone { border: 2px dashed #444; border-radius: 8px; }")
+
+    def dragEnterEvent(self, event):
+        # Check if the dragged data has URLs or text
+        if event.mimeData().hasUrls() or event.mimeData().hasText():
+            # Change style to give feedback
+            self.setStyleSheet("#dropZone { border: 2px dashed #e76f51; background-color: #333; border-radius: 8px; }")
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragLeaveEvent(self, event):
+        # Revert to the original style when the drag leaves
+        self.setStyleSheet("#dropZone { border: 2px dashed #444; border-radius: 8px; }")
+        event.accept()
+
+    def dropEvent(self, event):
+        # Revert to original style
+        self.setStyleSheet("#dropZone { border: 2px dashed #444; border-radius: 8px; }")
+        # Pass the event to the main window's drop handler to do the actual work
+        self.player.dropEvent(event)
+
 class LightChevronTreeStyle(QProxyStyle):
     def __init__(self, base=None, color="#e0e0e0"):
         super().__init__(base)
@@ -5897,7 +5927,7 @@ class MediaPlayer(QMainWindow):
         self.playlist_tree.setItemDelegate(self.playing_delegate)
 
         # 2. The Empty State Widget (Index 1)
-        self.empty_state_widget = QWidget()
+        self.empty_state_widget = DropZoneWidget(self)
         empty_layout = QVBoxLayout(self.empty_state_widget)
         empty_layout.addStretch()
         empty_icon = QLabel()
