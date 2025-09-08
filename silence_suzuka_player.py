@@ -4013,6 +4013,42 @@ class MediaPlayer(QMainWindow):
             # Don't let title resolution crash the app
             logger.error(f"Safe title update failed for {url}: {e}")
 
+    def _jump_to_current_item(self):
+        """Finds and scrolls to the currently playing item in the playlist tree."""
+        if self.current_index == -1:
+            self.status.showMessage("Nothing is currently playing.", 2000)
+            return
+
+        try:
+            # Use an iterator to walk through every item in the tree
+            iterator = QTreeWidgetItemIterator(self.playlist_tree)
+            item_to_select = None
+
+            while iterator.value():
+                item = iterator.value()
+                data = item.data(0, Qt.UserRole)
+                # Check if the item's data matches the current track index
+                if isinstance(data, tuple) and data[0] == 'current' and data[1] == self.current_index:
+                    item_to_select = item
+                    break # We found it
+                iterator += 1
+            
+            if item_to_select:
+                # Ensure the parent group is expanded
+                parent = item_to_select.parent()
+                if parent:
+                    parent.setExpanded(True)
+
+                # Scroll to and select the item
+                self.playlist_tree.scrollToItem(item_to_select, QAbstractItemView.PositionAtCenter)
+                self.playlist_tree.setCurrentItem(item_to_select)
+                self.status.showMessage("Jumped to current track.", 2000)
+            else:
+                self.status.showMessage("Could not find the current track in the list.", 3000)
+
+        except Exception as e:
+            print(f"Failed to jump to current item: {e}")
+
     def _toggle_unwatched_shortcut(self):
         """Toggles the 'unwatched only' filter via a hotkey."""
         self.unwatched_btn.setChecked(not self.unwatched_btn.isChecked())
@@ -12733,6 +12769,7 @@ class MediaPlayer(QMainWindow):
             QShortcut(QKeySequence(Qt.Key_Left), self, lambda: self._seek_relative(-5))
             QShortcut(QKeySequence(Qt.Key_J), self, lambda: self._seek_relative(-5))
             QShortcut(QKeySequence(Qt.Key_L), self, lambda: self._seek_relative(10))
+            QShortcut(QKeySequence(Qt.Key_Period), self, self._jump_to_current_item)
 
             # Volume
             QShortcut(QKeySequence(Qt.Key_Up), self, self._volume_up)
