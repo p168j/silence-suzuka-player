@@ -322,7 +322,10 @@ class VolumeIconLabel(QLabel):
         new_volume = self.main_player.volume_slider.value()
         QToolTip.showText(QCursor.pos(), f"Volume: {new_volume}%", self)
         event.accept()
-
+    
+        new_volume = self.main_player.volume_slider.value()
+        QToolTip.showText(QCursor.pos(), f"Volume: {new_volume}%", self)
+        event.accept()
 
 class MiniPlayer(QWidget):
     def __init__(self, main_player_instance, theme, icons, parent=None):
@@ -4136,6 +4139,35 @@ class MediaPlayer(QMainWindow):
         except Exception as e:
             logger.error(f"Cleanup error: {e}")
 
+    def _clear_playlist(self):
+        """Shows confirmation and clears all items from the current playlist."""
+        count = len(self.playlist)
+        if count == 0:
+            self.status.showMessage("Playlist is already empty", 2000)
+            return
+        
+        # Confirmation dialog
+        message = f"Clear all {count} item{'s' if count != 1 else ''} from the playlist?\n\nThis action can be undone with Ctrl+Z."
+        reply = QMessageBox.question(self, "Clear Playlist", message, QMessageBox.Yes | QMessageBox.No)
+
+        if reply == QMessageBox.Yes:
+            # Store the current state for the undo operation
+            undo_data = {
+                'playlist': self.playlist.copy(),
+                'current_index': self.current_index,
+                'was_playing': self._is_playing()
+            }
+            self._add_undo_operation('clear_playlist', undo_data)
+
+            # Clear the playlist and reset the player
+            self.playlist.clear()
+            self.current_index = -1
+            self.mpv.command('stop') # Stop playback
+            
+            self._save_current_playlist()
+            self._refresh_playlist_widget()
+            self.status.showMessage(f"Cleared {count} items (Ctrl+Z to undo)", 4000)
+
     def _debug_memory_usage(self):
         """Monitor memory usage - temporary debugging"""
         try:
@@ -4756,6 +4788,8 @@ class MediaPlayer(QMainWindow):
             self._apply_menu_theme(menu)
             
             # print(f"[HEADER DEBUG] Menu created successfully")
+
+
             
             # Reset all playback positions
             reset_action = menu.addAction("🔄 Reset All Playback Positions")
@@ -4765,7 +4799,10 @@ class MediaPlayer(QMainWindow):
             menu.addSeparator()
             clear_completed_action = menu.addAction("✅ Mark All as Unwatched")
             clear_completed_action.triggered.connect(self._mark_all_unwatched)
-            
+
+            clear_action = menu.addAction("🧹 Clear Entire Playlist")
+            clear_action.triggered.connect(self._clear_playlist)
+            menu.addSeparator()
             # print(f"[HEADER DEBUG] About to exec menu with {len(menu.actions())} actions")
             
             # Show the menu
@@ -5428,6 +5465,8 @@ class MediaPlayer(QMainWindow):
         except Exception as e:
             print(f"Failed to round video frame corners: {e}")
 
+    
+
     def export_diagnostics(self):
         """Export logs and config files for debugging"""
         try:
@@ -6070,69 +6109,22 @@ class MediaPlayer(QMainWindow):
         self.repeat_btn.setFixedSize(40, 40)
         
         # --- Volume icon: prefer icons/volume.svg rendered with QSvgRenderer (hi-dpi aware) ---
-        # --- Volume icon: prefer icons/volume.svg rendered with QSvgRenderer (hi-dpi aware) ---
         try:
-            from PySide6.QtCore import QRectF
-            # create label
-            self.volume_icon_label = QLabel()
+            # Use the new custom class instead of a generic QLabel
+            self.volume_icon_label = VolumeIconLabel(self)
             self.volume_icon_label.setObjectName('volumeIconLabel')
-            self.volume_icon_label.setFixedSize(icon_size)  # icon_size defined earlier (QSize(22,22))
-            self.volume_icon_label.setToolTip("Volume")
-            try:
-                self.volume_icon_label.setAccessibleDescription("Volume")
-            except Exception:
-                pass
+            self.volume_icon_label.setFixedSize(icon_size)
+            # The icon itself will be set later by the theme update function (_update_widget_themes)
+        except Exception:
+            # This is a fallback in case something goes wrong
+            self.volume_icon_label = QLabel("🔊")
 
-            svg_path = APP_DIR / 'icons' / 'volume.svg'
-            rendered = False
-            try:
-                # If QtSvg (QSvgRenderer) is available and the SVG exists, render it into a QPixmap
-                if svg_path.exists() and ('QSvgRenderer' in globals()) and (QSvgRenderer is not None):
-                    # Use theme-appropriate color
-                    if getattr(self, 'theme', 'dark') == 'dark':
-                        color = "#d0d0d0"  # off-white grey for dark theme
-                    else:
-                        color = "#4a2c2a"  # brown for vinyl theme
-                    
-                    # Use the existing _render_svg_tinted function to color the icon
-                    pm = _render_svg_tinted(str(svg_path), icon_size, color)
-                    if not pm.isNull():
-                        self.volume_icon_label.setPixmap(pm)
-                        rendered = True
-            except Exception:
-                rendered = False
+        try:
+            # Use the new custom class instead of a generic QLabel
+            self.volume_icon_label = VolumeIconLabel(self) 
+            self.volume_icon_label.setObjectName('volumeIconLabel')
+            self.volume_icon_label.setFixedSize(icon_size)
 
-            # Fallback: use previously loaded QIcon (self.volume_icon) if available
-            if not rendered:
-                try:
-                    if hasattr(self, 'volume_icon') and not self.volume_icon.isNull():
-                        self.volume_icon_label.setPixmap(self.volume_icon.pixmap(icon_size))
-                        rendered = True
-                except Exception:
-                    rendered = False
-
-            # Final fallback: emoji
-            if not rendered:
-                self.volume_icon_label.setText("🔇")
-                self.volume_icon_label.setAlignment(Qt.AlignCenter)
-
-            # Optional: click-to-toggle-mute handler (uncomment assignment line below to enable)
-            try:
-                def _vol_clicked(ev):
-                    try:
-                        if hasattr(self, 'mpv') and (getattr(self, 'mpv', None) is not None):
-                            try:
-                                cur = bool(self.mpv.mute)
-                                self.mpv.mute = not cur
-                            except Exception:
-                                pass
-                    except Exception:
-                        pass
-                self.volume_icon_label.mousePressEvent = _vol_clicked
-            except Exception:
-                pass
-
-            
         except Exception:
             controls_bar.addWidget(QLabel("🔊"))
         # --- end volume icon block ---
@@ -12836,10 +12828,12 @@ class MediaPlayer(QMainWindow):
     def _toggle_shuffle_shortcut(self):
         self.shuffle_btn.setChecked(not self.shuffle_btn.isChecked())
         self._toggle_shuffle()
+        self._flash_button_color(self.shuffle_btn, "#e76f51")
 
     def _toggle_repeat_shortcut(self):
         self.repeat_btn.setChecked(not self.repeat_btn.isChecked())
         self._toggle_repeat()
+        self._flash_button_color(self.shuffle_btn, "#e76f51")
 
     def _remove_selected_items(self):
         """Remove selected items - handles both individual items and group headers with undo support"""
