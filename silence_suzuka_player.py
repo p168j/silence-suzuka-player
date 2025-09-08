@@ -5607,6 +5607,7 @@ class MediaPlayer(QMainWindow):
         # Create the menu
         menu = QMenu(self)
         menu.addAction("🔗 Add Link...", self.add_link_dialog)
+        menu.addAction("📋 Add from Clipboard", self._maybe_offer_clipboard_url)
         menu.addAction("📁 Add Files...", self.add_local_files)
 
         def show_add_media_menu():
@@ -10288,12 +10289,8 @@ class MediaPlayer(QMainWindow):
                 pass
     def _on_add_media_clicked(self):
         """Handler for the Add Media button. Checks clipboard first, then opens dialog."""
-        # Try to offer the clipboard URL. The function returns True if it handled it.
-        was_handled = self._maybe_offer_clipboard_url()
-        
-        # If the clipboard was empty or the user declined, open the standard dialog.
-        if not was_handled:
-            self.add_link_dialog()            
+        # The new, simpler behavior: always open the "Add Link" dialog.
+        self.add_link_dialog()
 
     def add_local_files(self):
         # Preserve expansion state so groups don't collapse
