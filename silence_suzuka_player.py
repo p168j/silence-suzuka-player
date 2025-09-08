@@ -4321,12 +4321,6 @@ class MediaPlayer(QMainWindow):
         self.anim_press = QPropertyAnimation()
         self.anim_release = QPropertyAnimation()
 
-        self._undo_stack = []  # Stack of undo operations
-        self._max_undo_operations = 10  # Limit undo history
-        self._cleanup_timer = QTimer(self)
-        self._cleanup_timer.timeout.connect(self._periodic_cleanup)
-        self._cleanup_timer.start(300000)  # 300,000 ms = 5 minutes
-
         self._init_subscription_manager()
 
         # This definition now correctly happens BEFORE the UI is built
@@ -4421,6 +4415,7 @@ class MediaPlayer(QMainWindow):
         self._cleanup_timer = QTimer(self)
         self._cleanup_timer.timeout.connect(self._periodic_cleanup)
         self._cleanup_timer.start(300000)  # 300,000 ms = 5 minutes
+        self.audio_monitor.start()
 
     def _get_mini_player_icons(self):
         """Returns a dictionary of icons for the mini-player, tinted to match the theme."""
@@ -7538,7 +7533,6 @@ class MediaPlayer(QMainWindow):
         )
         self.audio_monitor.silenceDetected.connect(self.on_silence_detected)
         self.audio_monitor.audioStateChanged.connect(self._update_silence_indicator)
-        self.audio_monitor.start()
         # AFK monitor
         self.afk_monitor = AFKMonitor(self.afk_timeout_minutes)
         self.afk_monitor.userIsAFK.connect(self.on_user_afk)
