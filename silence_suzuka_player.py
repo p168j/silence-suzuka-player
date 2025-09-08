@@ -4411,6 +4411,7 @@ class MediaPlayer(QMainWindow):
         self.status.showMessage("Ready")
 
         self._undo_stack = []  # Stack of undo operations
+        self._redo_stack = []
         self._max_undo_operations = 10  # Limit undo history
         self._cleanup_timer = QTimer(self)
         self._cleanup_timer.timeout.connect(self._periodic_cleanup)
@@ -10907,6 +10908,7 @@ class MediaPlayer(QMainWindow):
             }
             
             self._undo_stack.append(undo_op)
+            self._redo_stack.clear()
             
             # Limit undo stack size
             if len(self._undo_stack) > self._max_undo_operations:
@@ -10919,71 +10921,101 @@ class MediaPlayer(QMainWindow):
 
     def _perform_undo(self):
         """Enhanced undo method that handles playlist manager operations with improved consistency"""
-        operation = None
         try:
             if not self._undo_stack:
                 self.status.showMessage("Nothing to undo", 2000)
                 return
 
-            # Pop operation before processing to prevent duplicate operations
+            expansion_state = self._get_tree_expansion_state() # Save state before any changes
+
             operation = self._undo_stack.pop()
+            self._redo_stack.append(operation)
             op_type = operation.get('type')
             op_data = operation.get('data', {})
 
-            if not op_type:
-                raise ValueError("Invalid undo operation: missing type")
-                
-            print(f"[UNDO] Performing undo: {op_type}")
-
-            # Store current state before undo for potential rollback
-            current_playlist_backup = [item.copy() for item in self.playlist] if self.playlist else []
-            current_index_backup = self.current_index
-            current_playing_backup = self._is_playing()
-
-            # Perform the undo operation
+            # --- This structure is slightly different from your original, but it's cleaner ---
             success = False
-            if op_type == 'load_playlist':
-                success = self._undo_load_playlist(op_data)
-            elif op_type == 'add_items':
-                success = self._undo_add_items(op_data)
-            elif op_type == 'delete_items':
-                success = self._undo_delete_items(op_data)
-            elif op_type == 'delete_group':
-                success = self._undo_delete_group(op_data)
-            elif op_type == 'clear_playlist':
-                success = self._undo_clear_playlist(op_data)
-            elif op_type == 'move_items':
-                success = self._undo_move_items(op_data)
+            if op_type == 'load_playlist':      success = self._undo_load_playlist(op_data)
+            elif op_type == 'add_items':        success = self._undo_add_items(op_data)
+            elif op_type == 'delete_items':     success = self._undo_delete_items(op_data)
+            elif op_type == 'delete_group':     success = self._undo_delete_group(op_data)
+            elif op_type == 'clear_playlist':   success = self._undo_clear_playlist(op_data)
+            elif op_type == 'move_items':       success = self._undo_move_items(op_data)
             else:
                 self.status.showMessage(f"Cannot undo operation: {op_type}", 3000)
-                # Put it back since we can't handle it
-                self._undo_stack.append(operation)
+                self._redo_stack.pop() # Remove from redo since we can't handle it
+                self._undo_stack.append(operation) # Put it back
                 return
 
             if success:
+                # The _undo helpers change the playlist data, but don't refresh the UI.
+                # We will now refresh the UI here, restoring the expansion state.
+                self._save_current_playlist()
+                self._refresh_playlist_widget(expansion_state=expansion_state)
+                self._recover_current_after_change(op_data.get('was_playing', False))
                 self.status.showMessage(f"Undid: {op_type.replace('_', ' ').title()}", 3000)
             else:
-                # Rollback to previous state if undo failed
-                self.playlist = current_playlist_backup
-                self.current_index = current_index_backup
-                self._save_current_playlist()
-                self._refresh_playlist_widget()
-                if current_playing_backup:
-                    self.play_current()
-                
-                self.status.showMessage(f"Undo failed for: {op_type}, state restored", 4000)
-                # Don't put operation back on stack since it's problematic
+                self.status.showMessage(f"Undo failed for: {op_type}", 4000)
+                # If it failed, put it back
+                self._redo_stack.pop()
+                self._undo_stack.append(operation)
 
         except Exception as e:
             print(f"[UNDO] Error performing undo: {e}")
             self.status.showMessage(f"Undo failed: {e}", 3000)
+
+    def _perform_redo(self):
+        """Performs a redo operation from the redo stack."""
+        try:
+            if not self._redo_stack:
+                self.status.showMessage("Nothing to redo", 2000)
+                return
             
-            # If we have the operation and it was popped, put it back
-            if operation is not None:
-                try:
-                    self._undo_stack.append(operation)
-                except Exception:
-                    pass  # Don't let this cause additional issues
+            expansion_state = self._get_tree_expansion_state()
+            
+            operation = self._redo_stack.pop()
+            op_type = operation.get('type')
+            op_data = operation.get('data', {})
+
+            # --- Logic to re-apply the original action ---
+            success = False
+            if op_type in ['delete_items', 'delete_group']:
+                indices_to_remove = [item['index'] for item in op_data.get('items', [])]
+                # Remove in reverse to preserve indices
+                for i in sorted(indices_to_remove, reverse=True):
+                    if 0 <= i < len(self.playlist):
+                        del self.playlist[i]
+                success = True
+
+            # --- THIS IS THE NEW, ADDED LOGIC ---
+            elif op_type == 'add_items':
+                items_to_restore = op_data.get('items', [])
+                # Sort by index to insert items back in their original places
+                for item_info in sorted(items_to_restore, key=lambda x: x.get('index', 0)):
+                    index = item_info['index']
+                    item = item_info['item']
+                    if 0 <= index <= len(self.playlist):
+                        self.playlist.insert(index, item.copy())
+                success = True
+            # --- END OF NEW LOGIC ---
+
+            if success:
+                # Push the action back to the undo stack so you can undo the redo
+                self._undo_stack.append(operation)
+                self.status.showMessage(f"Redid: {op_type.replace('_', ' ').title()}", 3000)
+
+                # Refresh the UI
+                self._save_current_playlist()
+                self._refresh_playlist_widget(expansion_state=expansion_state)
+                self._recover_current_after_change(self._is_playing())
+            else:
+                # If we don't know how to redo this action, put it back
+                self._redo_stack.append(operation)
+                self.status.showMessage(f"Cannot redo operation: {op_type}", 3000)
+
+        except Exception as e:
+            print(f"[REDO] Error performing redo: {e}")
+            self.status.showMessage(f"Redo failed: {e}", 3000)
 
     def _undo_delete_items(self, data):
         """Restore deleted individual items while preserving expansion state"""
@@ -12721,6 +12753,7 @@ class MediaPlayer(QMainWindow):
             QShortcut(QKeySequence(Qt.Key_F1), self, self.open_help)
 
             QShortcut(QKeySequence(Qt.CTRL | Qt.Key_Z), self, self._perform_undo)
+            QShortcut(QKeySequence(Qt.CTRL | Qt.Key_Y), self, self._perform_redo)
             QShortcut(QKeySequence(Qt.CTRL | Qt.Key_V), self, self._handle_paste)
 
             # Playlist navigation
