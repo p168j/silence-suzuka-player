@@ -10290,6 +10290,11 @@ class MediaPlayer(QMainWindow):
 
         # Strip quotes and whitespace
         url_in = raw.strip().strip('"').strip("'")
+
+        if 'bilibili.com' in url_in.lower():
+            cookies_path = APP_DIR / 'cookies.txt'
+            if not cookies_path.exists():
+                self.status.showMessage("Hint: For members-only Bilibili videos, place cookies.txt in the app folder.", 8000)
         
         # ADD VALIDATION HERE:
         is_valid, error_msg = URLValidator.is_supported_url(url_in)
