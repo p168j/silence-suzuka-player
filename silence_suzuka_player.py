@@ -3006,67 +3006,90 @@ class YtdlManager(QThread):
         super().__init__(parent)
         self._queue = queue.Queue()
         self._should_stop = False
-        self._ydl_cache = {}  # Cache yt-dlp instances per thread
+        self._ydl_cache = {}
+        self._lock = threading.Lock()  # Add thread lock
 
     def resolve(self, url: str, kind: str):
-        if url and kind:
-            self._queue.put({'url': url, 'kind': kind})
+        """Thread-safe method to queue title resolution"""
+        if url and kind and not self._should_stop:
+            try:
+                self._queue.put({'url': url, 'kind': kind}, timeout=1.0)
+            except queue.Full:
+                logger.warning(f"Title resolution queue full, dropping: {url}")
 
     def stop(self):
+        """Gracefully stop the worker"""
         self._should_stop = True
-        self._queue.put(None)
+        try:
+            # Add poison pill to wake up the worker
+            self._queue.put(None, timeout=0.5)
+        except queue.Full:
+            pass
 
     def run(self):
-        """Run with CACHED yt-dlp instances for better performance"""
-        print(f"DEBUG: YtdlManager worker started")
+        """Enhanced run method with better error handling"""
+        logger.debug("YtdlManager worker started")
         
         while not self._should_stop:
             try:
-                job = self._queue.get(timeout=1)
-            except queue.Empty:
-                continue
-            
-            if job is None:
-                break
+                # Use timeout to allow periodic checks
+                job = self._queue.get(timeout=1.0)
+                
+                if job is None or self._should_stop:
+                    break
 
-            url = job['url']
-            kind = job['kind']
-            
-            print(f"DEBUG: YtdlManager processing {kind} URL: {url[-20:]}...")
+                url = job['url']
+                kind = job['kind']
+                
+                # Skip if app is shutting down
+                if (hasattr(self.parent(), '_is_destroyed') and 
+                    getattr(self.parent(), '_is_destroyed', False)):
+                    break
+                
+                logger.debug(f"YtdlManager processing {kind} URL: {url[-20:]}...")
 
-            try:
-                # REUSE cached yt-dlp instance for this thread
-                cache_key = kind
-                if cache_key not in self._ydl_cache:
-                    opts = {
-                        'quiet': True,
-                        'no_warnings': True,
-                        'skip_download': True,
-                        'socket_timeout': 30,  # Longer timeout
-                        'retries': 2,
-                    }
-                    if kind == 'bilibili':
-                        opts['cookiefile'] = str(COOKIES_BILI)
+                with self._lock:  # Thread-safe access to cache
+                    # Get or create yt-dlp instance
+                    cache_key = kind
+                    if cache_key not in self._ydl_cache:
+                        opts = {
+                            'quiet': True,
+                            'no_warnings': True,
+                            'skip_download': True,
+                            'socket_timeout': 30,
+                            'retries': 2,
+                        }
+                        if kind == 'bilibili':
+                            opts['cookiefile'] = str(COOKIES_BILI)
+                        
+                        import yt_dlp
+                        self._ydl_cache[cache_key] = yt_dlp.YoutubeDL(opts)
+
+                    ydl = self._ydl_cache[cache_key]
+
+                # Process outside the lock
+                try:
+                    info = ydl.extract_info(url, download=False)
+                    title = info.get('title') if isinstance(info, dict) else None
                     
-                    import yt_dlp
-                    self._ydl_cache[cache_key] = yt_dlp.YoutubeDL(opts)
-                    print(f"DEBUG: Created new yt-dlp instance for {kind}")
+                    if title and title != url and not self._should_stop:
+                        self.titleResolved.emit(url, title)
+                        logger.debug(f"YtdlManager resolved: '{title}' for {url[-20:]}...")
+                        
+                except Exception as e:
+                    logger.warning(f"YtdlManager failed for {url[-20:]}...: {e}")
 
-                ydl = self._ydl_cache[cache_key]
-                info = ydl.extract_info(url, download=False)
-                
-                title = info.get('title') if isinstance(info, dict) else None
-                print(f"DEBUG: YtdlManager got title: '{title}' for {url[-20:]}...")
-                
-                if title and title != url:
-                    self.titleResolved.emit(url, title)
-                    print(f"DEBUG: YtdlManager emitted title for {url[-20:]}...")
-                else:
-                    print(f"DEBUG: YtdlManager failed - no valid title for {url[-20:]}... (title='{title}')")
-
+            except queue.Empty:
+                continue  # Normal timeout, check stop flag
             except Exception as e:
-                print(f"DEBUG: YtdlManager error for {url[-20:]}...: {e}")
-                pass
+                logger.error(f"YtdlManager unexpected error: {e}")
+                if not self._should_stop:
+                    time.sleep(1)  # Brief pause before retrying
+
+        # Cleanup
+        with self._lock:
+            self._ydl_cache.clear()
+        logger.debug("YtdlManager worker stopped")
 
 class DurationFetcher(QThread):
     progressUpdated = Signal(int, int)  # current, total
@@ -3845,6 +3868,7 @@ class MediaPlayer(QMainWindow):
 
     def __init__(self):
         super().__init__()
+        self._is_destroyed = False
         # Initialize mpv backend
         try:
             self.mpv = MPV()  # Remove debug logging parameters
@@ -3948,12 +3972,29 @@ class MediaPlayer(QMainWindow):
     def _update_title_safely(self, url: str, title: str):
         """Thread-safe title updates - called on main thread only"""
         try:
-            # Update playlist data
+            # Critical: Check if app is shutting down
+            if (not hasattr(self, 'playlist') or 
+                getattr(self, '_is_destroyed', False) or
+                not self.playlist):
+                return
+                
+            # Check if this is the main thread
+            if QThread.currentThread() != QApplication.instance().thread():
+                # If not main thread, schedule on main thread
+                QTimer.singleShot(0, lambda: self._update_title_safely(url, title))
+                return
+            
+            # Update playlist data atomically
+            updated = False
             for item in self.playlist:
-                if item.get('url') == url:
+                if isinstance(item, dict) and item.get('url') == url:
                     item['title'] = title
+                    updated = True
                     break
             
+            if not updated:
+                return
+                
             # Update UI
             self._update_single_tree_item_title(url, title)
             
@@ -3966,18 +4007,34 @@ class MediaPlayer(QMainWindow):
             self._save_current_playlist()
             
         except Exception as e:
-            print(f"Safe title update failed: {e}")
+            # Don't let title resolution crash the app
+            logger.error(f"Safe title update failed for {url}: {e}")
 
     def _periodic_cleanup(self):
-        """Clean up memory every 5 minutes to prevent accumulation"""
+        """Enhanced cleanup to prevent memory leaks"""
         try:
             # 1. Limit undo history (keep last 10 operations)
             if len(self._undo_stack) > 10:
+                # Remove oldest operations
+                removed = self._undo_stack[:-10]
                 self._undo_stack = self._undo_stack[-10:]
-            
+                
+                # Clean up any widget references in removed operations
+                for op in removed:
+                    try:
+                        if 'data' in op and isinstance(op['data'], dict):
+                            # Remove any Qt object references
+                            for key in list(op['data'].keys()):
+                                if hasattr(op['data'][key], 'deleteLater'):
+                                    op['data'][key].deleteLater()
+                                    del op['data'][key]
+                    except Exception:
+                        pass
+
             # 2. Limit saved playback positions (keep last 1000 videos)
             if len(self.playback_positions) > 1000:
                 items = list(self.playback_positions.items())
+                # Keep most recent based on when they were last accessed
                 self.playback_positions = dict(items[-800:])
                 self._save_positions()
                 
@@ -3993,9 +4050,48 @@ class MediaPlayer(QMainWindow):
                         new_daily[date] = time_seconds
                 
                 self.listening_stats['daily'] = new_daily
-                
+
+            # 4. Clean up finished workers
+            if hasattr(self, 'ytdl_workers'):
+                active_workers = []
+                for worker in self.ytdl_workers:
+                    try:
+                        if worker.isRunning():
+                            active_workers.append(worker)
+                        else:
+                            worker.deleteLater()
+                    except RuntimeError:
+                        # Worker already deleted
+                        pass
+                self.ytdl_workers = active_workers
+
+            # 5. Clear Qt object caches if they exist
+            for cache_attr in ['_thumbnail_cache', '_icon_cache', '_temp_widgets']:
+                if hasattr(self, cache_attr):
+                    cache = getattr(self, cache_attr)
+                    if isinstance(cache, dict) and len(cache) > 100:
+                        # Keep only the 50 most recent items
+                        items = list(cache.items())
+                        setattr(self, cache_attr, dict(items[-50:]))
+                    elif isinstance(cache, list) and len(cache) > 100:
+                        # Clean up old widget references
+                        old_widgets = cache[:-50]
+                        for widget in old_widgets:
+                            try:
+                                if hasattr(widget, 'deleteLater'):
+                                    widget.deleteLater()
+                            except RuntimeError:
+                                pass
+                        setattr(self, cache_attr, cache[-50:])
+
+            # 6. Force garbage collection periodically
+            import gc
+            gc.collect()
+            
+            logger.debug("Periodic cleanup completed")
+            
         except Exception as e:
-            print(f"Cleanup error: {e}")
+            logger.error(f"Cleanup error: {e}")
 
     def _debug_memory_usage(self):
         """Monitor memory usage - temporary debugging"""
@@ -8046,11 +8142,14 @@ class MediaPlayer(QMainWindow):
 
     def _save_current_playlist(self):
         """Prevent playlist corruption on crashes"""
+        if getattr(self, '_is_destroyed', False):
+            return
+            
         temp_file = CFG_CURRENT.with_suffix('.tmp')
         try:
             with open(temp_file, 'w', encoding='utf-8') as f:
                 json.dump({'current_playlist': self.playlist}, f, indent=2)
-            temp_file.replace(CFG_CURRENT)  # Atomic operation
+            temp_file.replace(CFG_CURRENT)
         except Exception as e:
             logger.error(f"Playlist save failed: {e}")
             if hasattr(self, 'status'):
