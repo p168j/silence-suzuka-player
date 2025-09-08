@@ -8011,30 +8011,42 @@ class MediaPlayer(QMainWindow):
                 'maximized': bool(self.isMaximized())
             }
         }
+        temp_file = CFG_SETTINGS.with_suffix('.tmp')
         try:
-            json.dump(s, open(CFG_SETTINGS, 'w', encoding='utf-8'))
-        except Exception:
-            pass
+            with open(temp_file, 'w', encoding='utf-8') as f:
+                json.dump(s, f, indent=2)
+            temp_file.replace(CFG_SETTINGS)
+        except Exception as e:
+            logger.error(f"Settings save failed: {e}")
 
     def _save_current_playlist(self):
+        """Prevent playlist corruption on crashes"""
+        temp_file = CFG_CURRENT.with_suffix('.tmp')
         try:
-            json.dump({'current_playlist': self.playlist}, open(CFG_CURRENT, 'w', encoding='utf-8'))
-        except Exception:
-            pass
+            with open(temp_file, 'w', encoding='utf-8') as f:
+                json.dump({'current_playlist': self.playlist}, f, indent=2)
+            temp_file.replace(CFG_CURRENT)  # Atomic operation
+        except Exception as e:
+            logger.error(f"Playlist save failed: {e}")
+            if hasattr(self, 'status'):
+                self.status.showMessage(f"Save failed: {e}", 4000)
 
     def _save_positions(self):
+        """Atomic save for playback positions"""
+        temp_file = CFG_POS.with_suffix('.tmp')
         try:
-            with open(CFG_POS, 'w', encoding='utf-8') as f:
-                json.dump(self.playback_positions, f)
+            with open(temp_file, 'w', encoding='utf-8') as f:
+                json.dump(self.playback_positions, f, indent=2)
+            temp_file.replace(CFG_POS)
         except Exception as e:
-            self.status.showMessage(f"Failed to save playback positions", 3000)
-            logger.error(f"Resume positions save error: {e}") 
-
-    def _save_playlists_file(self):
-        try:
-            json.dump(self.saved_playlists, open(CFG_PLAYLISTS, 'w', encoding='utf-8'))
-        except Exception:
-            pass
+            logger.error(f"Positions save failed: {e}")
+            if hasattr(self, 'status'):
+                self.status.showMessage(f"Failed to save playback positions", 3000)
+        def _save_playlists_file(self):
+            try:
+                json.dump(self.saved_playlists, open(CFG_PLAYLISTS, 'w', encoding='utf-8'))
+            except Exception:
+                pass
 
     def _save_completed(self):
         try:
