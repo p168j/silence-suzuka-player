@@ -300,7 +300,52 @@ def fetch_playlist_flat(url):
     except Exception as e:
         print(f"[BatchFetch] Fatal error for {url}: {e}")
         return []
-    
+
+class LightChevronTreeStyle(QProxyStyle):
+    def __init__(self, base=None, color="#e0e0e0"):
+        super().__init__(base)
+        self.chevron_color = QColor(color)
+
+    def drawPrimitive(self, element, option, painter, widget=None):
+        if element == QStyle.PE_IndicatorBranch:
+            if (option.state & QStyle.State_Children and 
+                not (option.state & QStyle.State_MouseOver)):
+                
+                r = option.rect
+                size = 8  # Smaller, more refined size
+                x = r.center().x()
+                y = r.center().y()
+                
+                painter.save()
+                painter.setRenderHint(QPainter.Antialiasing, True)
+                
+                # Use a thin pen for delicate lines
+                pen = QPen(self.chevron_color, 1.5)
+                painter.setPen(pen)
+                painter.setBrush(Qt.NoBrush)  # No fill, just the outline
+                
+                if option.state & QStyle.State_Open:
+                    # ▼ (expanded) - thin triangle outline
+                    points = [
+                        QPoint(x - size//2, y - size//3),
+                        QPoint(x + size//2, y - size//3),
+                        QPoint(x, y + size//3)
+                    ]
+                    painter.drawPolygon(QPolygon(points))
+                else:
+                    # ▶ (collapsed) - thin triangle outline
+                    points = [
+                        QPoint(x - size//3, y - size//2),
+                        QPoint(x - size//3, y + size//2),
+                        QPoint(x + size//3, y)
+                    ]
+                    painter.drawPolygon(QPolygon(points))
+                
+                painter.restore()
+                return
+        
+        super().drawPrimitive(element, option, painter, widget)
+
 class VolumeIconLabel(QLabel):
     """A QLabel that handles mute toggling on click and volume changes on scroll."""
     def __init__(self, main_player, parent=None):
@@ -4328,7 +4373,7 @@ class MediaPlayer(QMainWindow):
             if self.volume_normalization_enabled:
                 # Use the command method to apply the loudnorm filter
                 self.mpv.command("af", "add", "loudnorm")
-                print("Volume normalization enabled using loudnorm.")
+                # print("Volume normalization enabled using loudnorm.")
             else:
                 # Clear the audio filters
                 self.mpv.command("af", "clear")
@@ -4471,16 +4516,16 @@ class MediaPlayer(QMainWindow):
         self._build_ui()
 
         # Create 4 parallel workers for faster title resolution
-        print(f"DEBUG: Creating {10} YtdlManager workers...")
+        # print(f"DEBUG: Creating {10} YtdlManager workers...")
         self.ytdl_workers = []
         for i in range(10):  # Reduced from 10 to 4
             worker = YtdlManager(self)
             worker.titleResolved.connect(self._on_title_resolved)
             worker.start()
             self.ytdl_workers.append(worker)
-            print(f"DEBUG: Created YtdlManager worker {i}")
+            # print(f"DEBUG: Created YtdlManager worker {i}")
         self._worker_index = 0
-        print(f"DEBUG: All {len(self.ytdl_workers)} YtdlManager workers created")
+        # print(f"DEBUG: All {len(self.ytdl_workers)} YtdlManager workers created")
 
         # Override the playlist methods with enhanced versions
         def enhanced_save():
@@ -7459,10 +7504,11 @@ class MediaPlayer(QMainWindow):
         self._apply_dynamic_fonts()
 
         if hasattr(self, "playlist_tree"):
-            if getattr(self, "theme", "dark") == "dark":
+            if self.theme == "dark":
                 self.playlist_tree.setStyle(LightChevronTreeStyle(color="#e0e0e0"))
             else:
-                self.playlist_tree.setStyle(None)
+                # For the vinyl theme, remove the custom style to use the default
+                self.playlist_tree.setStyle(None) 
                 self.playlist_tree.style().unpolish(self.playlist_tree)
                 self.playlist_tree.style().polish(self.playlist_tree)
         
@@ -8012,26 +8058,23 @@ class MediaPlayer(QMainWindow):
                         self.play_scope = (sk, skey)
                 except Exception:
                     pass
-                # Apply theme with proper initialization
-                if self.theme == 'vinyl':
-                    self._apply_vinyl_theme()
-                else:
-                    # IMPORTANT: Clear any residual styling before applying dark theme
-                    try:
-                        bg = self.centralWidget()
-                        if bg:
-                            # Clear any existing styling completely
-                            bg.setStyleSheet("#bgRoot { background: none; border-image: none; }")
-                            bg.setAutoFillBackground(False)
-                            
-                            # Clear existing palette
-                            pal = bg.palette()
-                            pal.setBrush(bg.backgroundRole(), QBrush())
-                            bg.setPalette(pal)
-                    except Exception:
-                        pass
-                    
-                    self._apply_dark_theme()
+
+                # This ensures the theme is set on first launch using the default value.
+                    if self.theme == 'vinyl':
+                        self._apply_vinyl_theme()
+                    else:
+                        self._apply_dark_theme()
+
+                    # Apply dynamic font scaling after theme
+                    self._apply_dynamic_fonts()
+
+                    # --- ADDED: Set the correct chevron style on startup ---
+                    if hasattr(self, "playlist_tree"):
+                        if self.theme == "dark":
+                            self.playlist_tree.setStyle(LightChevronTreeStyle(color="#e0e0e0"))
+                        else:
+                            # For the vinyl theme, remove any custom style to use the default
+                            self.playlist_tree.setStyle(None)
                 
                 # Apply dynamic font scaling after theme
                 self._apply_dynamic_fonts()
