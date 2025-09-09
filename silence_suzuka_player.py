@@ -3944,6 +3944,7 @@ class MediaPlayer(QMainWindow):
     requestTimerSignal = Signal(int, object)
     statusMessageSignal = Signal(str, int)
     titleUpdateRequested = Signal(str, str)
+    mpvErrorOccurred = Signal(str)
 
     def __init__(self):
         super().__init__()
@@ -3961,6 +3962,12 @@ class MediaPlayer(QMainWindow):
         # Apply normalization on initialization
         if self.mpv:
             self._apply_volume_normalization()
+
+    def _show_mpv_error(self, error_message):
+        """Displays a non-blocking message box for mpv playback errors."""
+        print(f"MPV Runtime Error: {error_message}")
+        QMessageBox.warning(self, "Playback Error", f"The player encountered an error:\n\n{error_message}")
+        self.next_track() # Optionally, try to play the next track automatically
 
     def _resume_incomplete_title_fetching(self):
         """
@@ -4513,6 +4520,7 @@ class MediaPlayer(QMainWindow):
         self.requestTimerSignal.connect(self._start_timer_from_main_thread)
         self.statusMessageSignal.connect(self._show_status_message)
         self.titleUpdateRequested.connect(self._update_title_safely) 
+        self.mpvErrorOccurred.connect(self._show_mpv_error)
         self._build_ui()
 
         # Create 4 parallel workers for faster title resolution
@@ -7532,7 +7540,8 @@ class MediaPlayer(QMainWindow):
                 wid=str(int(self.video_frame.winId())),
                 ytdl=True,
                 hwdec='no',
-                osc=False
+                osc=False,
+                log_handler=self._handle_mpv_log
             )
             
             # Add padding around video content (optional)
@@ -7655,6 +7664,13 @@ class MediaPlayer(QMainWindow):
         self.afk_monitor = AFKMonitor(self.afk_timeout_minutes)
         self.afk_monitor.userIsAFK.connect(self.on_user_afk)
         self.afk_monitor.start()
+
+    def _handle_mpv_log(self, level, component, message):
+        """A callback function to handle log messages from mpv."""
+        if level == 'error':
+            error_text = message.strip()
+            # Use the signal to safely send the error to the main UI thread
+            self.mpvErrorOccurred.emit(error_text)
 
     def _init_subscription_manager(self):
         """Initializes and starts the subscription manager."""
