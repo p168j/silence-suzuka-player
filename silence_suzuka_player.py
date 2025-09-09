@@ -10707,7 +10707,8 @@ class MediaPlayer(QMainWindow):
             return
 
         menu = QMenu()  # <-- Single menu object for all cases
-        self._apply_menu_theme(menu)
+        if hasattr(self, "_apply_menu_theme"):
+            self._apply_menu_theme(menu)
 
         # --- CASE 1: Multiple items are selected ---
         if len(selected_items) > 1:
