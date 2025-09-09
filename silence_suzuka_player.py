@@ -358,19 +358,15 @@ class VolumeIconLabel(QLabel):
         super().mousePressEvent(event)
 
     def wheelEvent(self, event):
-        # Scroll up (positive delta) to increase volume, down to decrease
-        if event.angleDelta().y() > 0:
+        delta = event.angleDelta().y()
+        if delta > 0:
             self.main_player._volume_up()
         else:
             self.main_player._volume_down()
-        # Show a tooltip with the new volume
         new_volume = self.main_player.volume_slider.value()
         QToolTip.showText(QCursor.pos(), f"Volume: {new_volume}%", self)
         event.accept()
-    
-        new_volume = self.main_player.volume_slider.value()
-        QToolTip.showText(QCursor.pos(), f"Volume: {new_volume}%", self)
-        event.accept()
+
 
 class MiniPlayer(QWidget):
     def __init__(self, main_player_instance, theme, icons, parent=None):
@@ -1486,18 +1482,15 @@ class PlaylistManagerDialog(QDialog):
         return QIcon(pixmap)
     
     def _show_playlist_context_menu(self, pos):
-        """Show context menu for the playlist list."""
         item = self.playlist_list.itemAt(pos)
         if not item or not item.data(Qt.UserRole):
             return
-
         menu = QMenu(self)
-        self._apply_menu_theme(menu)
-
+        if hasattr(self, "_apply_menu_theme"):
+            self._apply_menu_theme(menu)  # safe
         menu.addAction("✏️ Rename", self._rename_selected_playlist)
         menu.addAction("🗑️ Delete", self._delete_selected_playlist)
         menu.addAction("📋 Duplicate", self._duplicate_selected_playlist)
-
         menu.exec(self.playlist_list.mapToGlobal(pos))
 
     def _rename_selected_playlist(self):
