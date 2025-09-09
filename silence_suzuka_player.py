@@ -7988,86 +7988,196 @@ class MediaPlayer(QMainWindow):
             self.raise_()
 
     def closeEvent(self, e):
-        # STOP ALL TIMERS FIRST to prevent memory leaks
+        """Enhanced closeEvent with proper timer cleanup to prevent memory leaks"""
+        print("[SHUTDOWN] Starting application shutdown sequence...")
+        
+        # CRITICAL FIX: Set destroyed flag first to prevent any new operations
+        self._is_destroyed = True
+        
+        # FIXED: Proper timer cleanup - stop and clear references without deleteLater()
         try:
-            timers_to_stop = [
-                '_search_timer', 'pos_timer', 'badge_timer', 'silence_timer',
-                '_track_scroll_timer', '_scroll_timer'
+            # List of timer attributes that might exist
+            timer_attrs = [
+                'pos_timer', 'badge_timer', 'silence_timer', '_search_timer',
+                '_track_scroll_timer', '_scroll_timer', '_cleanup_timer',
+                '_save_timer', '_mouse_debounce_timer'
             ]
-            for timer_name in timers_to_stop:
+            
+            for timer_name in timer_attrs:
                 timer = getattr(self, timer_name, None)
                 if timer and hasattr(timer, 'stop'):
-                    timer.stop()
-                    timer.deleteLater()
-        except Exception as e:
-            print(f"Timer cleanup error: {e}")
-        
-        # CLEAN UP WORKER THREADS
-        try:
-            # Stop YT-DLP workers
-            if hasattr(self, 'ytdl_workers'):
-                for worker in self.ytdl_workers:
-                    if worker:
-                        worker.stop()
-                        worker.wait(1000)  # 1 second timeout
-                        worker.deleteLater()
+                    try:
+                        timer.stop()
+                        # Disconnect all signals to prevent orphaned connections
+                        try:
+                            timer.timeout.disconnect()
+                        except (RuntimeError, TypeError):
+                            pass  # Already disconnected or no connections
+                        
+                        # Clear the reference
+                        setattr(self, timer_name, None)
+                        print(f"[SHUTDOWN] ✓ Cleaned up timer: {timer_name}")
+                    except Exception as timer_error:
+                        print(f"[SHUTDOWN] ⚠ Error cleaning timer {timer_name}: {timer_error}")
             
-            # Stop local duration worker
-            if hasattr(self, '_local_dur'):
-                self._local_dur.stop()
-                self._local_dur.wait(1000)
-                self._local_dur.deleteLater()
-                
-            # Stop any running playlist loaders
-            if hasattr(self, '_playlist_loader'):
-                self._playlist_loader.terminate()
-                self._playlist_loader.deleteLater()
-                
-            # Stop duration fetcher
-            if hasattr(self, '_duration_fetcher'):
-                self._duration_fetcher.stop()
-                self._duration_fetcher.deleteLater()
-                
+            print("[SHUTDOWN] ✓ All timers cleaned up")
+            
         except Exception as e:
-            print(f"Worker cleanup error: {e}")
+            print(f"[SHUTDOWN] ⚠ Timer cleanup error: {e}")
+        
+        # FIXED: Clean up worker threads with proper termination
+        try:
+            # YT-DLP workers
+            if hasattr(self, 'ytdl_workers'):
+                for i, worker in enumerate(self.ytdl_workers[:]):  # Create a copy of the list
+                    if worker:
+                        try:
+                            worker.stop()
+                            if not worker.wait(1000):  # Wait 1 second
+                                worker.terminate()
+                                worker.wait(500)  # Wait another 500ms after terminate
+                            print(f"[SHUTDOWN] ✓ Cleaned up YT-DLP worker {i}")
+                        except Exception as worker_error:
+                            print(f"[SHUTDOWN] ⚠ Error cleaning YT-DLP worker {i}: {worker_error}")
+                
+                # Clear the list
+                self.ytdl_workers.clear()
+                print(f"[SHUTDOWN] ✓ All YT-DLP workers cleaned up")
+            
+            # Local duration worker
+            if hasattr(self, '_local_dur') and self._local_dur:
+                try:
+                    self._local_dur.stop()
+                    if not self._local_dur.wait(1000):
+                        self._local_dur.terminate()
+                        self._local_dur.wait(500)
+                    self._local_dur = None
+                    print("[SHUTDOWN] ✓ Local duration worker cleaned up")
+                except Exception as local_error:
+                    print(f"[SHUTDOWN] ⚠ Local duration worker error: {local_error}")
+            
+            # Any running playlist loaders
+            if hasattr(self, '_playlist_loader') and self._playlist_loader:
+                try:
+                    self._playlist_loader.stop()
+                    if not self._playlist_loader.wait(1000):
+                        self._playlist_loader.terminate()
+                        self._playlist_loader.wait(500)
+                    self._playlist_loader = None
+                    print("[SHUTDOWN] ✓ Playlist loader cleaned up")
+                except Exception as loader_error:
+                    print(f"[SHUTDOWN] ⚠ Playlist loader error: {loader_error}")
+                    
+            # Duration fetcher
+            if hasattr(self, '_duration_fetcher') and self._duration_fetcher:
+                try:
+                    self._duration_fetcher.stop()
+                    if not self._duration_fetcher.wait(1000):
+                        self._duration_fetcher.terminate()
+                        self._duration_fetcher.wait(500)
+                    self._duration_fetcher = None
+                    print("[SHUTDOWN] ✓ Duration fetcher cleaned up")
+                except Exception as duration_error:
+                    print(f"[SHUTDOWN] ⚠ Duration fetcher error: {duration_error}")
+                    
+        except Exception as e:
+            print(f"[SHUTDOWN] ⚠ Worker cleanup error: {e}")
 
-        # Gracefully stop monitors/threads and persist settings
+        # Save state first before any other cleanup
         try:
-            if getattr(self, 'audio_monitor', None):
-                self.audio_monitor.stop()
-                try:
-                    self.audio_monitor.wait(2000)
-                except Exception:
-                    pass
-        except Exception:
-            pass
-        try:
-            if getattr(self, 'afk_monitor', None):
-                self.afk_monitor.stop()
-                try:
-                    self.afk_monitor.wait(2000)
-                except Exception:
-                    pass
-        except Exception:
-            pass
-        
-        # vvvvv THIS BLOCK WAS MOVED TO THE CORRECT INDENTATION vvvvv
-        try:
-            if getattr(self, '_subscription_manager', None):
-                self._subscription_manager.stop()
-                try:
-                    self._subscription_manager.wait(2000)
-                except Exception:
-                    pass
-        except Exception:
-            pass
-        # ^^^^^ THIS BLOCK WAS MOVED TO THE CORRECT INDENTATION ^^^^^
-        
-        try:
+            print("[SHUTDOWN] Saving session and settings...")
             self._save_session()
             self._save_settings()
-        except Exception:
-            pass
+            print("[SHUTDOWN] ✓ State and settings saved")
+        except Exception as e:
+            print(f"[SHUTDOWN] ⚠ Failed to save state: {e}")
+
+        # Stop playback to release media resources
+        try:
+            if hasattr(self, 'mpv') and self.mpv:
+                self.mpv.pause = True
+                print("[SHUTDOWN] ✓ Playback stopped")
+        except Exception as e:
+            print(f"[SHUTDOWN] ⚠ Error stopping playback: {e}")
+
+        # Stop background monitor threads
+        shutdown_timeout = 2000  # Reduced to 2 seconds
+        
+        try:
+            if hasattr(self, 'audio_monitor') and self.audio_monitor:
+                print("[SHUTDOWN] Stopping audio monitor...")
+                self.audio_monitor.stop()
+                if self.audio_monitor.wait(shutdown_timeout):
+                    print("[SHUTDOWN] ✓ Audio monitor stopped gracefully")
+                else:
+                    print("[SHUTDOWN] ⚠ Audio monitor timeout, terminating...")
+                    self.audio_monitor.terminate()
+                    self.audio_monitor.wait(1000)
+                self.audio_monitor = None
+        except Exception as e:
+            print(f"[SHUTDOWN] ⚠ Audio monitor error: {e}")
+        
+        try:
+            if hasattr(self, 'afk_monitor') and self.afk_monitor:
+                print("[SHUTDOWN] Stopping AFK monitor...")
+                self.afk_monitor.stop()
+                if self.afk_monitor.wait(shutdown_timeout):
+                    print("[SHUTDOWN] ✓ AFK monitor stopped gracefully")
+                else:
+                    print("[SHUTDOWN] ⚠ AFK monitor timeout, terminating...")
+                    self.afk_monitor.terminate()
+                    self.afk_monitor.wait(1000)
+                self.afk_monitor = None
+        except Exception as e:
+            print(f"[SHUTDOWN] ⚠ AFK monitor error: {e}")
+        
+        try:
+            if hasattr(self, '_subscription_manager') and self._subscription_manager:
+                print("[SHUTDOWN] Stopping subscription manager...")
+                self._subscription_manager.stop()
+                if self._subscription_manager.wait(shutdown_timeout):
+                    print("[SHUTDOWN] ✓ Subscription manager stopped gracefully")
+                else:
+                    print("[SHUTDOWN] ⚠ Subscription manager timeout, terminating...")
+                    self._subscription_manager.terminate()
+                    self._subscription_manager.wait(1000)
+                self._subscription_manager = None
+        except Exception as e:
+            print(f"[SHUTDOWN] ⚠ Subscription manager error: {e}")
+
+        # FIXED: Clear any dialog references that might cause leaks
+        try:
+            # Clear any dialog references
+            if hasattr(self, 'dialog'):
+                self.dialog = None
+            if hasattr(self, 'mini_player'):
+                self.mini_player = None
+            if hasattr(self, '_loading_overlay'):
+                self._loading_overlay = None
+            if hasattr(self, '_duration_progress'):
+                self._duration_progress = None
+            print("[SHUTDOWN] ✓ Dialog references cleared")
+        except Exception as e:
+            print(f"[SHUTDOWN] ⚠ Dialog cleanup error: {e}")
+
+        # FIXED: Clear large data structures
+        try:
+            # Clear large collections that might hold references
+            if hasattr(self, '_undo_stack'):
+                self._undo_stack.clear()
+            if hasattr(self, '_redo_stack'):
+                self._redo_stack.clear()
+            if hasattr(self, '_title_workers'):
+                self._title_workers.clear()
+            if hasattr(self, '_themed_tooltips'):
+                self._themed_tooltips.clear()
+            print("[SHUTDOWN] ✓ Large data structures cleared")
+        except Exception as e:
+            print(f"[SHUTDOWN] ⚠ Data structure cleanup error: {e}")
+
+        print("[SHUTDOWN] Shutdown sequence completed, closing application...")
+        
+        # Call the base class method
         super().closeEvent(e)
 
     def _update_tray(self):
