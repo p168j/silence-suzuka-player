@@ -300,6 +300,76 @@ def fetch_playlist_flat(url):
     except Exception as e:
         print(f"[BatchFetch] Fatal error for {url}: {e}")
         return []
+    
+class PlaylistFetchThread(QThread):
+    """
+    Background worker to fetch playlist items using yt‑dlp in a separate thread.
+    It emits chunks of items so the UI can remain responsive while downloading.
+    """
+    chunkReady = Signal(list)   # sends a list of items (e.g. 200 at a time)
+    progress = Signal(int)      # sends the number of items processed so far
+    error = Signal(str)         # sends an error message, if any
+    finished = Signal()         # signals that the fetch is complete
+
+    def __init__(self, url: str, chunk_size: int = 200, parent=None):
+        super().__init__(parent)
+        self.url = url
+        self.chunk_size = chunk_size
+
+    def run(self):
+        try:
+            items = fetch_playlist_flat(self.url)
+            if not items:
+                self.finished.emit()
+                return
+            total = len(items)
+            count = 0
+            for i in range(0, total, self.chunk_size):
+                chunk = items[i:i + self.chunk_size]
+                count += len(chunk)
+                self.chunkReady.emit(chunk)
+                self.progress.emit(min(count, total))
+            self.finished.emit()
+        except Exception as ex:
+            # emit the error message instead of showing a dialog here
+            self.error.emit(str(ex))
+            self.finished.emit()
+
+def fetch_playlist_with_progress(player, url: str, title: str = "Fetching playlist", chunk_size: int = 200):
+    """
+    Demonstration helper for running PlaylistFetchThread with a progress dialog.
+    It shows a QProgressDialog, starts the worker, and updates the UI as chunks arrive.
+    """
+    from PySide6.QtWidgets import QProgressDialog, QMessageBox
+
+    thread = PlaylistFetchThread(url, chunk_size, parent=player)
+    progress_dialog = QProgressDialog(title, "Cancel", 0, 0, player)
+    progress_dialog.setWindowTitle(title)
+    progress_dialog.setWindowModality(Qt.WindowModal)
+
+    all_items = []
+
+    def on_chunk(chunk):
+        all_items.extend(chunk)
+        # Since we don’t know the total at the start, just increment the bar
+        progress_dialog.setValue(progress_dialog.value() + len(chunk))
+
+    def on_error(msg):
+        QMessageBox.warning(player, "Error fetching playlist", msg)
+
+    def on_finished():
+        progress_dialog.setValue(progress_dialog.maximum())
+        progress_dialog.close()
+        # Replace this with whatever you need to do with the results
+        player.status.showMessage(f"Fetched {len(all_items)} items", 3000)
+
+    thread.chunkReady.connect(on_chunk)
+    thread.error.connect(on_error)
+    thread.finished.connect(on_finished)
+    progress_dialog.canceled.connect(lambda: thread.terminate() or thread.wait())
+
+    thread.start()
+    progress_dialog.exec()
 
 class LightChevronTreeStyle(QProxyStyle):
     def __init__(self, base=None, color="#e0e0e0"):
