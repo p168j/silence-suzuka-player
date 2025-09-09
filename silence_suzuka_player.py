@@ -562,6 +562,15 @@ class MiniPlayer(QWidget):
         self.time_label.setText(format_time(position))
         self.duration_label.setText(format_time(duration))
 
+    def update_volume_icon(self, is_muted):
+        """Updates the volume icon to reflect the mute state."""
+        if is_muted:
+            # Assuming you have a 'volume-mute.svg' or similar
+            mute_icon_path = self.main_player.icons.get('volume_mute', self.main_player.icons['volume'])
+            self.volume_icon_label.setPixmap(mute_icon_path.pixmap(QSize(20, 20)))
+        else:
+            self.volume_icon_label.setPixmap(self.main_player.icons['volume'].pixmap(QSize(20, 20)))
+
 class PlaylistMetadataWidget(QWidget):
     """Widget to display playlist metadata in a card-like format"""
     
@@ -4579,6 +4588,7 @@ class MediaPlayer(QMainWindow):
         # Define the source icon files we will be using
         show_main_icon_path = APP_DIR / 'icons' / 'chevron-down-dark.svg' 
         volume_icon_path = APP_DIR / 'icons' / 'volume.svg'
+        volume_mute_icon_path = APP_DIR / 'icons' / 'volume-mute.svg'
         next_icon_path = APP_DIR / 'icons' / 'next.svg'
         prev_icon_path = APP_DIR / 'icons' / 'previous.svg'
 
@@ -4595,6 +4605,7 @@ class MediaPlayer(QMainWindow):
                 'next': QIcon(_render_svg_tinted(str(next_icon_path), icon_size, vinyl_icon_color)),
                 'previous': QIcon(_render_svg_tinted(str(prev_icon_path), icon_size, vinyl_icon_color)),
                 'volume': QIcon(_render_svg_tinted(str(volume_icon_path), icon_size, vinyl_icon_color)),
+                'volume_mute': QIcon(_render_svg_tinted(str(volume_mute_icon_path), icon_size, vinyl_icon_color)),
                 'show_main': QIcon(_render_svg_tinted(str(show_main_icon_path), icon_size, vinyl_icon_color))
             }
         else: # Dark theme
@@ -4607,6 +4618,7 @@ class MediaPlayer(QMainWindow):
                 'next': QIcon(_render_svg_tinted(str(next_icon_path), icon_size, dark_icon_color)),
                 'previous': QIcon(_render_svg_tinted(str(prev_icon_path), icon_size, dark_icon_color)),
                 'volume': QIcon(_render_svg_tinted(str(volume_icon_path), icon_size, dark_icon_color)),
+                'volume_mute': QIcon(_render_svg_tinted(str(volume_mute_icon_path), icon_size, dark_icon_color)),
                 'show_main': QIcon(_render_svg_tinted(str(show_main_icon_path), icon_size, dark_icon_color))
             }
 
@@ -5496,25 +5508,37 @@ class MediaPlayer(QMainWindow):
             print(f"Error showing status message: {e}")        
             
     def _update_volume_icon(self, is_muted):
-            """Updates the volume icon to reflect the mute state, handling both QIcon and emoji."""
-            try:
-                icon_to_use = self.volume_mute_icon if is_muted else self.volume_icon
-                tooltip_to_use = "Unmute (Volume)" if is_muted else "Mute (Volume)"
+        """Updates the volume icon to reflect the mute state, handling both QIcon and emoji."""
+        try:
+            icon_to_use = self.volume_mute_icon if is_muted else self.volume_icon
+            tooltip_to_use = "Unmute (Volume)" if is_muted else "Mute (Volume)"
 
-                # Apply the icon or emoji to the QLabel
-                if isinstance(icon_to_use, QIcon):
-                    # It's an icon, so clear any text and set the pixmap
-                    self.volume_icon_label.setText("")
-                    self.volume_icon_label.setPixmap(icon_to_use.pixmap(self.icon_size))
-                else:
-                    # It's an emoji string, so clear any pixmap and set the text
-                    self.volume_icon_label.setPixmap(QPixmap())
-                    self.volume_icon_label.setText(str(icon_to_use))
+            # Apply the icon or emoji to the QLabel
+            if isinstance(icon_to_use, QIcon):
+                # It's an icon, so clear any text and set the pixmap
+                self.volume_icon_label.setText("")
+                self.volume_icon_label.setPixmap(icon_to_use.pixmap(self.icon_size))
+            else:
+                # It's an emoji string, so clear any pixmap and set the text
+                self.volume_icon_label.setPixmap(QPixmap())
+                self.volume_icon_label.setText(str(icon_to_use))
 
-                self.volume_icon_label.setToolTip(tooltip_to_use)
-            except Exception:
-                pass         
+            self.volume_icon_label.setToolTip(tooltip_to_use)
 
+            # --- THIS BLOCK SYNCS THE MINI-PLAYER ---
+            if hasattr(self, 'mini_player') and self.mini_player and self.mini_player.isVisible():
+                # Check if the mini_player has the necessary icons
+                if 'volume_mute' in self.mini_player.icons and 'volume' in self.mini_player.icons:
+                    if is_muted:
+                        mute_icon = self.mini_player.icons['volume_mute']
+                        self.mini_player.volume_icon_label.setPixmap(mute_icon.pixmap(QSize(20, 20)))
+                    else:
+                        volume_icon = self.mini_player.icons['volume']
+                        self.mini_player.volume_icon_label.setPixmap(volume_icon.pixmap(QSize(20, 20)))
+
+        except Exception as e:
+            print(f"Error updating volume icon: {e}") # It's better to print the error
+            
     def _round_video_frame_corners(self, radius=8):
         """Add rounded corners and borders to the video frame."""
         try:
