@@ -5765,53 +5765,24 @@ class MediaPlayer(QMainWindow):
         side_layout.setContentsMargins(8, 8, 8, 8)
         content.addWidget(side_widget, 1)
 
-        # ---- Split Add Media Button (Fixed) ----
-        add_media_container = QWidget()
-        add_media_container.setObjectName("addMediaContainer")
-        add_media_container.setFixedHeight(44)
-        add_media_container.setMaximumWidth(220)  # Constrain width
+        # ---- NEW Unified Add Media Button ----
+        self.add_media_btn = QPushButton("＋ Add Media")
+        self.add_media_btn.setObjectName("addMediaMain") # Use existing style
+        self.add_media_btn.setFixedHeight(44)
+        self.add_media_btn.setMaximumWidth(220)
 
-        add_media_layout = QHBoxLayout(add_media_container)
-        add_media_layout.setContentsMargins(0, 0, 0, 0)
-        add_media_layout.setSpacing(0)
+        # Create the menu that will pop up
+        add_media_menu = QMenu(self)
+        self._apply_menu_theme(add_media_menu) # Apply your custom theme
+        add_media_menu.addAction("🔗 Add Link...", self.add_link_dialog)
+        add_media_menu.addAction("📋 Add from Clipboard", self._maybe_offer_clipboard_url)
+        add_media_menu.addAction("📁 Add Files...", self.add_local_files)
 
-        # Main button (most of the width)
-        self.add_media_main = QPushButton("Add Media")
-        self.add_media_main.setObjectName("addMediaMain")
-        self.add_media_main.setFixedHeight(44)
-        self.add_media_main.clicked.connect(self._on_add_media_clicked)
+        # Tell the button to show the menu when clicked
+        self.add_media_btn.setMenu(add_media_menu)
 
-        # Dropdown button (small arrow)
-        self.add_media_dropdown = QPushButton("▼")
-        self.add_media_dropdown.setObjectName("addMediaDropdown")
-        self.add_media_dropdown.setFixedSize(32, 44)
-
-        # Create the menu
-        menu = QMenu(self)
-        menu.addAction("🔗 Add Link...", self.add_link_dialog)
-        menu.addAction("📋 Add from Clipboard", self._maybe_offer_clipboard_url)
-        menu.addAction("📁 Add Files...", self.add_local_files)
-
-        def show_add_media_menu():
-            try:
-                self._apply_menu_theme(menu)
-                # Position menu below the dropdown button
-                pos = self.add_media_dropdown.mapToGlobal(self.add_media_dropdown.rect().bottomRight())
-                pos.setX(pos.x() - menu.sizeHint().width())  # Right-align the menu
-                menu.exec(pos)
-            except Exception:
-                # Fallback positioning
-                menu.exec(self.add_media_dropdown.mapToGlobal(self.add_media_dropdown.rect().bottomLeft()))
-
-        # Connect the dropdown button OUTSIDE the function definition
-        self.add_media_dropdown.clicked.connect(show_add_media_menu)
-
-        # Add to layout
-        add_media_layout.addWidget(self.add_media_main, 1)
-        add_media_layout.addWidget(self.add_media_dropdown, 0)
-
-        side_layout.addWidget(add_media_container)
-        # ---- end Split Add Media Button ----
+        side_layout.addWidget(self.add_media_btn)
+        # ---- end NEW Unified Add Media Button ----
 
         opts = QHBoxLayout()
         # Front page toggles removed; configure in Settings
