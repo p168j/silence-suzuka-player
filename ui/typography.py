@@ -123,8 +123,15 @@ class TypographyManager(QObject):
         """Save current settings to configuration file"""
         try:
             config_file = self._get_config_file()
-            with open(config_file, 'w', encoding='utf-8') as f:
-                json.dump(self.settings.to_dict(), f, indent=2, ensure_ascii=False)
+            temp_file = config_file.with_suffix('.tmp')
+            try:
+                with open(temp_file, 'w', encoding='utf-8') as f:
+                    json.dump(self.settings.to_dict(), f, indent=2, ensure_ascii=False)
+                temp_file.replace(config_file)  # Atomic operation
+            except Exception as e:
+                if temp_file.exists():
+                    temp_file.unlink()
+                raise e
         except Exception as e:
             print(f"Failed to save typography settings: {e}")
             
