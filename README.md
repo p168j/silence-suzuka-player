@@ -13,6 +13,7 @@ A media player that automatically plays your content when it detects system-wide
 * **Advanced Playlist Management:** Save, load, and manage multiple playlists.
 * **Unified Library:** Add videos from YouTube, Bilibili, and local files all in one place.
 * **Resume Playback:** Remembers your position in every video.
+* **Background Duration Fetching:** Automatically fetches video durations in the background with intelligent caching to eliminate manual fetching delays.
 
 ## Requirements
 
@@ -72,7 +73,7 @@ You can then add media via the "Add Media" button, copy-paste or drag-and-drop f
 
    * Solution: You must follow the setup instructions to install and configure VoiceMeeter, then select the correct "VoiceMeeter Output" device in this app's Settings > Audio Monitor tab.
 
-* Manual Duration Fetching: Durations for local files are fetched automatically. For online videos (YouTube/Bilibili), you must manually trigger the process to avoid lag by clicking the "Fetch all durations" button (⏱️).
+* **Automatic Duration Fetching**: Durations for both local files and online videos (YouTube/Bilibili) are now fetched automatically in the background with intelligent caching. The system prioritizes visible items and uses multiple worker threads for optimal performance. You can configure or disable this feature in Settings > Duration Fetching.
 
 * Bilibili Login & Cookies: To access members-only Bilibili content, you need a cookies.txt file in the app's folder. Be aware that this file contains sensitive login information.
 
@@ -81,9 +82,7 @@ You can then add media via the "Add Media" button, copy-paste or drag-and-drop f
 ## Known Limitations & Design Choices
 This application was designed to be a fast, responsive personal tool. Some features were intentionally implemented in a manual way to prioritize performance over full automation.
 
-* Manual Duration Fetching for Online Videos: Fetching durations for local files happens automatically in the background when you add them. However, getting this information for online videos (YouTube/Bilibili) is a much slower process.
-
-   * Solution: To prevent lag, you must manually trigger duration fetching for online content by clicking the "Fetch all durations" button (⏱️).
+* **Background Duration Fetching**: Duration information for local files is fetched automatically in the background when you add them. For online videos (YouTube/Bilibili), durations are now also fetched automatically in the background with intelligent caching to avoid repeated requests. You can also manually trigger duration fetching for all items by clicking the "Fetch all durations" button (⏱️) if needed.
 
 * No Real-time Playlist Syncing: If you modify the playlists_v2.json file outside of the app while it's running, you will need to restart the application to see your changes.
 
