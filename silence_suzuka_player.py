@@ -8464,11 +8464,16 @@ class MediaPlayer(QMainWindow):
             if hasattr(self, 'status'):
                 self.status.showMessage(f"Failed to save playback positions", 3000)
         def _save_playlists_file(self):
+            temp_file = CFG_PLAYLISTS.with_suffix('.tmp')
             try:
-                json.dump(self.saved_playlists, open(CFG_PLAYLISTS, 'w', encoding='utf-8'))
-            except Exception:
-                pass
-
+                with open(temp_file, 'w', encoding='utf-8') as f:
+                    json.dump(self.saved_playlists, f, indent=2, ensure_ascii=False)
+                temp_file.replace(CFG_PLAYLISTS)  # Atomic operation
+            except Exception as e:
+                if temp_file.exists():
+                    temp_file.unlink()
+                logger.error(f"Playlists save failed: {e}")
+                
     def _save_completed(self):
         try:
             json.dump(sorted(list(self.completed_urls)), open(CFG_COMPLETED, 'w', encoding='utf-8'))
