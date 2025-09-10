@@ -85,6 +85,9 @@ from PySide6.QtWidgets import (
 # Smart Queue imports
 from smart_queue import SmartQueueSettings, SmartQueueManager
 
+# Duration Fetch imports
+from duration_fetch import DurationFetchSettings, DurationCache, BackgroundDurationFetcher
+
 
 class MediaType(Enum):
     """Enumeration for media source types."""
@@ -8246,6 +8249,10 @@ class MediaPlayer(QMainWindow):
                 smart_queue_data = s.get('smart_queue', {})
                 self.smart_queue_settings = SmartQueueSettings.from_dict(smart_queue_data)
                 
+                # Load duration fetch settings
+                duration_fetch_data = s.get('duration_fetch', {})
+                self.duration_fetch_settings = DurationFetchSettings.from_dict(duration_fetch_data)
+                
                 # Update logging level immediately
                 try:
                     logging.getLogger().setLevel(getattr(logging, self.log_level.upper(), logging.INFO))
@@ -8329,8 +8336,21 @@ class MediaPlayer(QMainWindow):
         if not hasattr(self, 'smart_queue_settings'):
             self.smart_queue_settings = SmartQueueSettings()
         
+        # Initialize duration fetch settings if not already loaded
+        if not hasattr(self, 'duration_fetch_settings'):
+            self.duration_fetch_settings = DurationFetchSettings()
+        
         # Initialize smart queue manager with same config directory as other settings
         self.smart_queue_manager = SmartQueueManager(Path(APP_DIR), self.smart_queue_settings)
+        
+        # Initialize background duration fetcher
+        self.background_duration_fetcher = BackgroundDurationFetcher(
+            Path(APP_DIR), self.duration_fetch_settings, self
+        )
+        
+        # Connect duration fetcher signals
+        self.background_duration_fetcher.durationReady.connect(self._on_background_duration_ready)
+        self.background_duration_fetcher.fetchError.connect(self._on_background_duration_error)
 
         # Force update to ensure styling takes effect
         try:
@@ -8446,6 +8466,7 @@ class MediaPlayer(QMainWindow):
             'group_singles': bool(getattr(self, 'group_singles', False)),
             'restore_session': bool(getattr(self, 'restore_session', True)),
             'smart_queue': getattr(self, 'smart_queue_settings', None).to_dict() if hasattr(self, 'smart_queue_settings') and self.smart_queue_settings else {},
+            'duration_fetch': getattr(self, 'duration_fetch_settings', None).to_dict() if hasattr(self, 'duration_fetch_settings') and self.duration_fetch_settings else {},
             'window': {
                 'x': int(self.geometry().x()),
                 'y': int(self.geometry().y()),
@@ -8728,6 +8749,18 @@ class MediaPlayer(QMainWindow):
             self.playlist_stack.setCurrentIndex(1)
         else:
             self.playlist_stack.setCurrentIndex(0)
+            
+            # Queue items for background duration fetching
+            try:
+                items_needing_duration = []
+                for idx, item in enumerate(self.playlist):
+                    if not item.get('duration') and item.get('type') in ('youtube', 'bilibili', 'local'):
+                        items_needing_duration.append((idx, item))
+                
+                if items_needing_duration:
+                    self._queue_items_for_background_fetch(items_needing_duration, priority_visible=True)
+            except Exception as e:
+                print(f"Background fetch queue error: {e}")
 
     def _refresh_playlist_widget_incremental(self, expansion_state=None):
         """Incremental update - only update what changed"""
@@ -10321,35 +10354,137 @@ class MediaPlayer(QMainWindow):
         if not self.playlist:
             return
         
-        # Count items that need duration fetching
-        # Include local alongside youtube/bilibili
-        items_needing_duration = [
-            (i, item) for i, item in enumerate(self.playlist)
-            if item.get('type') in ('youtube', 'bilibili', 'local')
-            and not item.get('duration')
-        ]
+        # Check cache first and only fetch uncached items
+        items_needing_fetch = []
+        cache_hits = 0
         
-        if not items_needing_duration:
-            self.status.showMessage("All items already have duration info", 3000)
+        for i, item in enumerate(self.playlist):
+            if item.get('type') in ('youtube', 'bilibili', 'local') and not item.get('duration'):
+                # Check if we have it in cache
+                if hasattr(self, 'background_duration_fetcher'):
+                    cached_duration = self.background_duration_fetcher.cache.get(item.get('url', ''))
+                    if cached_duration is not None:
+                        # Apply cached duration immediately
+                        self.playlist[i]['duration'] = cached_duration
+                        cache_hits += 1
+                        continue
+                
+                items_needing_fetch.append((i, item))
+        
+        # Update display if we had cache hits
+        if cache_hits > 0:
+            self._update_playlist_item_display_range(range(len(self.playlist)))
+            self._save_current_playlist()
+        
+        if not items_needing_fetch:
+            message = f"All items already have duration info"
+            if cache_hits > 0:
+                message += f" ({cache_hits} from cache)"
+            self.status.showMessage(message, 3000)
             return
         
         reply = QMessageBox.question(
             self, "Fetch Durations",
-            f"Fetch durations for {len(items_needing_duration)} videos?\n\nThis may take several minutes.",
+            f"Fetch durations for {len(items_needing_fetch)} videos?\n" +
+            (f"({cache_hits} found in cache)\n" if cache_hits > 0 else "") +
+            "This may take several minutes.",
             QMessageBox.Yes | QMessageBox.No
         )
         
         if reply == QMessageBox.Yes:
-            # Show cancellable progress dialog FIRST
-            self._show_duration_progress(len(items_needing_duration))
+            # Use background fetcher with high priority for manual requests
+            if hasattr(self, 'background_duration_fetcher'):
+                from duration_fetch.background_fetcher import FetchPriority
+                
+                # Show progress dialog
+                self._show_duration_progress(len(items_needing_fetch))
+                
+                # Track manual fetch progress
+                self._manual_fetch_total = len(items_needing_fetch)
+                self._manual_fetch_completed = 0
+                
+                # Connect to track progress
+                self.background_duration_fetcher.durationReady.connect(self._on_manual_fetch_progress)
+                self.background_duration_fetcher.fetchError.connect(self._on_manual_fetch_error)
+                
+                # Enqueue with high priority
+                self.background_duration_fetcher.enqueue_items(
+                    items_needing_fetch, 
+                    priority=FetchPriority.URGENT
+                )
+            else:
+                # Fallback to old method if background fetcher not available
+                self._show_duration_progress(len(items_needing_fetch))
+                self._duration_fetcher = DurationFetcher(items_needing_fetch, self)
+                self._duration_fetcher.progressUpdated.connect(self._on_duration_progress)
+                self._duration_fetcher.durationReady.connect(self._on_duration_ready)
+                self._duration_fetcher.finished.connect(self._on_duration_fetch_complete)
+                self._duration_fetcher.start()
+    
+    def _update_playlist_item_display_range(self, indices):
+        """Update display for multiple playlist items"""
+        try:
+            for idx in indices:
+                self._update_playlist_item_display(idx)
+        except Exception as e:
+            print(f"Update playlist range error: {e}")
+    
+    def _on_manual_fetch_progress(self, playlist_index: int, duration: int, source: str):
+        """Track progress of manual fetch requests"""
+        try:
+            if hasattr(self, '_manual_fetch_total'):
+                self._manual_fetch_completed += 1
+                
+                # Update progress dialog
+                if hasattr(self, '_duration_progress') and self._duration_progress:
+                    self._duration_progress.setValue(self._manual_fetch_completed)
+                    self._duration_progress.setLabelText(f"Fetching durations... ({self._manual_fetch_completed}/{self._manual_fetch_total})")
+                
+                # Check if complete
+                if self._manual_fetch_completed >= self._manual_fetch_total:
+                    self._cleanup_manual_fetch()
+        except Exception as e:
+            print(f"Manual fetch progress error: {e}")
+    
+    def _on_manual_fetch_error(self, playlist_index: int, error: str):
+        """Handle manual fetch errors"""
+        try:
+            if hasattr(self, '_manual_fetch_total'):
+                self._manual_fetch_completed += 1
+                
+                # Update progress dialog
+                if hasattr(self, '_duration_progress') and self._duration_progress:
+                    self._duration_progress.setValue(self._manual_fetch_completed)
+                
+                # Check if complete
+                if self._manual_fetch_completed >= self._manual_fetch_total:
+                    self._cleanup_manual_fetch()
+        except Exception as e:
+            print(f"Manual fetch error handling error: {e}")
+    
+    def _cleanup_manual_fetch(self):
+        """Clean up manual fetch tracking"""
+        try:
+            # Disconnect progress tracking
+            if hasattr(self, 'background_duration_fetcher'):
+                self.background_duration_fetcher.durationReady.disconnect(self._on_manual_fetch_progress)
+                self.background_duration_fetcher.fetchError.disconnect(self._on_manual_fetch_error)
             
-            # Create duration fetcher with cancel support
-            self._duration_fetcher = DurationFetcher(items_needing_duration, self)
-            self._duration_fetcher.progressUpdated.connect(self._on_duration_progress)
-            self._duration_fetcher.durationReady.connect(self._on_duration_ready)
-            self._duration_fetcher.finished.connect(self._on_duration_fetch_complete)
+            # Close progress dialog
+            if hasattr(self, '_duration_progress') and self._duration_progress:
+                self._duration_progress.close()
+                self._duration_progress = None
             
-            self._duration_fetcher.start()
+            # Clean up tracking variables
+            if hasattr(self, '_manual_fetch_total'):
+                delattr(self, '_manual_fetch_total')
+            if hasattr(self, '_manual_fetch_completed'):
+                delattr(self, '_manual_fetch_completed')
+            
+            self.status.showMessage("Duration fetching complete", 3000)
+            
+        except Exception as e:
+            print(f"Manual fetch cleanup error: {e}")
 
     def _show_duration_progress(self, total):
         """Show cancellable progress dialog for duration fetching"""
@@ -12192,7 +12327,94 @@ class MediaPlayer(QMainWindow):
         
         tabs.addTab(w_smart, "Smart Queue")
 
-        # --- Tab 5: Diagnostics ---
+        # --- Tab 5: Duration Fetching ---
+        w_duration = QWidget(); f_duration = QFormLayout(w_duration)
+        
+        # Main enable/disable toggle
+        chk_auto_fetch = QCheckBox("Auto-fetch durations in background")
+        chk_auto_fetch.setChecked(bool(getattr(self, 'duration_fetch_settings', DurationFetchSettings()).auto_fetch_enabled))
+        chk_auto_fetch.setToolTip("Automatically fetch durations for new videos in the background to eliminate manual fetching.")
+        f_duration.addRow(chk_auto_fetch)
+        
+        # Performance settings container
+        perf_container = QWidget()
+        perf_layout = QFormLayout(perf_container)
+        
+        # Worker thread count
+        spn_worker_threads = QSpinBox()
+        spn_worker_threads.setRange(1, 8)
+        spn_worker_threads.setValue(int(getattr(self, 'duration_fetch_settings', DurationFetchSettings()).worker_thread_count))
+        spn_worker_threads.setToolTip("Number of background threads for fetching durations. More threads = faster but uses more resources.")
+        perf_layout.addRow("Worker threads:", spn_worker_threads)
+        
+        # Fetch timeout
+        spn_timeout = QSpinBox()
+        spn_timeout.setRange(5, 60)
+        spn_timeout.setSuffix(" sec")
+        spn_timeout.setValue(int(getattr(self, 'duration_fetch_settings', DurationFetchSettings()).fetch_timeout))
+        spn_timeout.setToolTip("Timeout for individual duration fetch operations.")
+        perf_layout.addRow("Fetch timeout:", spn_timeout)
+        
+        # Cache settings
+        chk_cache_enabled = QCheckBox("Enable duration caching")
+        chk_cache_enabled.setChecked(bool(getattr(self, 'duration_fetch_settings', DurationFetchSettings()).cache_enabled))
+        chk_cache_enabled.setToolTip("Cache fetched durations to avoid re-fetching the same videos.")
+        perf_layout.addRow(chk_cache_enabled)
+        
+        # Cache max age
+        spn_cache_age = QSpinBox()
+        spn_cache_age.setRange(1, 365)
+        spn_cache_age.setSuffix(" days")
+        spn_cache_age.setValue(int(getattr(self, 'duration_fetch_settings', DurationFetchSettings()).cache_max_age_days))
+        spn_cache_age.setToolTip("How long to keep cached durations before they expire.")
+        perf_layout.addRow("Cache max age:", spn_cache_age)
+        
+        f_duration.addRow(perf_container)
+        
+        # Cache management
+        cache_container = QWidget()
+        cache_layout = QHBoxLayout(cache_container)
+        
+        # Cache statistics label
+        cache_stats_label = QLabel("Loading cache statistics...")
+        cache_layout.addWidget(cache_stats_label)
+        
+        # Clear cache button
+        clear_cache_btn = QPushButton("Clear Cache")
+        clear_cache_btn.setToolTip("Clear all cached durations and start fresh.")
+        clear_cache_btn.clicked.connect(lambda: self._clear_duration_cache(clear_cache_btn, cache_stats_label))
+        cache_layout.addWidget(clear_cache_btn)
+        
+        f_duration.addRow("Cache:", cache_container)
+        
+        # Update cache statistics
+        def update_cache_stats():
+            try:
+                if hasattr(self, 'background_duration_fetcher'):
+                    stats = self.background_duration_fetcher.get_cache_statistics()
+                    cache_info = stats.get('cache', {})
+                    entries = cache_info.get('entries', 0)
+                    hit_rate = cache_info.get('hit_rate', 0) * 100
+                    cache_stats_label.setText(f"{entries} entries, {hit_rate:.1f}% hit rate")
+                else:
+                    cache_stats_label.setText("Background fetcher not initialized")
+            except Exception:
+                cache_stats_label.setText("Error loading cache stats")
+        
+        update_cache_stats()
+        
+        # Enable/disable controls based on auto-fetch toggle
+        def toggle_duration_features():
+            enabled = chk_auto_fetch.isChecked()
+            perf_container.setEnabled(enabled)
+            cache_container.setEnabled(enabled)
+        
+        chk_auto_fetch.toggled.connect(toggle_duration_features)
+        toggle_duration_features()  # Set initial state
+        
+        tabs.addTab(w_duration, "Duration Fetching")
+
+        # --- Tab 6: Diagnostics ---
         w_diag = QWidget(); f_diag = QFormLayout(w_diag)
         lbl_log = QLabel("Logging & Diagnostics"); lbl_log.setStyleSheet("font-weight: bold; margin-top: 10px;"); f_diag.addRow(lbl_log)
         log_level_combo = QComboBox(); log_level_combo.addItems(['DEBUG', 'INFO', 'WARNING', 'ERROR']); log_level_combo.setCurrentText(self.log_level)
@@ -12284,6 +12506,18 @@ class MediaPlayer(QMainWindow):
                 self._update_up_next()
             except Exception: pass
             
+            try: # Duration Fetching
+                self.duration_fetch_settings.auto_fetch_enabled = bool(chk_auto_fetch.isChecked())
+                self.duration_fetch_settings.worker_thread_count = int(spn_worker_threads.value())
+                self.duration_fetch_settings.fetch_timeout = int(spn_timeout.value())
+                self.duration_fetch_settings.cache_enabled = bool(chk_cache_enabled.isChecked())
+                self.duration_fetch_settings.cache_max_age_days = int(spn_cache_age.value())
+                
+                # Update the background duration fetcher with new settings
+                if hasattr(self, 'background_duration_fetcher'):
+                    self.background_duration_fetcher.update_settings(self.duration_fetch_settings)
+            except Exception: pass
+            
             try: # Diagnostics
                 self.log_level = log_level_combo.currentText()
                 logging.getLogger().setLevel(getattr(logging, self.log_level.upper(), logging.INFO))
@@ -12309,6 +12543,25 @@ class MediaPlayer(QMainWindow):
                     QTimer.singleShot(2000, lambda: button.setText("Reset Learning Data"))
             except Exception as e:
                 print(f"Smart Queue: Error resetting learning data: {e}")
+        
+        def _clear_duration_cache(button, stats_label):
+            """Clear duration cache"""
+            try:
+                reply = QMessageBox.question(
+                    dlg,
+                    "Clear Duration Cache",
+                    "Are you sure you want to clear all cached durations?\n\nThis will remove all cached video durations and they will need to be re-fetched.",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No
+                )
+                if reply == QMessageBox.Yes:
+                    if hasattr(self, 'background_duration_fetcher'):
+                        self.background_duration_fetcher.clear_cache()
+                    button.setText("Cache Cleared!")
+                    stats_label.setText("0 entries, 0% hit rate")
+                    QTimer.singleShot(2000, lambda: button.setText("Clear Cache"))
+            except Exception as e:
+                print(f"Duration Fetch: Error clearing cache: {e}")
 
         btns.accepted.connect(_apply)
         btns.rejected.connect(dlg.reject)
@@ -12337,6 +12590,11 @@ class MediaPlayer(QMainWindow):
             if hasattr(self, 'smart_queue_manager'):
                 self.smart_queue_manager.update_settings(self.smart_queue_settings)
             
+            # Reset Duration Fetch settings to default  
+            self.duration_fetch_settings = DurationFetchSettings()
+            if hasattr(self, 'background_duration_fetcher'):
+                self.background_duration_fetcher.update_settings(self.duration_fetch_settings)
+            
             # Save the new default settings to the config file
             self._save_settings()
             
@@ -12348,6 +12606,121 @@ class MediaPlayer(QMainWindow):
         except Exception as e:
             logger.error(f"Failed to reset settings: {e}")
             self.status.showMessage("Error: Could not reset settings.", 4000)
+
+    def _on_background_duration_ready(self, playlist_index: int, duration: int, source: str):
+        """Handle duration fetched by background fetcher"""
+        try:
+            if 0 <= playlist_index < len(self.playlist):
+                self.playlist[playlist_index]['duration'] = duration
+                # Update the display for this item without full refresh
+                self._update_playlist_item_display(playlist_index)
+                # Show subtle feedback for auto-fetched durations
+                if source != 'cache':
+                    item_title = self.playlist[playlist_index].get('title', 'Unknown')[:30]
+                    self.status.showMessage(f"Duration fetched: {item_title}", 2000)
+        except Exception as e:
+            print(f"Background Duration: Error handling ready signal: {e}")
+    
+    def _on_background_duration_error(self, playlist_index: int, error: str):
+        """Handle duration fetch error from background fetcher"""
+        try:
+            # Only show error for urgent/user-requested fetches, not automatic ones
+            # We can distinguish this by checking if the user recently clicked "Fetch all durations"
+            pass  # Silent for now, as we don't want to spam the user with errors
+        except Exception as e:
+            print(f"Background Duration: Error handling error signal: {e}")
+    
+    def _update_playlist_item_display(self, playlist_index: int):
+        """Update display for a single playlist item (used when duration is fetched)"""
+        try:
+            # Find the tree item for this playlist index and update its duration column
+            root = self.playlist_tree.topLevelItem(0)
+            if not root:
+                return
+                
+            def update_item_recursive(node):
+                data = node.data(0, Qt.UserRole)
+                if isinstance(data, tuple) and data[0] == 'current':
+                    stored_index = data[1]
+                    if stored_index == playlist_index:
+                        # Update the duration column
+                        duration = self.playlist[playlist_index].get('duration', 0)
+                        duration_str = format_duration_from_seconds(duration)
+                        node.setText(1, duration_str)
+                        return True
+                
+                # Check children
+                for i in range(node.childCount()):
+                    if update_item_recursive(node.child(i)):
+                        return True
+                return False
+            
+            update_item_recursive(root)
+            
+        except Exception as e:
+            print(f"Update playlist item display error: {e}")
+    
+    def _queue_items_for_background_fetch(self, items_with_indices: List[Tuple[int, Dict]], priority_visible: bool = True):
+        """Queue playlist items for background duration fetching"""
+        try:
+            if not hasattr(self, 'background_duration_fetcher') or not self.duration_fetch_settings.auto_fetch_enabled:
+                return
+                
+            # Get currently visible indices for prioritization
+            visible_indices = None
+            if priority_visible:
+                try:
+                    visible_indices = self._get_visible_playlist_indices()
+                except Exception:
+                    visible_indices = None
+            
+            from duration_fetch.background_fetcher import FetchPriority
+            priority = FetchPriority.NORMAL
+            
+            self.background_duration_fetcher.enqueue_items(
+                items_with_indices, 
+                priority=priority,
+                visible_indices=visible_indices
+            )
+            
+        except Exception as e:
+            print(f"Queue background fetch error: {e}")
+    
+    def _get_visible_playlist_indices(self) -> List[int]:
+        """Get playlist indices that are currently visible in the tree widget"""
+        visible_indices = []
+        try:
+            if not hasattr(self, 'playlist_tree'):
+                return visible_indices
+                
+            # Get the visible area of the tree widget
+            viewport = self.playlist_tree.viewport()
+            visible_rect = viewport.rect()
+            
+            # Check each top-level and child item
+            root = self.playlist_tree.topLevelItem(0)
+            if not root:
+                return visible_indices
+                
+            def check_visibility_recursive(node):
+                # Check if this node is visible
+                item_rect = self.playlist_tree.visualItemRect(node)
+                if visible_rect.intersects(item_rect):
+                    data = node.data(0, Qt.UserRole)
+                    if isinstance(data, tuple) and data[0] == 'current':
+                        visible_indices.append(data[1])  # playlist index
+                
+                # Check children
+                if node.isExpanded():
+                    for i in range(node.childCount()):
+                        check_visibility_recursive(node.child(i))
+            
+            check_visibility_recursive(root)
+            
+        except Exception as e:
+            print(f"Get visible indices error: {e}")
+            
+        return visible_indices
 
     def open_about_dialog(self):
         """Creates and shows the About dialog."""
@@ -13500,17 +13873,23 @@ class MediaPlayer(QMainWindow):
             threads_to_stop.append(('afk_monitor', self.afk_monitor))
         if getattr(self, 'ytdl_manager', None):
             threads_to_stop.append(('ytdl_manager', self.ytdl_manager))
+        if getattr(self, 'background_duration_fetcher', None):
+            threads_to_stop.append(('background_duration_fetcher', self.background_duration_fetcher))
         
         for thread_name, thread_obj in threads_to_stop:
             try:
                 print(f"[SHUTDOWN] Stopping {thread_name}...")
-                thread_obj.stop()
-                if thread_obj.wait(shutdown_timeout):
+                if thread_name == 'background_duration_fetcher':
+                    thread_obj.stop_workers()  # Special method for background duration fetcher
                     print(f"[SHUTDOWN] ✓ {thread_name} stopped gracefully")
                 else:
-                    print(f"[SHUTDOWN] ⚠ {thread_name} did not stop within timeout, terminating...")
-                    thread_obj.terminate()
-                    thread_obj.wait(1000)  # Give it 1 more second after terminate
+                    thread_obj.stop()
+                    if thread_obj.wait(shutdown_timeout):
+                        print(f"[SHUTDOWN] ✓ {thread_name} stopped gracefully")
+                    else:
+                        print(f"[SHUTDOWN] ⚠ {thread_name} did not stop within timeout, terminating...")
+                        thread_obj.terminate()
+                        thread_obj.wait(1000)  # Give it 1 more second after terminate
             except Exception as e:
                 logger.error(f"Error stopping {thread_name}: {e}")
                 print(f"[SHUTDOWN] ⚠ Error stopping {thread_name}: {e}")

@@ -29,6 +29,7 @@ build/
 *_subscriptions.json
 *_subscriptions.log
 *_smart_queue_learning.json
+*_duration_cache.json
 save/
 logs/
 backup/
@@ -45,6 +46,8 @@ metadata_cache.json
 subscriptions.json
 subscriptions.log
 smart_queue_learning.json
+duration_cache.json
+test_config/
 
 
 # Ignore IDE/editor/project files
