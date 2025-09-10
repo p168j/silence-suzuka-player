@@ -26,6 +26,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from enum import Enum
 from urllib.parse import urlparse
+from typing import List, Tuple, Dict
 
 # Third-party imports
 import qtawesome as qta
