@@ -9065,6 +9065,7 @@ class MediaPlayer(QMainWindow):
                     upcoming = [i for i in upcoming if not self._is_completed_url(self.playlist[i].get('url'))]
 
                 # Add smart queue suggestions when enabled and queue is short
+                smart_suggestions = {}  # Map index to (icon, reason) for smart suggestions
                 if (hasattr(self, 'smart_queue_settings') and self.smart_queue_settings.enabled and 
                     len(upcoming) < 5):  # Only add suggestions when queue isn't full
                     try:
@@ -9076,11 +9077,12 @@ class MediaPlayer(QMainWindow):
                             current_item, self.playlist, self.current_index, upcoming
                         )
                         
-                        # Add suggestions to the upcoming list (with smart indicators)
+                        # Add suggestions to the upcoming list and track them
                         for suggestion_idx, reason_icon, reason_text in suggestions:
                             if len(upcoming) >= 5:  # Respect the original 5-item limit
                                 break
                             upcoming.append(suggestion_idx)
+                            smart_suggestions[suggestion_idx] = (reason_icon, reason_text)
                             
                     except Exception as e:
                         print(f"Smart Queue: Error getting suggestions: {e}")
@@ -9093,22 +9095,9 @@ class MediaPlayer(QMainWindow):
                         
                         # Check if this is a smart suggestion
                         smart_indicator = ""
-                        if (hasattr(self, 'smart_queue_settings') and self.smart_queue_settings.enabled):
-                            try:
-                                current_item = None
-                                if 0 <= self.current_index < len(self.playlist):
-                                    current_item = self.playlist[self.current_index]
-                                
-                                suggestions = self.smart_queue_manager.get_suggestions(
-                                    current_item, self.playlist, self.current_index, upcoming[:upcoming.index(i)]
-                                )
-                                
-                                for suggestion_idx, reason_icon, reason_text in suggestions:
-                                    if suggestion_idx == i:
-                                        smart_indicator = f"{reason_icon} "
-                                        break
-                            except Exception:
-                                pass
+                        if i in smart_suggestions:
+                            reason_icon, reason_text = smart_suggestions[i]
+                            smart_indicator = f"{reason_icon} "
 
                         node = QTreeWidgetItem()
 
@@ -12342,6 +12331,11 @@ class MediaPlayer(QMainWindow):
             self.silence_threshold = 0.03
             self.resume_threshold = 0.045
             self.log_level = 'INFO'
+            
+            # Reset Smart Queue settings to default
+            self.smart_queue_settings = SmartQueueSettings()
+            if hasattr(self, 'smart_queue_manager'):
+                self.smart_queue_manager.update_settings(self.smart_queue_settings)
             
             # Save the new default settings to the config file
             self._save_settings()
