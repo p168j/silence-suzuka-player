@@ -82,6 +82,9 @@ from PySide6.QtWidgets import (
     QProgressDialog, QToolTip, QSizePolicy, QSpacerItem
 )
 
+# Smart Queue imports
+from smart_queue import SmartQueueSettings, SmartQueueManager
+
 
 class MediaType(Enum):
     """Enumeration for media source types."""
@@ -7629,6 +7632,15 @@ class MediaPlayer(QMainWindow):
             @self.mpv.property_observer('eof-reached')
             def _eof(_name, value):
                 if value:
+                    # Record completion for learning
+                    if (hasattr(self, 'smart_queue_manager') and self.smart_queue_manager.settings.learning_enabled and
+                        0 <= self.current_index < len(self.playlist)):
+                        try:
+                            current_item = self.playlist[self.current_index]
+                            self.smart_queue_manager.record_interaction(current_item, 'complete')
+                        except Exception as e:
+                            print(f"Smart Queue: Error recording completion interaction: {e}")
+                    
                     if self.repeat_mode and 0 <= self.current_index < len(self.playlist):
                         self.play_current()
                     else:
@@ -8229,6 +8241,11 @@ class MediaPlayer(QMainWindow):
                 self.log_level = s.get('log_level', self.log_level)
                 self.show_today_badge = bool(s.get('show_today_badge', True))
                 self.group_singles = bool(s.get('group_singles', False))
+                
+                # Load smart queue settings
+                smart_queue_data = s.get('smart_queue', {})
+                self.smart_queue_settings = SmartQueueSettings.from_dict(smart_queue_data)
+                
                 # Update logging level immediately
                 try:
                     logging.getLogger().setLevel(getattr(logging, self.log_level.upper(), logging.INFO))
@@ -8307,6 +8324,13 @@ class MediaPlayer(QMainWindow):
         
         # Apply dynamic font scaling after theme
         self._apply_dynamic_fonts()
+        
+        # Initialize smart queue settings and manager if not already loaded
+        if not hasattr(self, 'smart_queue_settings'):
+            self.smart_queue_settings = SmartQueueSettings()
+        
+        # Initialize smart queue manager with same config directory as other settings
+        self.smart_queue_manager = SmartQueueManager(Path(APP_DIR), self.smart_queue_settings)
 
         # Force update to ensure styling takes effect
         try:
@@ -8421,6 +8445,7 @@ class MediaPlayer(QMainWindow):
             'show_today_badge': self.show_today_badge,
             'group_singles': bool(getattr(self, 'group_singles', False)),
             'restore_session': bool(getattr(self, 'restore_session', True)),
+            'smart_queue': getattr(self, 'smart_queue_settings', None).to_dict() if hasattr(self, 'smart_queue_settings') and self.smart_queue_settings else {},
             'window': {
                 'x': int(self.geometry().x()),
                 'y': int(self.geometry().y()),
@@ -9039,19 +9064,50 @@ class MediaPlayer(QMainWindow):
                 if getattr(self, 'unwatched_only', False):
                     upcoming = [i for i in upcoming if not self._is_completed_url(self.playlist[i].get('url'))]
 
+                # Add smart queue suggestions when enabled and queue is short
+                smart_suggestions = {}  # Map index to (icon, reason) for smart suggestions
+                if (hasattr(self, 'smart_queue_settings') and self.smart_queue_settings.enabled and 
+                    len(upcoming) < 5):  # Only add suggestions when queue isn't full
+                    try:
+                        current_item = None
+                        if 0 <= self.current_index < len(self.playlist):
+                            current_item = self.playlist[self.current_index]
+                        
+                        suggestions = self.smart_queue_manager.get_suggestions(
+                            current_item, self.playlist, self.current_index, upcoming
+                        )
+                        
+                        # Add suggestions to the upcoming list and track them
+                        for suggestion_idx, reason_icon, reason_text in suggestions:
+                            if len(upcoming) >= 5:  # Respect the original 5-item limit
+                                break
+                            upcoming.append(suggestion_idx)
+                            smart_suggestions[suggestion_idx] = (reason_icon, reason_text)
+                            
+                    except Exception as e:
+                        print(f"Smart Queue: Error getting suggestions: {e}")
+
                 for i in upcoming:
                     if 0 <= i < len(self.playlist):
                         it = self.playlist[i]
                         title = it.get('title', 'Unknown')
                         icon = playlist_icon_for_type(it.get('type'))
+                        
+                        # Check if this is a smart suggestion
+                        smart_indicator = ""
+                        if i in smart_suggestions:
+                            reason_icon, reason_text = smart_suggestions[i]
+                            smart_indicator = f"{reason_icon} "
 
                         node = QTreeWidgetItem()
 
                         if isinstance(icon, QIcon):
-                            node.setText(0, title)
+                            display_title = f"{smart_indicator}{title}" if smart_indicator else title
+                            node.setText(0, display_title)
                             node.setIcon(0, icon)
                         else:
-                            node.setText(0, f"{icon} {title}")
+                            display_title = f"{smart_indicator}{icon} {title}" if smart_indicator else f"{icon} {title}"
+                            node.setText(0, display_title)
 
                         node.setData(0, Qt.UserRole, ('next', i))
                         node.setData(0, Qt.UserRole + 1, title)
@@ -11672,6 +11728,13 @@ class MediaPlayer(QMainWindow):
 
             # --- Call the new unified method to do the heavy lifting ---
             self._prepare_and_load_track(self.current_index, start_pos_ms=resume_ms, should_play=True)
+            
+            # Record smart queue interaction
+            if hasattr(self, 'smart_queue_manager') and self.smart_queue_manager.settings.learning_enabled:
+                try:
+                    self.smart_queue_manager.record_interaction(item, 'play')
+                except Exception as e:
+                    print(f"Smart Queue: Error recording play interaction: {e}")
 
             # --- Update UI specific to starting playback ---
             self.play_pause_btn.setIcon(self._pause_icon_normal)
@@ -11682,6 +11745,16 @@ class MediaPlayer(QMainWindow):
     def next_track(self):
         if not self.playlist:
             return
+        
+        # Record skip interaction before moving to next track
+        if (hasattr(self, 'smart_queue_manager') and self.smart_queue_manager.settings.learning_enabled and
+            0 <= self.current_index < len(self.playlist)):
+            try:
+                current_item = self.playlist[self.current_index]
+                self.smart_queue_manager.record_interaction(current_item, 'skip')
+            except Exception as e:
+                print(f"Smart Queue: Error recording skip interaction: {e}")
+                
         self._save_current_position()
 
         # Determine the correct sequence of tracks to follow
@@ -12061,7 +12134,65 @@ class MediaPlayer(QMainWindow):
         f_ui.addRow(chk_show_badge)
         tabs.addTab(w_ui, "UI")
 
-        # --- Tab 4: Diagnostics ---
+        # --- Tab 4: Smart Queue ---
+        w_smart = QWidget(); f_smart = QFormLayout(w_smart)
+        
+        # Main enable/disable toggle
+        chk_smart_enabled = QCheckBox("Enable Smart Queue suggestions"); 
+        chk_smart_enabled.setChecked(bool(getattr(self, 'smart_queue_settings', SmartQueueSettings()).enabled))
+        chk_smart_enabled.setToolTip("Enable intelligent queue suggestions based on content analysis and your preferences.")
+        f_smart.addRow(chk_smart_enabled)
+        
+        # Feature toggles (only active when smart queue is enabled)
+        feature_container = QWidget()
+        feature_layout = QFormLayout(feature_container)
+        
+        chk_time_aware = QCheckBox("Time-aware suggestions")
+        chk_time_aware.setChecked(bool(getattr(self, 'smart_queue_settings', SmartQueueSettings()).time_aware))
+        chk_time_aware.setToolTip("Suggest content appropriate for the time of day and session length.")
+        feature_layout.addRow(chk_time_aware)
+        
+        chk_similarity = QCheckBox("Content similarity matching")
+        chk_similarity.setChecked(bool(getattr(self, 'smart_queue_settings', SmartQueueSettings()).content_similarity))
+        chk_similarity.setToolTip("Suggest content similar to what you're currently watching (same source, type, duration).")
+        feature_layout.addRow(chk_similarity)
+        
+        chk_learning = QCheckBox("Learn from your preferences")
+        chk_learning.setChecked(bool(getattr(self, 'smart_queue_settings', SmartQueueSettings()).learning_enabled))
+        chk_learning.setToolTip("Learn from your viewing patterns to provide better suggestions over time.")
+        feature_layout.addRow(chk_learning)
+        
+        # Max suggestions spinner
+        spn_max_suggestions = QSpinBox()
+        spn_max_suggestions.setRange(1, 10)
+        spn_max_suggestions.setValue(int(getattr(self, 'smart_queue_settings', SmartQueueSettings()).max_suggestions))
+        spn_max_suggestions.setToolTip("Maximum number of smart suggestions to show in the Up Next panel.")
+        feature_layout.addRow("Max suggestions:", spn_max_suggestions)
+        
+        # Reset learning data button
+        reset_learning_btn = QPushButton("Reset Learning Data")
+        reset_learning_btn.setToolTip("Clear all learned preferences and start fresh.")
+        reset_learning_btn.clicked.connect(lambda: self._reset_smart_queue_learning(reset_learning_btn))
+        feature_layout.addRow("", reset_learning_btn)
+        
+        f_smart.addRow(feature_container)
+        
+        # Enable/disable feature controls based on main toggle
+        def toggle_smart_features():
+            enabled = chk_smart_enabled.isChecked()
+            chk_time_aware.setEnabled(enabled)
+            chk_similarity.setEnabled(enabled)
+            chk_learning.setEnabled(enabled)
+            spn_max_suggestions.setEnabled(enabled)
+            reset_learning_btn.setEnabled(enabled and chk_learning.isChecked())
+        
+        chk_smart_enabled.toggled.connect(toggle_smart_features)
+        chk_learning.toggled.connect(lambda: reset_learning_btn.setEnabled(chk_smart_enabled.isChecked() and chk_learning.isChecked()))
+        toggle_smart_features()  # Set initial state
+        
+        tabs.addTab(w_smart, "Smart Queue")
+
+        # --- Tab 5: Diagnostics ---
         w_diag = QWidget(); f_diag = QFormLayout(w_diag)
         lbl_log = QLabel("Logging & Diagnostics"); lbl_log.setStyleSheet("font-weight: bold; margin-top: 10px;"); f_diag.addRow(lbl_log)
         log_level_combo = QComboBox(); log_level_combo.addItems(['DEBUG', 'INFO', 'WARNING', 'ERROR']); log_level_combo.setCurrentText(self.log_level)
@@ -12138,6 +12269,21 @@ class MediaPlayer(QMainWindow):
                 self._refresh_playlist_widget(expansion_state=expansion_state)
             except Exception: pass
             
+            try: # Smart Queue
+                self.smart_queue_settings.enabled = bool(chk_smart_enabled.isChecked())
+                self.smart_queue_settings.time_aware = bool(chk_time_aware.isChecked())
+                self.smart_queue_settings.content_similarity = bool(chk_similarity.isChecked())
+                self.smart_queue_settings.learning_enabled = bool(chk_learning.isChecked())
+                self.smart_queue_settings.max_suggestions = int(spn_max_suggestions.value())
+                
+                # Update the smart queue manager with new settings
+                if hasattr(self, 'smart_queue_manager'):
+                    self.smart_queue_manager.update_settings(self.smart_queue_settings)
+                    
+                # Update the up next display if smart queue state changed
+                self._update_up_next()
+            except Exception: pass
+            
             try: # Diagnostics
                 self.log_level = log_level_combo.currentText()
                 logging.getLogger().setLevel(getattr(logging, self.log_level.upper(), logging.INFO))
@@ -12145,6 +12291,24 @@ class MediaPlayer(QMainWindow):
 
             self._save_settings()
             dlg.accept()
+        
+        def _reset_smart_queue_learning(button):
+            """Reset smart queue learning data"""
+            try:
+                reply = QMessageBox.question(
+                    dlg,
+                    "Reset Learning Data",
+                    "Are you sure you want to reset all Smart Queue learning data?\n\nThis will clear all learned preferences and patterns.",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No
+                )
+                if reply == QMessageBox.Yes:
+                    if hasattr(self, 'smart_queue_manager'):
+                        self.smart_queue_manager.reset_learning_data()
+                    button.setText("Learning Data Reset!")
+                    QTimer.singleShot(2000, lambda: button.setText("Reset Learning Data"))
+            except Exception as e:
+                print(f"Smart Queue: Error resetting learning data: {e}")
 
         btns.accepted.connect(_apply)
         btns.rejected.connect(dlg.reject)
@@ -12167,6 +12331,11 @@ class MediaPlayer(QMainWindow):
             self.silence_threshold = 0.03
             self.resume_threshold = 0.045
             self.log_level = 'INFO'
+            
+            # Reset Smart Queue settings to default
+            self.smart_queue_settings = SmartQueueSettings()
+            if hasattr(self, 'smart_queue_manager'):
+                self.smart_queue_manager.update_settings(self.smart_queue_settings)
             
             # Save the new default settings to the config file
             self._save_settings()
