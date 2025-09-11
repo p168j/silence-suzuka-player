@@ -92,6 +92,9 @@ from duration_fetch import DurationFetchSettings, DurationCache, BackgroundDurat
 # Virtual Playlist imports  
 from virtual_playlist import VirtualPlaylistSettings, VirtualPlaylistWidget, VirtualPlaylistItemManager
 
+# Error Handling imports
+from error_handling import ErrorHandlingSettings, PlaybackErrorHandler
+
 
 class MediaType(Enum):
     """Enumeration for media source types."""
@@ -4035,10 +4038,16 @@ class MediaPlayer(QMainWindow):
     statusMessageSignal = Signal(str, int)
     titleUpdateRequested = Signal(str, str)
     mpvErrorOccurred = Signal(str)
+    errorHandlingStateChanged = Signal(dict)  # For UI updates
 
     def __init__(self):
         super().__init__()
         self._is_destroyed = False
+        
+        # Initialize error handling first
+        self.error_handling_settings = ErrorHandlingSettings()
+        self.error_handler = PlaybackErrorHandler(self.error_handling_settings)
+        
         # Initialize mpv backend
         try:
             self.mpv = MPV()  # Remove debug logging parameters
@@ -4054,10 +4063,120 @@ class MediaPlayer(QMainWindow):
             self._apply_volume_normalization()
 
     def _show_mpv_error(self, error_message):
-        """Displays a non-blocking message box for mpv playback errors."""
+        """Handle MPV playback errors with intelligent error handling."""
         print(f"MPV Runtime Error: {error_message}")
-        QMessageBox.warning(self, "Playback Error", f"The player encountered an error:\n\n{error_message}")
-        self.next_track() # Optionally, try to play the next track automatically
+        
+        if not self.error_handling_settings.enabled:
+            # Fall back to old behavior if error handling is disabled
+            QMessageBox.warning(self, "Playback Error", f"The player encountered an error:\n\n{error_message}")
+            self.next_track()
+            return
+        
+        # Get current item info
+        current_index = getattr(self, 'current_index', -1)
+        current_url = ""
+        if 0 <= current_index < len(self.playlist):
+            current_url = self.playlist[current_index].get('url', '')
+        
+        # Record the error
+        error_event = self.error_handler.record_error(error_message, current_index, current_url)
+        
+        # Determine retry strategy
+        should_retry, delay = self.error_handler.should_retry(current_index, error_event.error_type)
+        
+        if should_retry and delay > 0:
+            # Schedule retry with backoff delay
+            self.status.showMessage(f"Playback failed, retrying in {delay:.1f}s... (Attempt {error_event.retry_count + 1})", int(delay * 1000))
+            QTimer.singleShot(int(delay * 1000), lambda: self._retry_current_item())
+        else:
+            # Handle based on error type and circuit breaker state
+            self._handle_playback_failure(error_event)
+        
+        # Emit state change for UI updates
+        self.errorHandlingStateChanged.emit(self.error_handler.get_error_summary())
+        self._update_error_status_button()
+    
+    def _update_error_status_button(self):
+        """Update the error status button based on current error handling state."""
+        if not hasattr(self, 'error_status_btn') or not hasattr(self, 'error_handler'):
+            return
+        
+        summary = self.error_handler.get_error_summary()
+        
+        # Show button only if there are errors or circuit breaker is active
+        has_errors = summary['total_errors'] > 0 or summary['circuit_breaker_active']
+        self.error_status_btn.setVisible(has_errors)
+        
+        if has_errors:
+            if summary['circuit_breaker_active']:
+                # Circuit breaker active - red warning
+                self.error_status_btn.setText("🚨")
+                remaining = summary.get('circuit_breaker_remaining', 0)
+                self.error_status_btn.setToolTip(f"Circuit breaker active - auto-advance paused for {remaining:.0f}s. Click to reset.")
+                self.error_status_btn.setStyleSheet("QPushButton { background-color: #ff6b6b; }")
+            elif summary['consecutive_failures'] > 0:
+                # Recent failures - orange warning
+                self.error_status_btn.setText("⚠️")
+                self.error_status_btn.setToolTip(f"{summary['consecutive_failures']} consecutive failures. Click to reset error tracking.")
+                self.error_status_btn.setStyleSheet("QPushButton { background-color: #ffa500; }")
+            else:
+                # Some errors but not consecutive - yellow info
+                self.error_status_btn.setText("ℹ️")
+                self.error_status_btn.setToolTip(f"{summary['total_errors']} recent errors. Click for details.")
+                self.error_status_btn.setStyleSheet("QPushButton { background-color: #ffeb3b; }")
+        else:
+            self.error_status_btn.setStyleSheet("")  # Reset to default style
+    
+    def _retry_current_item(self):
+        """Retry playing the current item."""
+        if 0 <= self.current_index < len(self.playlist):
+            print(f"Error Handling: Retrying playlist item {self.current_index}")
+            self.play_current()
+    
+    def _handle_playback_failure(self, error_event):
+        """Handle a playback failure that won't be retried."""
+        error_type_name = error_event.error_type.value.replace('_', ' ').title()
+        
+        if self.error_handler.is_circuit_breaker_active():
+            # Circuit breaker is active - pause auto-advance
+            remaining_time = self.error_handler.get_circuit_breaker_remaining_time()
+            self.status.showMessage(f"Too many failures - auto-advance paused for {remaining_time:.0f}s. Use manual controls.", 5000)
+            
+            if self.error_handling_settings.show_error_notifications:
+                QMessageBox.information(
+                    self, 
+                    "Playback Paused", 
+                    f"Auto-advance has been paused due to consecutive playback failures.\n\n"
+                    f"Last error: {error_type_name}\n"
+                    f"Resume in {remaining_time:.0f} seconds or use manual controls."
+                )
+        else:
+            # Single item failure - show notification and potentially skip
+            if self.error_handling_settings.show_error_notifications:
+                self.status.showMessage(f"{error_type_name} error - skipping to next track", 3000)
+            
+            if (error_event.error_type.value in ['media_not_found', 'authentication'] and 
+                self.error_handling_settings.auto_skip_permanent_errors):
+                # Skip permanent errors after a brief pause
+                QTimer.singleShot(2000, self.next_track)
+            else:
+                # For other errors, skip immediately
+                self.next_track()
+
+    def reset_error_handling(self):
+        """Reset error handling state (user action)."""
+        if hasattr(self, 'error_handler'):
+            self.error_handler.reset_circuit_breaker()
+            self.error_handler.current_item_retries.clear()
+            self.status.showMessage("Error handling reset - auto-advance resumed", 3000)
+            self.errorHandlingStateChanged.emit(self.error_handler.get_error_summary())
+            self._update_error_status_button()
+    
+    def get_error_handling_status(self) -> dict:
+        """Get current error handling status for UI display."""
+        if hasattr(self, 'error_handler'):
+            return self.error_handler.get_error_summary()
+        return {"total_errors": 0, "by_type": {}, "recent_errors": []}
 
     def _resume_incomplete_title_fetching(self):
         """
@@ -4611,6 +4730,7 @@ class MediaPlayer(QMainWindow):
         self.statusMessageSignal.connect(self._show_status_message)
         self.titleUpdateRequested.connect(self._update_title_safely) 
         self.mpvErrorOccurred.connect(self._show_mpv_error)
+        self.errorHandlingStateChanged.connect(lambda: self._update_error_status_button())
         self._build_ui()
 
         # Create 4 parallel workers for faster title resolution
@@ -6283,6 +6403,16 @@ class MediaPlayer(QMainWindow):
         self.repeat_btn.clicked.connect(self._toggle_repeat)
         self.repeat_btn.setFixedSize(40, 40)
         
+        # Error handling status button
+        self.error_status_btn = QPushButton()
+        self.error_status_btn.setIconSize(self.icon_size)
+        self.error_status_btn.setObjectName('errorStatusBtn')
+        self.error_status_btn.setToolTip("Error Handling Status - Click to reset")
+        self.error_status_btn.clicked.connect(self.reset_error_handling)
+        self.error_status_btn.setFixedSize(40, 40)
+        self.error_status_btn.setVisible(False)  # Hidden by default
+        self.error_status_btn.setText("⚡")  # Lightning bolt icon for errors
+        
         # --- Volume icon: prefer icons/volume.svg rendered with QSvgRenderer (hi-dpi aware) ---
         try:
             # Use the new custom class instead of a generic QLabel
@@ -6324,6 +6454,7 @@ class MediaPlayer(QMainWindow):
         center_controls.addWidget(self.play_pause_btn)
         center_controls.addWidget(self.next_btn)
         center_controls.addWidget(self.repeat_btn)
+        center_controls.addWidget(self.error_status_btn)  # Add error status button
         center_widget = QWidget()
         center_widget.setLayout(center_controls)
 
@@ -8285,6 +8416,14 @@ class MediaPlayer(QMainWindow):
                 virtual_playlist_data = s.get('virtual_playlist', {})
                 self.virtual_playlist_settings = VirtualPlaylistSettings.from_dict(virtual_playlist_data)
                 
+                # Load error handling settings
+                error_handling_data = s.get('error_handling', {})
+                if error_handling_data:
+                    self.error_handling_settings.from_dict(error_handling_data)
+                    # Update the error handler with new settings
+                    if hasattr(self, 'error_handler'):
+                        self.error_handler.settings = self.error_handling_settings
+                
                 # Update logging level immediately
                 try:
                     logging.getLogger().setLevel(getattr(logging, self.log_level.upper(), logging.INFO))
@@ -8504,6 +8643,7 @@ class MediaPlayer(QMainWindow):
             'smart_queue': getattr(self, 'smart_queue_settings', None).to_dict() if hasattr(self, 'smart_queue_settings') and self.smart_queue_settings else {},
             'duration_fetch': getattr(self, 'duration_fetch_settings', None).to_dict() if hasattr(self, 'duration_fetch_settings') and self.duration_fetch_settings else {},
             'virtual_playlist': getattr(self, 'virtual_playlist_settings', None).to_dict() if hasattr(self, 'virtual_playlist_settings') and self.virtual_playlist_settings else {},
+            'error_handling': getattr(self, 'error_handling_settings', None).to_dict() if hasattr(self, 'error_handling_settings') and self.error_handling_settings else {},
             'window': {
                 'x': int(self.geometry().x()),
                 'y': int(self.geometry().y()),
@@ -12006,6 +12146,10 @@ class MediaPlayer(QMainWindow):
             # --- Call the new unified method to do the heavy lifting ---
             self._prepare_and_load_track(self.current_index, start_pos_ms=resume_ms, should_play=True)
             
+            # Record successful playback start for error handling
+            if hasattr(self, 'error_handler'):
+                self.error_handler.record_success(self.current_index)
+            
             # Record smart queue interaction
             if hasattr(self, 'smart_queue_manager') and self.smart_queue_manager.settings.learning_enabled:
                 try:
@@ -12021,6 +12165,12 @@ class MediaPlayer(QMainWindow):
 
     def next_track(self):
         if not self.playlist:
+            return
+        
+        # Check if circuit breaker is active (prevents auto-advance)
+        if hasattr(self, 'error_handler') and self.error_handler.is_circuit_breaker_active():
+            remaining = self.error_handler.get_circuit_breaker_remaining_time()
+            self.status.showMessage(f"Auto-advance paused due to errors. Resume in {remaining:.0f}s or reset manually.", 3000)
             return
         
         # Record skip interaction before moving to next track
