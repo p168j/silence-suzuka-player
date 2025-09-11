@@ -219,9 +219,9 @@ class WorkerThread(QThread):
                     'format_sort': ['res:720', 'fps', 'codec:h264'],
                     
                     # Network optimization - aggressive timeouts for faster response
-                    'socket_timeout': 6,        # Down from 15s default
-                    'retries': 1,               # Fail fast, don't retry much
-                    'fragment_retries': 1,      # Less retry overhead
+                    'socket_timeout': 15,        # Down from 15s default
+                    'retries': 3,               # Fail fast, don't retry much
+                    'fragment_retries': 3,      # Less retry overhead
                     
                     # Connection improvements
                     'http_chunk_size': 1048576,           # 1MB chunks

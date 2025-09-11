@@ -2612,6 +2612,8 @@ def probe_local_duration_via_mpv(path: str, timeout_s: float = 6.0) -> int:
             audio_display='no',
             vo='null',
             ao='null',
+            gpu_context='auto', 
+            hwdec='no', 
             force_window='no',
             pause='yes',
             idle='yes',
@@ -4605,7 +4607,7 @@ class MediaPlayer(QMainWindow):
         # Create 4 parallel workers for faster title resolution
         # print(f"DEBUG: Creating {10} YtdlManager workers...")
         self.ytdl_workers = []
-        for i in range(10):  # Reduced from 10 to 4
+        for i in range(8):  
             worker = YtdlManager(self)
             worker.titleResolved.connect(self._on_title_resolved)
             worker.start()
@@ -7897,14 +7899,13 @@ class MediaPlayer(QMainWindow):
                 # Top bar buttons
                 (self.stats_btn, QSize(18, 18)),
                 (self.settings_btn, QSize(18, 18)),
-                (self.theme_btn, QSize(18, 18)),  # Remove the duplicate
+                (self.theme_btn, QSize(18, 18)),
                 
                 # Playlist controls
                 (self.save_btn, QSize(16, 16)),
                 (self.load_btn, QSize(16, 16)),
                 (self.duration_btn, QSize(16, 16)),
                 (self.unwatched_btn, QSize(16, 16)),
-                (self.duration_btn, QSize(16, 16)),
             ]
             
             # Icon button animations
@@ -7935,7 +7936,7 @@ class MediaPlayer(QMainWindow):
                 btn.released.connect(make_release_handler(btn, normal_size))
             
             # Text button animations (Add Media buttons)
-            text_buttons = [self.add_media_main, self.add_media_dropdown, self.duration_btn]
+            text_buttons = [self.add_media_btn, self.duration_btn]
             
             for btn in text_buttons:
                 def make_text_press_handler(button):

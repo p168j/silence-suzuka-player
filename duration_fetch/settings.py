@@ -17,12 +17,12 @@ class DurationFetchSettings:
     auto_fetch_enabled: bool = True
     
     # Threading settings
-    worker_thread_count: int = 3
-    max_concurrent_fetches: int = 5
+    worker_thread_count: int = 2
+    max_concurrent_fetches: int = 3
     
     # Timeout settings (seconds)
-    fetch_timeout: int = 15
-    retry_timeout: int = 30
+    fetch_timeout: int = 30
+    retry_timeout: int = 60
     
     # Cache settings
     cache_enabled: bool = True
@@ -35,8 +35,8 @@ class DurationFetchSettings:
     batch_size: int = 10
     
     # Rate limiting
-    delay_between_fetches_ms: int = 100
-    max_retries: int = 2
+    delay_between_fetches_ms: int = 300
+    max_retries: int = 3
     
     def to_dict(self):
         """Convert to dictionary for JSON serialization"""
