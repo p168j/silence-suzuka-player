@@ -1851,41 +1851,51 @@ class AddMediaDialog(QDialog):
         # --- UI Elements ---
         layout = QVBoxLayout(self)
         
-        # URL Input Section
-        url_group = QGroupBox("Add from URL or Path")
-        url_layout = QVBoxLayout(url_group)
-        
+        # Main input and action row
+        main_layout = QHBoxLayout()
+
         self.url_edit = QLineEdit()
-        self.url_edit.setPlaceholderText("Paste a YouTube/Bilibili URL, playlist, or a local file path...")
+        self.url_edit.setPlaceholderText("Paste a URL or browse for local files...")
         if initial_text:
             self.url_edit.setText(initial_text)
-        url_layout.addWidget(self.url_edit)
+        main_layout.addWidget(self.url_edit) # The text box takes up most of the space
 
-        self.add_from_link_btn = QPushButton("Add from Link/Path")
-        self.add_from_link_btn.clicked.connect(self._accept_from_link)
-        url_layout.addWidget(self.add_from_link_btn)
-        
-        layout.addWidget(url_group)
-
-        # Separator
-        separator_label = QLabel("OR")
-        separator_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(separator_label)
-        
-        # Local File Browsing Section
-        local_file_group = QGroupBox("Add from Local Files")
-        local_file_layout = QVBoxLayout(local_file_group)
-        
-        self.browse_btn = QPushButton("Browse for Files...")
+        self.browse_btn = QPushButton("Browse...")
         self.browse_btn.clicked.connect(self._browse_for_files)
-        local_file_layout.addWidget(self.browse_btn)
+        main_layout.addWidget(self.browse_btn)
 
-        layout.addWidget(local_file_group)
-        
+        layout.addLayout(main_layout)
+
         # --- Dialog Buttons ---
-        button_box = QDialogButtonBox(QDialogButtonBox.Cancel)
+        # We use a standard button box. The user can press Enter or click Add.
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.button(QDialogButtonBox.Ok).setText("Add")
+        button_box.accepted.connect(self._accept_from_link) # OK button uses the link
         button_box.rejected.connect(self.reject)
         layout.addWidget(button_box)
+        
+        # Make the text edit the default focus
+        self.url_edit.setFocus()
+
+    def _accept_from_link(self):
+        """Handle when the user wants to add from the text box."""
+        url = self.url_edit.text().strip()
+        if url:
+            self.media_to_add = [url]
+            self.accept()
+        else:
+            # If the text box is empty, treat it like a cancel.
+            self.reject()
+
+    def _browse_for_files(self):
+        """Open a file dialog to select local media."""
+        files, _ = QFileDialog.getOpenFileNames(
+            self, "Select Media Files", "",
+            "Media Files (*.mp4 *.avi *.mkv *.mov *.mp3 *.wav *.flac);;All Files (*)"
+        )
+        if files:
+            self.media_to_add = files
+            self.accept()
 
     def _accept_from_link(self):
         """Handle when the user wants to add from the text box."""
@@ -10589,13 +10599,11 @@ class MediaPlayer(QMainWindow):
             # Sanitize quotes/whitespace early
             url = (url or "").strip().strip('"').strip("'")
             
-            # ADD VALIDATION HERE TOO:
             is_valid, error_msg = URLValidator.is_supported_url(url)
             if not is_valid:
                 self.status.showMessage(f"Invalid URL: {error_msg}", 4000)
                 return
             
-            # Rest of your existing _add_url_to_playlist code stays exactly the same...
             url_lower = url.lower()
 
             if 'youtube.com' in url_lower or 'youtu.be' in url_lower:
@@ -10605,7 +10613,29 @@ class MediaPlayer(QMainWindow):
             else:
                 media_type = 'local'
                 
+            # --- NEW: DUPLICATE CHECK FOR ALL TYPES ---
+            if media_type == 'local':
+                # Local file duplicate check (uses normalized path)
+                import os
+                def _norm_local(u: str) -> str:
+                    p = _path_from_url_or_path(u or "")
+                    try: return os.path.normcase(os.path.abspath(p))
+                    except Exception: return p
+                
+                new_norm = _norm_local(url)
+                if any(_norm_local(it.get('url')) == new_norm for it in self.playlist if it.get('type') == 'local'):
+                    self.status.showMessage("This local file is already in the playlist", 3000)
+                    return
+            else:
+                # Network duplicate check (uses canonical URL)
+                new_canonical = self._canonical_url_key(url)
+                if any(self._canonical_url_key(it.get('url')) == new_canonical for it in self.playlist if it.get('type') != 'local'):
+                    self.status.showMessage("This link is already in the playlist", 3000)
+                    return
+            # --- END NEW DUPLICATE CHECK ---
+
             # Detect playlists for network sources
+            is_playlist = False
             if media_type == 'youtube':
                 is_playlist = ('list=' in url_lower or '/playlist' in url_lower)
             elif media_type == 'bilibili':
@@ -10613,51 +10643,9 @@ class MediaPlayer(QMainWindow):
                     'list=' in url_lower or '/playlist' in url_lower or '/series' in url_lower or
                     'space.bilibili.com' in url_lower
                 )
-            else:
-                is_playlist = False
-
-            # Local single: normalize, dedupe, friendly title, enqueue duration
-            if media_type == 'local' and not is_playlist:
-                import os
-                def _norm_local(u: str) -> str:
-                    p = _path_from_url_or_path(u or "")
-                    try:
-                        return os.path.normcase(os.path.abspath(p))
-                    except Exception:
-                        return p
-
-                clean_path = _path_from_url_or_path(url)
-                norm_new = _norm_local(clean_path)
-
-                for it in self.playlist:
-                    if isinstance(it, dict) and it.get('type') == 'local':
-                        if _norm_local(it.get('url')) == norm_new:
-                            self.status.showMessage("This local file is already in the playlist", 3000)
-                            return
-
-                title = Path(clean_path).name or clean_path
-                item = {'title': title, 'url': clean_path, 'type': 'local'}
-
-                new_index = len(self.playlist)
-                self.playlist.append(item)
-
-                if hasattr(self, '_local_dur'):
-                    self._local_dur.enqueue(new_index, item)
-
-                # Record undo as 'add_items' so Ctrl+Z removes the just-added item(s)
-                self._add_undo_operation('add_items', {
-                    'items': [{'index': new_index, 'item': item}],
-                    'was_playing': self._is_playing(),
-                    'old_current_index': self.current_index
-                })
-
-                self._add_single_item_to_tree(new_index, item)
-                self._schedule_save_current_playlist()
-                return
             
-            # Network playlist
+            # If it's a playlist, fetch it
             if is_playlist:
-                # VALIDATE PLAYLIST FIRST:
                 is_accessible, error_msg = URLValidator.validate_playlist_access(url)
                 if not is_accessible:
                     QMessageBox.warning(self, "Playlist Access Error", 
@@ -10666,9 +10654,8 @@ class MediaPlayer(QMainWindow):
                 
                 self._show_loading("Checking playlist...")
                 loader = PlaylistLoaderThread(url, media_type)
+                # ... (rest of playlist loading logic is unchanged)
                 self._playlist_loader = loader
-                
-                # Connect all signals including progress
                 loader.itemsReady.connect(self._on_playlist_items_ready)
                 loader.progressUpdate.connect(self._update_loading_progress)
                 
@@ -10686,28 +10673,29 @@ class MediaPlayer(QMainWindow):
                     setattr(self, '_playlist_loader', None)
                 ))
                 loader.start()
+                return # Stop here, the loader will handle adding items
 
+            # --- Simplified single item logic ---
+            # If we've reached here, it's a single item (local or network)
+            title = Path(url).name if media_type == 'local' else f"[Loading...] {url_lower.split('/')[-1]}"
+            item = {'title': title, 'url': url, 'type': media_type}
+            new_index = len(self.playlist)
+            self.playlist.append(item)
+
+            self._add_undo_operation('add_items', {
+                'items': [{'index': new_index, 'item': item}],
+                'was_playing': self._is_playing(),
+                'old_current_index': self.current_index
+            })
+
+            self._add_single_item_to_tree(new_index, item)
+            self._schedule_save_current_playlist()
+
+            if media_type == 'local':
+                if hasattr(self, '_local_dur'):
+                    self._local_dur.enqueue(new_index, item)
             else:
-                # Single network item
-                display = Path(url).name or url
-                item = {'title': f"[Loading...] {display}", 'url': url, 'type': media_type}
-
-                new_index = len(self.playlist)
-                self.playlist.append(item)
-
-                # Record undo as 'add_items'
-                self._add_undo_operation('add_items', {
-                    'items': [{'index': new_index, 'item': item}],
-                    'was_playing': self._is_playing(),
-                    'old_current_index': self.current_index
-                })
-
-                self._add_single_item_to_tree(new_index, item)
-                self._schedule_save_current_playlist()
-
-                worker = self.ytdl_workers[self._worker_index]
-                worker.resolve(url, media_type)
-                self._worker_index = (self._worker_index + 1) % len(self.ytdl_workers)
+                self._resolve_title_parallel(url, media_type)
 
         except Exception as e:
             self.status.showMessage(f"Failed to add media: {e}", 4000)
