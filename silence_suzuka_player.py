@@ -2581,16 +2581,16 @@ def _render_svg_tinted(svg_path, size: QSize, color: str) -> QPixmap:
         return QPixmap() # Return an empty pixmap on error
 
 def playlist_icon_for_type(item_type):
-    """Gets a pre-loaded icon for a given media type."""
+    # Standardized to 28x28 for better visibility
     icon_size = QSize(28, 28)
     if item_type == 'youtube':
         return load_svg_icon(str(APP_DIR / 'icons/youtube-fa7.svg'), icon_size)
     elif item_type == 'bilibili':
         return load_svg_icon(str(APP_DIR / 'icons/bilibili-fa7.svg'), icon_size)
     elif item_type == 'local':
-        return QIcon(str(APP_DIR / 'icons/local-file.svg'))
+        return "🎬"
     else:
-        return QIcon(str(APP_DIR / 'icons/music.svg'))
+        return "🎵"
         
 def load_svg_icon(path, size=QSize(18, 18)):
     renderer = QSvgRenderer(path)
@@ -4759,7 +4759,6 @@ class MediaPlayer(QMainWindow):
         self.silence_timer.timeout.connect(self._update_silence_tooltip)
         self.silence_timer.start(1000)
         self._init_fonts()
-        self._init_ui_icons()
 
         self.anim_press = QPropertyAnimation()
         self.anim_release = QPropertyAnimation()
@@ -4799,7 +4798,9 @@ class MediaPlayer(QMainWindow):
             mute_path = APP_DIR / 'icons/volume-mute.svg'
             self.volume_mute_icon = QIcon(str(mute_path)) if mute_path.exists() else "🔇"
             
-
+            # --- FIX: Use emojis for both audio states ---
+            self.icon_audio_active = "🔊"  # Sound is active
+            self.icon_audio_silent = "🔇"  # System is silent
         except Exception as e:
             logger.error(f"Failed during icon creation: {e}")
 
@@ -5155,27 +5156,38 @@ class MediaPlayer(QMainWindow):
             pass # print(f"Flash button color error: {e}")
 
     def _show_library_header_context_menu(self, pos):
-            """Show context menu for the library header with icons."""
-            try:
-                menu = QMenu(self)
-                self._apply_menu_theme(menu)
-                
-                # Reset all playback positions
-                reset_action = menu.addAction(self.ui_icons.get('reset'), "Reset All Playback Positions")
-                reset_action.triggered.connect(self._reset_all_playback_positions)
-                
-                menu.addSeparator()
-                clear_completed_action = menu.addAction(self.ui_icons.get('checkmark'), "Mark All as Unwatched")
-                clear_completed_action.triggered.connect(self._mark_all_unwatched)
+        """Show context menu for the library header"""
+        # print(f"[HEADER DEBUG] *** LIBRARY HEADER CONTEXT MENU TRIGGERED at pos: {pos} ***")
+        try:
+            menu = QMenu(self)
+            self._apply_menu_theme(menu)
+            
+            # print(f"[HEADER DEBUG] Menu created successfully")
 
-                clear_action = menu.addAction(self.ui_icons.get('clear'), "Clear Entire Playlist")
-                clear_action.triggered.connect(self._clear_playlist)
-                
-                # Show the menu
-                menu.exec(self.library_header_label.mapToGlobal(pos))
-                
-            except Exception as e:
-                logger.error(f"Library header context menu error: {e}")
+
+            
+            # Reset all playback positions
+            reset_action = menu.addAction("🔄 Reset All Playback Positions")
+            reset_action.triggered.connect(self._reset_all_playback_positions)
+            
+            # Optional: Add other useful actions
+            menu.addSeparator()
+            clear_completed_action = menu.addAction("✅ Mark All as Unwatched")
+            clear_completed_action.triggered.connect(self._mark_all_unwatched)
+
+            clear_action = menu.addAction("🧹 Clear Entire Playlist")
+            clear_action.triggered.connect(self._clear_playlist)
+            menu.addSeparator()
+            # print(f"[HEADER DEBUG] About to exec menu with {len(menu.actions())} actions")
+            
+            # Show the menu
+            menu.exec(self.library_header_label.mapToGlobal(pos))
+            
+            # print(f"[HEADER DEBUG] Menu exec completed")
+            
+        except Exception as e:
+            # print(f"[HEADER DEBUG] Exception: {e}")
+            logger.error(f"Library header context menu error: {e}") 
 
     def _toggle_all_groups(self):
         """Toggle between expanding and collapsing all groups"""
@@ -5956,34 +5968,6 @@ class MediaPlayer(QMainWindow):
         # Ensure other widgets are also updated dynamically
         print(f"Theme updated to: {theme}")     
 
-
-    def _init_ui_icons(self):
-        """Load and store all icons used across the UI and menus."""
-        self.ui_icons = {}
-        icon_defs = {
-            # UI Icons
-            'unwatched_on': 'icons/icons_eye_Version10.svg',
-            'unwatched_off': 'icons/icons_eye-off_Version10.svg',
-            'audio_active': 'icons/volume.svg',
-            'audio_silent': 'icons/volume-mute.svg',
-            'local_file': 'icons/local-file.svg',
-            'music': 'icons/music.svg',
-            # Context Menu Icons
-            'play': 'icons/play.svg',
-            'remove': 'icons/trash.svg',
-            'copy': 'icons/save.svg',
-            'reset': 'icons/repeat.svg',
-            'checkmark': 'icons/shuffle-on.svg',
-            'queue': 'icons/stats.svg',
-            'clear': 'icons/minimize.svg' # Using minimize as a proxy for clear/sweep
-        }
-        for name, path in icon_defs.items():
-            try:
-                self.ui_icons[name] = QIcon(str(APP_DIR / path))
-            except Exception as e:
-                print(f"Warning: Could not load icon '{name}': {e}")
-                self.ui_icons[name] = QIcon() # Empty icon as fallback
-
     # UI
     def _build_ui(self):
         self._playlist_manager = EnhancedPlaylistManager(self, APP_DIR)
@@ -6098,16 +6082,31 @@ class MediaPlayer(QMainWindow):
         self.unwatched_btn = QPushButton()
         self.unwatched_btn.setObjectName('miniBtn')
         self.unwatched_btn.setCheckable(True)
-        self.unwatched_btn.setFixedSize(36, 28)
-        self.unwatched_btn.setIconSize(QSize(18, 18))
-        self.unwatched_btn.toggled.connect(self._toggle_unwatched_only)
-        self.unwatched_btn.toggled.connect(self._update_unwatched_btn_visual)
-        self._update_unwatched_btn_visual(self.unwatched_btn.isChecked())
-        self.unwatched_btn.setCheckable(True)
         try:
             self.unwatched_btn.setFixedSize(36, 28)
         except Exception:
             pass
+
+        # Resolve SVG icons if present; otherwise fallback to emoji
+        try:
+            eye_on_path = APP_DIR / 'icons' / 'eye.svg'
+            eye_off_path = APP_DIR / 'icons' / 'eye-off.svg'
+            if eye_on_path.exists() and eye_off_path.exists():
+                self._unwatched_icon_on = QIcon(str(eye_on_path))
+                self._unwatched_icon_off = QIcon(str(eye_off_path))
+                # icon-only, set icon size for alignment
+                self.unwatched_btn.setIconSize(QSize(18, 18))
+                self.unwatched_btn.setText("")  # icon-only
+            else:
+                self._unwatched_icon_on = None
+                self._unwatched_icon_off = None
+                # Emoji fallback: OFF shows 👁 (meaning show) and ON shows 🙈 (hidden)
+                # set a compact emoji so button width matches others
+                self.unwatched_btn.setText("👁" if not getattr(self, 'unwatched_only', False) else "🙈")
+        except Exception:
+            self._unwatched_icon_on = None
+            self._unwatched_icon_off = None
+            self.unwatched_btn.setText("👁" if not getattr(self, 'unwatched_only', False) else "🙈")
 
                 # use themed tooltip instead of native QToolTip (keep accessible description)
         try:
@@ -6859,16 +6858,68 @@ class MediaPlayer(QMainWindow):
             self.status.showMessage(f"Navigate to bottom failed: {e}", 3000)        
             
     def _update_unwatched_btn_visual(self, checked: bool):
-            """Swap icon and styling for the unwatched button."""
-            try:
+        """Swap icon/text and styling so ON vs OFF is obvious — icon + color only, no filled pill or border.
+        Also update the themed tooltip text if installed."""
+        try:
+            # If SVG icons available, swap them
+            if getattr(self, '_unwatched_icon_on', None) and getattr(self, '_unwatched_icon_off', None):
                 if checked:
-                    self.unwatched_btn.setIcon(self.ui_icons.get('unwatched_on'))
-                    self.unwatched_btn.setStyleSheet("background-color: transparent; color: #1DB954; border: none; padding: 0; margin: 0;")
+                    # ON = eye (show unwatched only) — green tint
+                    self.unwatched_btn.setIcon(self._unwatched_icon_on)
                 else:
-                    self.unwatched_btn.setIcon(self.ui_icons.get('unwatched_off'))
-                    self.unwatched_btn.setStyleSheet("background-color: transparent; color: #B3B3B3; border: none; padding: 0; margin: 0;")
+                    # OFF = eye-off — muted tint
+                    self.unwatched_btn.setIcon(self._unwatched_icon_off)
+                self.unwatched_btn.setText("")  # icon-only
+                # Ensure icon is sized for alignment
+                try:
+                    self.unwatched_btn.setIconSize(QSize(18, 18))
+                except Exception:
+                    pass
+            else:
+                # Emoji fallback: ON = 🙈 (filter active), OFF = 👁 (show all)
+                if checked:
+                    self.unwatched_btn.setText("🙈")
+                else:
+                    self.unwatched_btn.setText("👁")
+
+            # Simple color-only styling (transparent background, no border)
+            if checked:
+                # ON -> green tint on icon/text, transparent background
+                self.unwatched_btn.setStyleSheet(
+                    "background-color: transparent; color: #1DB954; border: none; padding: 0; margin: 0;"
+                )
+                native_tip = "Unwatched only: ON (click to turn off)"
+            else:
+                # OFF -> muted grey icon/text, transparent background
+                self.unwatched_btn.setStyleSheet(
+                    "background-color: transparent; color: #B3B3B3; border: none; padding: 0; margin: 0;"
+                )
+                native_tip = "Show unwatched items only (OFF)"
+
+            # keep accessible description for assistive tech, hide native tooltip visually
+            try:
+                self.unwatched_btn.setAccessibleDescription(native_tip)
             except Exception:
-                pass     
+                pass
+            try:
+                self.unwatched_btn.setToolTip("")
+            except Exception:
+                pass
+
+            # If we installed a themed tooltip widget, update its text too
+            try:
+                if hasattr(self, '_themed_tooltips'):
+                    pair = self._themed_tooltips.get(self.unwatched_btn)
+                    if pair and isinstance(pair, tuple):
+                        tip_label, _ = pair
+                        if tip_label:
+                            tip_label.setText(native_tip)
+            except Exception:
+                pass
+
+        except Exception:
+            pass            
+
 
     
     def _install_themed_tooltip(self, widget, text: str, duration: int = 3500):
@@ -7963,34 +8014,36 @@ class MediaPlayer(QMainWindow):
             self.status.showMessage("Error adding new subscribed videos.", 4000)
 
     def _update_silence_indicator(self, is_silent: bool = None):
-            """Update the silence indicator using SVG icons."""
-            if is_silent is not None:
-                self._last_system_is_silent = bool(is_silent)
-
-            self.silence_indicator.setVisible(True)
-
-            has_track = (self.current_index >= 0 and self.current_index < len(self.playlist))
-
-            icon_to_use = None
-            tooltip = ""
-
-            if has_track:
-                icon_to_use = self.ui_icons.get('audio_active')
-                tooltip = "Media player is active"
-                self._reset_silence_counter()
+        """Update the silence indicator - simplified version."""
+        if is_silent is not None:
+            self._last_system_is_silent = bool(is_silent)
+        
+        # Always keep visible to prevent layout shifts
+        self.silence_indicator.setVisible(True)
+        
+        # Simple check: if we have a current track, assume we're active
+        has_track = (self.current_index >= 0 and self.current_index < len(self.playlist))
+        
+        if has_track:
+            # Any time we have a loaded track, show playing icon
+            icon_text = "🎵"
+            tooltip = "Media player is active"
+            # Reset timer when we have an active track
+            self._reset_silence_counter()
+        else:
+            # No track loaded: show system audio state
+            if self._last_system_is_silent:
+                icon_text = "🔇"
+                remaining = max(0, self.audio_monitor.silence_duration_s - self.audio_monitor._silence_counter)
+                tooltip = f"System is silent. Auto-play in {human_duration(remaining)}."
             else:
-                if self._last_system_is_silent:
-                    icon_to_use = self.ui_icons.get('audio_silent')
-                    remaining = max(0, self.audio_monitor.silence_duration_s - self.audio_monitor._silence_counter)
-                    tooltip = f"System is silent. Auto-play in {human_duration(remaining)}."
-                else:
-                    icon_to_use = self.ui_icons.get('audio_active')
-                    tooltip = "System audio is active."
-
-            self.silence_indicator.setText("") # Clear any old emoji text
-            if icon_to_use:
-                self.silence_indicator.setPixmap(icon_to_use.pixmap(QSize(18,18)))
-            self.silence_indicator.setToolTip(tooltip)
+                icon_text = "🔊"
+                tooltip = "System audio is active."
+        
+        # Always update
+        self.silence_indicator.setPixmap(QPixmap())
+        self.silence_indicator.setText(icon_text)
+        self.silence_indicator.setToolTip(tooltip)
         
     def _force_update_silence_indicator_after_delay(self):
         """Force update the silence indicator after mpv has time to initialize."""
@@ -9117,55 +9170,25 @@ class MediaPlayer(QMainWindow):
         return f"{icon} {item.get('title','Unknown')}"
 
     def _apply_menu_theme(self, menu: QMenu):
+        try:
             try:
-                try:
-                    menu.setFont(QFont(self._ui_font))
-                except Exception:
-                    pass
-                if getattr(self, 'theme', 'dark') == 'vinyl':
-                    menu.setStyleSheet(
-                        """
-                        QMenu { 
-                            background-color: #faf3e0; 
-                            color: #4a2c2a; 
-                            border: 1px solid #c2a882; 
-                        }
-                        QMenu::item { 
-                            padding: 6px 12px 6px 32px; /* Increased left padding */
-                        }
-                        QMenu::icon { 
-                            position: absolute;
-                            left: 8px; /* Position icon inside the padding */
-                        }
-                        QMenu::item:selected { 
-                            background-color: #e76f51; 
-                            color: #f3ead3; 
-                        }
-                        """
-                    )
-                else:
-                    menu.setStyleSheet(
-                        """
-                        QMenu { 
-                            background-color: #282828; 
-                            color: #B3B3B3; 
-                            border: 1px solid #535353; 
-                        }
-                        QMenu::item { 
-                            padding: 6px 12px 6px 32px; /* Increased left padding */
-                        }
-                        QMenu::icon { 
-                            position: absolute;
-                            left: 8px; /* Position icon inside the padding */
-                        }
-                        QMenu::item:selected { 
-                            background-color: #404040; 
-                            color: #1DB954; 
-                        }
-                        """
-                    )
+                menu.setFont(QFont(self._ui_font))
             except Exception:
                 pass
+            if getattr(self, 'theme', 'dark') == 'vinyl':
+                menu.setStyleSheet(
+                    "QMenu { background-color: #faf3e0; color: #4a2c2a; border: 1px solid #c2a882; } "
+                    "QMenu::item { padding: 6px 12px; } "
+                    "QMenu::item:selected { background-color: #e76f51; color: #f3ead3; }"
+                )
+            else:
+                menu.setStyleSheet(
+                    "QMenu { background-color: #282828; color: #B3B3B3; border: 1px solid #535353; } "
+                    "QMenu::item { padding: 6px 12px; } "
+                    "QMenu::item:selected { background-color: #404040; color: #1DB954; }"
+                )
+        except Exception:
+            pass
 
     def _apply_dialog_theme(self, dialog: QDialog):
         """Applies a consistent dark or vinyl theme to any dialog."""
@@ -9490,21 +9513,20 @@ class MediaPlayer(QMainWindow):
             logger.error(f"Error handling Up Next click: {e}")
 
     def _show_up_next_menu(self, pos):
-            try:
-                item = self.up_next.itemAt(pos)
-                if not item:
-                    return
-                data = item.data(0, Qt.UserRole)
-                if not (isinstance(data, tuple) and data[0] == 'next'):
-                    return
-                idx = data[1]
-                menu = QMenu(self)
-                self._apply_menu_theme(menu)
-                menu.addAction(self.ui_icons.get('play'), 'Play').triggered.connect(lambda i=idx: self._play_index(i))
-                menu.addAction(self.ui_icons.get('remove'), 'Remove').triggered.connect(lambda i=idx: self._remove_index(i))
-                menu.exec(self.up_next.viewport().mapToGlobal(pos))
-            except Exception:
-                pass
+        try:
+            item = self.up_next.itemAt(pos)
+            if not item:
+                return
+            data = item.data(0, Qt.UserRole)
+            if not (isinstance(data, tuple) and data[0] == 'next'):
+                return
+            idx = data[1]
+            menu = QMenu(); self._apply_menu_theme(menu)
+            menu.addAction('▶ Play').triggered.connect(lambda i=idx: self._play_index(i))
+            menu.addAction('🗑️ Remove').triggered.connect(lambda i=idx: self._remove_index(i))
+            menu.exec(self.up_next.viewport().mapToGlobal(pos))
+        except Exception:
+            pass
 
     def _selected_current_indices(self):
         try:
@@ -11243,7 +11265,7 @@ class MediaPlayer(QMainWindow):
         if not selected_items:
             return
 
-        menu = QMenu(self)
+        menu = QMenu()  # <-- Single menu object for all cases
         if hasattr(self, "_apply_menu_theme"):
             self._apply_menu_theme(menu)
 
@@ -11282,18 +11304,18 @@ class MediaPlayer(QMainWindow):
                     summary.append(f"{individual_count} individual item{'s' if individual_count != 1 else ''}")
                 summary_text = " + ".join(summary)
 
-                menu.addAction(self.ui_icons.get('remove'), f"Remove {summary_text} ({len(total_indices)} total)").triggered.connect(
-                    self._remove_selected_items
+                menu.addAction(f"🗑️ Remove {summary_text} ({len(total_indices)} total items)").triggered.connect(
+                    lambda: self._remove_selected_items()
                 )
                 menu.addSeparator()
-                menu.addAction(self.ui_icons.get('reset'), f"Reset Playback Positions").triggered.connect(
+                menu.addAction(f"🔄 Reset Playback Positions ({len(total_indices)} items)").triggered.connect(
                     lambda: self._reset_selected_playback_positions(list(total_indices))
                 )
-                menu.addAction(self.ui_icons.get('checkmark'), f"Mark as Unwatched").triggered.connect(
+                menu.addAction(f"✅ Mark as Unwatched ({len(total_indices)} items)").triggered.connect(
                     lambda: self._mark_selected_unwatched(list(total_indices))
                 )
             else:
-                menu.addAction("No valid items found in selection")
+                menu.addAction("⚠ No valid items found in selection")
 
         # --- CASE 2: Exactly one item is selected ---
         elif len(selected_items) == 1:
@@ -11307,13 +11329,17 @@ class MediaPlayer(QMainWindow):
                 idx, it = rest[0], rest[1]
                 url = it.get('url')
 
-                menu.addAction(self.ui_icons.get('play'), "Play").triggered.connect(lambda: self._play_index(idx))
-                menu.addAction(self.ui_icons.get('queue'), "Play Next").triggered.connect(lambda i=idx: self._queue_item_next(i))
-                menu.addAction(self.ui_icons.get('copy'), "Copy URL").triggered.connect(lambda u=url: self._copy_url(u))
-                menu.addAction(self.ui_icons.get('remove'), "Remove").triggered.connect(lambda: self._remove_index(idx))
+                menu.addAction("▶ Play").triggered.connect(lambda: self._play_index(idx))
+                menu.addAction("⭐ Play Next").triggered.connect(lambda i=idx: self._queue_item_next(i))
+                copy_action = menu.addAction("🔗 Copy URL")
+                copy_action.triggered.connect(lambda checked=False, u=url: (
+                    # DEBUG removed,
+                    self._copy_url(u)
+                )[1])
+                menu.addAction("🗑️ Remove").triggered.connect(lambda: self._remove_index(idx))
                 menu.addSeparator()
-                menu.addAction(self.ui_icons.get('reset'), "Reset Playback Position").triggered.connect(lambda u=url: self._clear_resume_for_url(u))
-                menu.addAction(self.ui_icons.get('checkmark'), "Mark as Unwatched").triggered.connect(lambda u=url: self._mark_item_unwatched(u))
+                menu.addAction("⏮️ Reset Playback Position").triggered.connect(lambda: self._clear_resume_for_url(url))
+                menu.addAction("✅ Mark as Unwatched").triggered.connect(lambda u=url: self._mark_item_unwatched(u))
 
             elif kind == 'group':
                 raw_key = rest[0] if rest else None
@@ -11322,28 +11348,29 @@ class MediaPlayer(QMainWindow):
                 if actual_key:
                     indices = self._iter_indices_for_group(actual_key)
                     if indices:
-                        menu.addAction(self.ui_icons.get('play'), "Play Group").triggered.connect(
+                        menu.addAction("▶ Play Group").triggered.connect(
                             lambda checked=False, k=actual_key: self._set_scope_group(k, autoplay=True)
                         )
                         menu.addSeparator()
-                        menu.addAction(self.ui_icons.get('reset'), "Reset Playback Positions").triggered.connect(
+                        menu.addAction("🔄 Reset Playback Positions").triggered.connect(
                             lambda checked=False, k=actual_key: self._reset_group_playback_positions(k)
                         )
-                        menu.addAction(self.ui_icons.get('checkmark'), "Mark Group as Unwatched").triggered.connect(
+                        menu.addAction("✅ Mark Group as Unwatched").triggered.connect(
                             lambda checked=False, k=actual_key: self._mark_group_unwatched_enhanced(k)
                         )
                         menu.addSeparator()
-                        menu.addAction(self.ui_icons.get('remove'), f"Remove All ({len(indices)} items)").triggered.connect(
+                        menu.addAction(f"🗑️ Remove All ({len(indices)} items)").triggered.connect(
                             lambda checked=False, key=actual_key: self._remove_all_in_group(key)
                         )
-                        menu.addAction(self.ui_icons.get('clear'), "Remove Watched from Group").triggered.connect(
+                        menu.addAction("🧹 Remove Watched from Group").triggered.connect(
                             lambda checked=False, k=actual_key: self._clear_watched_in_group(k)
                         )
                     else:
-                        menu.addAction(f"No items found for group")
+                        menu.addAction(f"❌ No items found for group")
                 else:
-                    menu.addAction("Unable to identify group")
+                    menu.addAction("❌ Unable to identify group")
         
+        # Show the menu (single call for all cases)
         menu.exec(self.playlist_tree.viewport().mapToGlobal(pos))
 
 # Add this debug version to your _remove_all_in_group method:
