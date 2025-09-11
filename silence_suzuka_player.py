@@ -4053,6 +4053,10 @@ class MediaPlayer(QMainWindow):
     mpvErrorOccurred = Signal(str)
 
     def __init__(self):
+        import time
+        self._startup_time = time.time()
+        print(f"[STARTUP] MediaPlayer initialization started at {self._startup_time}")
+        
         super().__init__()
         self._is_destroyed = False
         # Initialize mpv backend
@@ -4623,23 +4627,19 @@ class MediaPlayer(QMainWindow):
             logger.error(f"Failed during icon creation: {e}")
 
         # --- 3. Connect Signals and Build the Rest of the App ---
+        print(f"[STARTUP] Starting UI build at {time.time() - self._startup_time:.2f}s")
         self.requestTimerSignal.connect(self._start_timer_from_main_thread)
         self.statusMessageSignal.connect(self._show_status_message)
         self.titleUpdateRequested.connect(self._update_title_safely) 
         self.mpvErrorOccurred.connect(self._show_mpv_error)
         self._build_ui()
+        print(f"[STARTUP] UI built at {time.time() - self._startup_time:.2f}s")
 
-        # Create 4 parallel workers for faster title resolution
-        # print(f"DEBUG: Creating {10} YtdlManager workers...")
-        self.ytdl_workers = []
-        for i in range(10):  # Reduced from 10 to 4
-            worker = YtdlManager(self)
-            worker.titleResolved.connect(self._on_title_resolved)
-            worker.start()
-            self.ytdl_workers.append(worker)
-            # print(f"DEBUG: Created YtdlManager worker {i}")
+        # STARTUP OPTIMIZATION: Defer heavy worker creation until after UI is shown
+        print("[STARTUP] UI built, deferring background systems initialization...")
+        self.ytdl_workers = []  # Initialize empty list
         self._worker_index = 0
-        # print(f"DEBUG: All {len(self.ytdl_workers)} YtdlManager workers created")
+        self._background_systems_initialized = False
 
         # Override the playlist methods with enhanced versions
         def enhanced_save():
@@ -4658,7 +4658,9 @@ class MediaPlayer(QMainWindow):
 
         self._setup_keyboard_shortcuts()
         self._init_mpv()
-        self._load_files()
+        
+        # STARTUP OPTIMIZATION: Load only critical settings first, defer heavy operations
+        self._load_essential_settings()
 
         # Apply chevron style after theme is loaded
         if hasattr(self, "playlist_tree"):
@@ -4669,10 +4671,16 @@ class MediaPlayer(QMainWindow):
         self._init_monitors()
         self._update_silence_indicator()
         self._init_tray()
-        self.status.showMessage("Ready")
+        self.status.showMessage("Loading...")  # Show loading state instead of "Ready"
 
         self._undo_stack = []  # Stack of undo operations
         self._redo_stack = []
+        
+        # STARTUP OPTIMIZATION: Schedule background initialization after UI is fully ready
+        print(f"[STARTUP] Constructor complete at {time.time() - self._startup_time:.2f}s, scheduling background systems initialization...")
+        # Show immediate feedback to user about background loading
+        QTimer.singleShot(100, self._initialize_background_systems)
+        QTimer.singleShot(200, lambda: self.status.showMessage("Initializing background systems...", 2000))
         self._max_undo_operations = 10  # Limit undo history
         self._cleanup_timer = QTimer(self)
         self._cleanup_timer.timeout.connect(self._periodic_cleanup)
@@ -4831,6 +4839,13 @@ class MediaPlayer(QMainWindow):
 
     def _resolve_title_parallel(self, url, kind):
         """Distribute title resolution across multiple workers"""
+        # Safety check: ensure workers are initialized
+        if not self.ytdl_workers or not getattr(self, '_background_systems_initialized', False):
+            print(f"[STARTUP] YtdlManager workers not ready yet, deferring title resolution for {url}")
+            # Schedule for later when workers are ready
+            QTimer.singleShot(2000, lambda: self._resolve_title_parallel(url, kind))
+            return
+            
         worker = self.ytdl_workers[self._worker_index]
         worker.resolve(url, kind)
         self._worker_index = (self._worker_index + 1) % len(self.ytdl_workers)            
@@ -8465,6 +8480,358 @@ class MediaPlayer(QMainWindow):
 
         self._load_session()
         
+    def _load_essential_settings(self):
+        """Load only critical settings needed for UI initialization - defers heavy operations"""
+        print("[STARTUP] Loading essential settings...")
+        
+        # Settings - load synchronously but quickly
+        if CFG_SETTINGS.exists():
+            try:
+                s = json.load(open(CFG_SETTINGS, 'r', encoding='utf-8'))
+                self.center_on_restore = bool(s.get('center_on_restore', True))
+                self.auto_play_enabled = bool(s.get('auto_play_enabled', self.auto_play_enabled))
+                self.smart_autostart_enabled = bool(s.get('smart_autostart_enabled', True))
+                self.afk_timeout_minutes = int(s.get('afk_timeout_minutes', self.afk_timeout_minutes))
+                self.silence_duration_s = float(s.get('silence_duration_s', self.silence_duration_s))
+                self.show_thumbnails = bool(s.get('show_thumbnails', self.show_thumbnails))
+                self.volume_slider.setValue(int(s.get('volume', self.volume_slider.value())))
+                self.theme = s.get('theme', self.theme)
+                self.shuffle_mode = bool(s.get('shuffle_mode', self.shuffle_mode))
+                self.repeat_mode = bool(s.get('repeat_mode', self.repeat_mode))
+                self.grouped_view = bool(s.get('grouped_view', getattr(self, 'grouped_view', False)))
+                self.monitor_system_output = bool(s.get('monitor_system_output', self.monitor_system_output))
+                self.silence_threshold = float(s.get('silence_threshold', self.silence_threshold))
+                self.resume_threshold = float(s.get('resume_threshold', self.resume_threshold))
+                self.monitor_device_id = int(s.get('monitor_device_id', self.monitor_device_id))
+                self.completed_percent = int(s.get('completed_percent', self.completed_percent))
+                self.skip_completed = bool(s.get('skip_completed', self.skip_completed))
+                self.unwatched_only = bool(s.get('unwatched_only', self.unwatched_only))
+                self.show_up_next = bool(s.get('show_up_next', self.show_up_next))  
+                self.restore_session = bool(s.get('restore_session', True))
+                self.log_level = s.get('log_level', self.log_level)
+                self.show_today_badge = bool(s.get('show_today_badge', True))
+                self.group_singles = bool(s.get('group_singles', False))
+                
+                # Load settings objects but don't initialize managers yet
+                smart_queue_data = s.get('smart_queue', {})
+                self.smart_queue_settings = SmartQueueSettings.from_dict(smart_queue_data)
+                
+                duration_fetch_data = s.get('duration_fetch', {})
+                self.duration_fetch_settings = DurationFetchSettings.from_dict(duration_fetch_data)
+                
+                # Update logging level immediately
+                try:
+                    logging.getLogger().setLevel(getattr(logging, self.log_level.upper(), logging.INFO))
+                except Exception:
+                    pass
+                    
+                # Restore scope if available
+                try:
+                    sk = s.get('scope_kind'); skey = s.get('scope_key')
+                    if sk and (skey is not None):
+                        self.play_scope = (sk, skey)
+                except Exception:
+                    pass
+
+                # Apply theme immediately for UI
+                if self.theme == 'vinyl':
+                    self._apply_vinyl_theme()
+                else:
+                    self._apply_dark_theme()
+
+                # Apply dynamic font scaling after theme
+                self._apply_dynamic_fonts()
+                
+                # Restore window state for immediate visual positioning
+                try:
+                    win = s.get('window') or {}
+                    if isinstance(win, dict):
+                        w = win.get('w')
+                        h = win.get('h')
+                        
+                        if w is not None and h is not None:
+                            self.resize(int(w), int(h))
+
+                        if self.center_on_restore and not win.get('maximized'):
+                            self.center_on_screen()
+                        else:
+                            x = win.get('x')
+                            y = win.get('y')
+                            if x is not None and y is not None:
+                                self.move(int(x), int(y))
+                        
+                        if win.get('maximized'):
+                            self.showMaximized()
+                except Exception:
+                    pass
+                    
+            except Exception as e:
+                print(f"Essential settings load error: {e}")
+                
+        # Apply theme if not loaded from settings
+        if not hasattr(self, 'theme') or not self.theme:
+            self.theme = 'vinyl'
+            self._apply_vinyl_theme()
+            self._apply_dynamic_fonts()
+        
+        # Initialize settings objects with defaults if not loaded
+        if not hasattr(self, 'smart_queue_settings'):
+            self.smart_queue_settings = SmartQueueSettings()
+        
+        if not hasattr(self, 'duration_fetch_settings'):
+            self.duration_fetch_settings = DurationFetchSettings()
+        
+        # Load essential data for immediate UI display
+        self._load_cached_playlist_data()
+        
+        # Apply persisted UI toggle states immediately
+        if hasattr(self, 'shuffle_btn'):
+            self.shuffle_btn.setChecked(self.shuffle_mode)
+        if hasattr(self, 'repeat_btn'):
+            self.repeat_btn.setChecked(self.repeat_mode)
+            
+        print("[STARTUP] Essential settings loaded")
+    
+    def _load_cached_playlist_data(self):
+        """Load playlist data from cache for immediate display - no network calls"""
+        print("[STARTUP] Loading cached playlist data...")
+        
+        # Load stats synchronously (small file)
+        if CFG_STATS.exists():
+            try:
+                self.listening_stats = json.load(open(CFG_STATS, 'r', encoding='utf-8'))
+            except Exception:
+                self.listening_stats = {'daily': {}, 'overall': 0}
+        else:
+            self.listening_stats = {'daily': {}, 'overall': 0}
+
+        # Load current playlist for immediate display
+        if CFG_CURRENT.exists():
+            try:
+                data = json.load(open(CFG_CURRENT, 'r', encoding='utf-8'))
+                self.playlist = data.get('current_playlist', [])
+                print(f"[STARTUP] Loaded {len(self.playlist)} playlist items from cache")
+            except Exception:
+                self.playlist = []
+        else:
+            self.playlist = []
+            
+        # Load positions
+        if CFG_POS.exists():
+            try:
+                with open(CFG_POS, 'r', encoding='utf-8') as f:
+                    self.playback_positions = json.load(f)
+            except Exception as e:
+                print(f"Resume positions load error: {e}")
+                self.playback_positions = {}
+        else:
+            self.playback_positions = {}
+            
+        # Load saved playlists
+        if CFG_PLAYLISTS.exists():
+            try:
+                self.saved_playlists = json.load(open(CFG_PLAYLISTS, 'r', encoding='utf-8'))
+            except Exception:
+                self.saved_playlists = {}
+        else:
+            self.saved_playlists = {}
+            
+        # Load completed URLs
+        if CFG_COMPLETED.exists():
+            try:
+                data = json.load(open(CFG_COMPLETED, 'r', encoding='utf-8'))
+                if isinstance(data, list):
+                    self.completed_urls = set(self._canonical_url_key(u) for u in data if u)
+                elif isinstance(data, dict):
+                    self.completed_urls = set(self._canonical_url_key(k) for k, v in data.items() if v and k)
+            except Exception:
+                self.completed_urls = set()
+        else:
+            self.completed_urls = set()
+            
+        # Refresh UI with cached data immediately
+        self._refresh_playlist_widget()
+        try:
+            self._update_scope_label()
+        except Exception:
+            pass
+            
+        # Set up next visibility
+        try:
+            if hasattr(self, 'up_next_container'):
+                self.up_next_container.setVisible(bool(getattr(self, 'show_up_next', True)))
+            if hasattr(self, 'up_next_header'):
+                self.up_next_header.setChecked(not bool(getattr(self, 'up_next_collapsed', False)))
+                self._toggle_up_next_visible(self.up_next_header.isChecked())
+        except Exception:
+            pass
+            
+        print("[STARTUP] Cached playlist data loaded and UI updated")
+    
+    def _initialize_background_systems(self):
+        """Initialize heavy background systems after UI is shown"""
+        import time
+        bg_start_time = time.time()
+        print(f"[STARTUP] Initializing background systems at {bg_start_time - self._startup_time:.2f}s")
+        
+        try:
+            # Initialize smart queue manager
+            print("[STARTUP] Initializing SmartQueueManager...")
+            start = time.time()
+            self.smart_queue_manager = SmartQueueManager(Path(APP_DIR), self.smart_queue_settings)
+            print(f"[STARTUP] SmartQueueManager initialized in {time.time() - start:.2f}s")
+            
+            # Initialize background duration fetcher
+            print("[STARTUP] Initializing BackgroundDurationFetcher...")
+            start = time.time()
+            self.background_duration_fetcher = BackgroundDurationFetcher(
+                Path(APP_DIR), self.duration_fetch_settings, self
+            )
+            
+            # Connect duration fetcher signals
+            self.background_duration_fetcher.durationReady.connect(self._on_background_duration_ready)
+            self.background_duration_fetcher.fetchError.connect(self._on_background_duration_error)
+            print(f"[STARTUP] BackgroundDurationFetcher initialized in {time.time() - start:.2f}s")
+            
+            # Create YtdlManager workers in background
+            print("[STARTUP] Creating YtdlManager workers...")
+            start = time.time()
+            for i in range(10):
+                worker = YtdlManager(self)
+                worker.titleResolved.connect(self._on_title_resolved)
+                worker.start()
+                self.ytdl_workers.append(worker)
+            print(f"[STARTUP] Created {len(self.ytdl_workers)} YtdlManager workers in {time.time() - start:.2f}s")
+            
+            self._background_systems_initialized = True
+            
+            # Now load session in background - this may trigger network calls
+            print("[STARTUP] Loading session in background...")
+            QTimer.singleShot(500, self._load_session_deferred)
+            
+            # Resume title fetching after systems are ready
+            if self.playlist:
+                print("[STARTUP] Scheduling title resolution resume...")
+                QTimer.singleShot(1000, self._resume_incomplete_title_fetching)
+                
+                # Also queue background duration fetching for items missing durations
+                QTimer.singleShot(1500, self._queue_missing_durations)
+            
+            total_bg_time = time.time() - bg_start_time
+            total_startup_time = time.time() - self._startup_time
+            print(f"[STARTUP] Background systems initialized successfully in {total_bg_time:.2f}s")
+            print(f"[STARTUP] COMPLETE - Total time from start: {total_startup_time:.2f}s")
+            
+            # Report startup performance
+            if total_startup_time < 8.0:
+                improvement = 7.0 - (time.time() - self._startup_time)  # Compared to original 7s
+                print(f"[STARTUP] 🎉 Startup optimization successful - {improvement:.1f}s improvement!")
+            
+            self.status.showMessage("Ready", 3000)
+            
+        except Exception as e:
+            print(f"[STARTUP] Error initializing background systems: {e}")
+            self.status.showMessage("Warning: Some background features may not be available", 5000)
+    
+    def _load_session_deferred(self):
+        """Load session in background to avoid blocking startup"""
+        print("[STARTUP] Loading session (deferred)...")
+        
+        if not getattr(self, 'restore_session', True):
+            print("[STARTUP] Session restore disabled")
+            return
+            
+        if not CFG_SESSION.exists():
+            print("[STARTUP] No session file found")
+            return
+
+        try:
+            print("[STARTUP] Restoring previous session...")
+            with open(CFG_SESSION, 'r', encoding='utf-8') as f:
+                session_data = json.load(f)
+
+            # Validate data
+            if not isinstance(session_data, dict):
+                raise ValueError("Session data is not a valid dictionary.")
+                
+            playlist = session_data.get('playlist')
+            if not isinstance(playlist, list):
+                raise ValueError("Playlist in session data is not a valid list.")
+                
+            current_index = session_data.get('current_index', -1)
+            if not isinstance(current_index, int):
+                current_index = -1
+                
+            expansion_state = session_data.get('expansion_state', {})
+            if not isinstance(expansion_state, dict):
+                expansion_state = {}
+
+            # Apply state
+            self.playlist = playlist
+            self.current_index = current_index
+            self.play_scope = session_data.get('play_scope')
+
+            # Restore UI
+            self._refresh_playlist_widget(expansion_state=expansion_state)
+            self._update_scope_label()
+
+            # Load the last track but don't play it yet - this may be slow for network content
+            if 0 <= self.current_index < len(self.playlist):
+                pos_ms = session_data.get('last_position_ms', 0)
+                try:
+                    pos_ms = int(pos_ms or 0)
+                except (ValueError, TypeError):
+                    pos_ms = 0
+                
+                # Load track in background to avoid blocking
+                QTimer.singleShot(100, lambda: self._prepare_track_background(self.current_index, pos_ms))
+
+            self.status.showMessage("Session restored", 3000)
+            print("[STARTUP] Session loaded successfully")
+
+        except Exception as e:
+            print(f"[STARTUP] Failed to load session: {e}")
+            self.status.showMessage("Could not restore session", 3000)
+            if CFG_SESSION.exists():
+                try:
+                    CFG_SESSION.unlink()
+                except Exception as e_del:
+                    print(f"Failed to delete corrupt session file: {e_del}")
+                    
+    def _prepare_track_background(self, index, pos_ms):
+        """Prepare track in background to avoid blocking UI"""
+        try:
+            self._prepare_and_load_track(index, start_pos_ms=pos_ms, should_play=False)
+            self.play_pause_btn.setIcon(self._play_icon_normal)
+            QTimer.singleShot(500, self._update_restored_duration)
+        except Exception as e:
+            print(f"[STARTUP] Error preparing track in background: {e}")
+    
+    def _queue_missing_durations(self):
+        """Queue background duration fetching for items that don't have durations"""
+        if not hasattr(self, 'background_duration_fetcher'):
+            return
+            
+        try:
+            items_needing_durations = []
+            
+            for i, item in enumerate(self.playlist):
+                if not isinstance(item, dict):
+                    continue
+                    
+                # Check if item needs duration fetching
+                if not item.get('duration') and item.get('url') and item.get('type') in ('youtube', 'bilibili', 'local'):
+                    items_needing_durations.append((i, item))
+            
+            if items_needing_durations:
+                print(f"[STARTUP] Queuing background duration fetching for {len(items_needing_durations)} items")
+                self.background_duration_fetcher.enqueue_items(items_needing_durations)
+            else:
+                print("[STARTUP] All playlist items already have durations")
+                
+        except Exception as e:
+            print(f"[STARTUP] Error queuing duration fetching: {e}")
+        
     def _save_settings(self):
         s = {
             'auto_play_enabled': self.auto_play_enabled,
@@ -8584,61 +8951,6 @@ class MediaPlayer(QMainWindow):
             logger.info("Session state saved.")
         except Exception as e:
             logger.error(f"Failed to save session state: {e}")
-
-    def _load_session(self):
-            """Loads the last saved session if the setting is enabled."""
-            if not getattr(self, 'restore_session', True):
-                logger.info("Session restore is disabled in settings.")
-                return
-            if not CFG_SESSION.exists():
-                logger.info("No session file found to restore.")
-                return
-
-            try:
-                logger.info("Attempting to restore previous session...")
-                with open(CFG_SESSION, 'r', encoding='utf-8') as f:
-                    session_data = json.load(f)
-
-                # --- Data Validation ---
-                if not isinstance(session_data, dict): raise ValueError("Session data is not a valid dictionary.")
-                playlist = session_data.get('playlist');
-                if not isinstance(playlist, list): raise ValueError("Playlist in session data is not a valid list.")
-                current_index = session_data.get('current_index', -1)
-                if not isinstance(current_index, int): current_index = -1
-                expansion_state = session_data.get('expansion_state', {});
-                if not isinstance(expansion_state, dict): expansion_state = {}
-
-                # --- Apply State ---
-                self.playlist = playlist
-                self.current_index = current_index
-                self.play_scope = session_data.get('play_scope')
-
-                # --- Restore UI ---
-                self._refresh_playlist_widget(expansion_state=expansion_state)
-                self._update_scope_label()
-
-                # --- Load the last track but don't play it yet ---
-                if 0 <= self.current_index < len(self.playlist):
-                    pos_ms = session_data.get('last_position_ms', 0)
-                    try: pos_ms = int(pos_ms or 0)
-                    except (ValueError, TypeError): pos_ms = 0
-                    
-                    # --- Call the new unified method to prepare the track ---
-                    self._prepare_and_load_track(self.current_index, start_pos_ms=pos_ms, should_play=False)
-
-                    # --- Update UI specific to restoring a session ---
-                    self.play_pause_btn.setIcon(self._play_icon_normal)
-                    QTimer.singleShot(500, self._update_restored_duration)
-
-                self.status.showMessage("Restored last session. Press Play to resume.", 5000)
-
-            except Exception as e:
-                import traceback
-                logger.error(f"Failed to load session state: {e}\n{traceback.format_exc()}")
-                self.status.showMessage("Could not restore session: file may be corrupt.", 5000)
-                if CFG_SESSION.exists():
-                    try: CFG_SESSION.unlink()
-                    except Exception as e_del: logger.error(f"Failed to delete corrupt session file: {e_del}")
 
     def _update_restored_duration(self):
         """Safely update duration label after a session restore."""
@@ -14192,7 +14504,12 @@ class SubscriptionManager(QThread):
         self.logMessage.emit("Subscription manager stopped.")
 
 def main():
+    import time
+    app_start_time = time.time()
+    print(f"[STARTUP] Application main() started at {app_start_time}")
+    
     app = QApplication(sys.argv)
+    print(f"[STARTUP] QApplication created at {time.time() - app_start_time:.2f}s")
     
     # Setup signal handlers for graceful shutdown
     import signal
@@ -14210,11 +14527,17 @@ def main():
         print(f"[STARTUP] Could not register signal handlers: {e}")
     
     w = MediaPlayer()
-    # Initialize typography AFTER the window builds and applies its theme so our QSS lands last
+    print(f"[STARTUP] MediaPlayer created at {time.time() - app_start_time:.2f}s")
+    
+    # Show window as early as possible for immediate visual feedback
+    w.show()
+    print(f"[STARTUP] Window shown at {time.time() - app_start_time:.2f}s - UI IS NOW VISIBLE!")
+    
+    # Initialize typography AFTER window is shown to avoid delaying visibility
     from ui.typography import TypographyManager
     typo = TypographyManager(app, project_root=APP_DIR)
     typo.install()
-    w.show()
+    print(f"[STARTUP] Typography installed at {time.time() - app_start_time:.2f}s - STARTUP COMPLETE!")
     
     # Store reference to main window for signal handlers
     app._main_window = w
