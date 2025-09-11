@@ -2903,15 +2903,20 @@ class SystemAudioMonitor(QThread):
 
 class AFKMonitor(QThread):
     userIsAFK = Signal()
+    userIsActive = Signal()
 
     def __init__(self, timeout_minutes=15, parent=None):
         super().__init__(parent)
         self.timeout_seconds = int(timeout_minutes) * 60
         self.last_input_time = time.time()
         self._is_running = True
+        self._is_afk = False
 
     def update_activity(self, *args):
         self.last_input_time = time.time()
+        if self._is_afk:
+            self._is_afk = False
+            self.userIsActive.emit()
 
     def stop(self):
         self._is_running = False
@@ -2927,7 +2932,8 @@ class AFKMonitor(QThread):
         mouse_listener.start(); keyboard_listener.start()
         try:
             while self._is_running:
-                if time.time() - self.last_input_time > self.timeout_seconds:
+                if not self._is_afk and time.time() - self.last_input_time > self.timeout_seconds:
+                    self._is_afk = True
                     self.userIsAFK.emit()
                     self.last_input_time = time.time()
                 self.msleep(2000)
@@ -7739,6 +7745,7 @@ class MediaPlayer(QMainWindow):
         # AFK monitor
         self.afk_monitor = AFKMonitor(self.afk_timeout_minutes)
         self.afk_monitor.userIsAFK.connect(self.on_user_afk)
+        self.afk_monitor.userIsActive.connect(self._reset_silence_counter)
         self.afk_monitor.start()
 
     def _handle_mpv_log(self, level, component, message):
@@ -13559,6 +13566,15 @@ class MediaPlayer(QMainWindow):
     def on_user_afk(self):
         if self._is_playing():
             self.toggle_play_pause(); self.status.showMessage("Paused due to inactivity", 4000)
+
+    def _reset_silence_counter(self):
+        """Resets the silence detection timer."""
+        try:
+            if hasattr(self, 'audio_monitor') and self.audio_monitor:
+                self.audio_monitor._silence_counter = 0.0
+                self.status.showMessage("Activity detected, silence timer reset.", 2000)
+        except Exception as e:
+            print(f"Failed to reset silence counter: {e}")
 
     # Keyboard shortcuts
     def _setup_keyboard_shortcuts(self):
