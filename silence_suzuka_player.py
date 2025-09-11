@@ -9582,8 +9582,29 @@ class MediaPlayer(QMainWindow):
             logger.error(f"Highlight row failed: {e}")
         
     def _on_title_resolved(self, url: str, title: str):
-        """Route title updates through thread-safe signal"""
-        self.titleUpdateRequested.emit(url, title)
+        """
+        This is a slot that is executed on the main UI thread.
+        It's safe to update the UI from here.
+        """
+        try:
+            # Find the item in our playlist that corresponds to this URL
+            for item in self.playlist:
+                if item.get('url') == url:
+                    item['title'] = title
+                    break
+            
+            # Now, update the UI (the playlist tree)
+            self._update_tree_item_title(url, title)
+            
+            # If this is the currently playing track, update the main title label
+            if self.current_index >= 0 and self.playlist[self.current_index].get('url') == url:
+                self._set_track_title(title)
+                
+            # Save the changes to the playlist file
+            self._save_current_playlist()
+            
+        except Exception as e:
+            print(f"Error in _on_title_resolved: {e}")
 
     def _update_single_tree_item_title(self, url: str, title: str):
         """Update just one tree item instead of rebuilding everything"""
