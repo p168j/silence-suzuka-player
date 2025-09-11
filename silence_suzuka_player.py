@@ -5971,16 +5971,7 @@ class MediaPlayer(QMainWindow):
         self.add_media_btn.setObjectName("addMediaMain") # Use existing style
         self.add_media_btn.setFixedHeight(44)
         self.add_media_btn.setMaximumWidth(220)
-
-        # Create the menu that will pop up
-        add_media_menu = QMenu(self)
-        self._apply_menu_theme(add_media_menu) # Apply your custom theme
-        add_media_menu.addAction("🔗 Add Link...", self.add_link_dialog)
-        add_media_menu.addAction("📋 Add from Clipboard", self._maybe_offer_clipboard_url)
-        add_media_menu.addAction("📁 Add Files...", self.add_local_files)
-
-        # Tell the button to show the menu when clicked
-        self.add_media_btn.setMenu(add_media_menu)
+        self.add_media_btn.clicked.connect(self.add_link_dialog) # Connect directly to the dialog
 
         side_layout.addWidget(self.add_media_btn)
         # ---- end NEW Unified Add Media Button ----
@@ -10966,8 +10957,19 @@ class MediaPlayer(QMainWindow):
             pass
             
     def add_link_dialog(self):
-        from PySide6.QtWidgets import QInputDialog
-        raw, ok = QInputDialog.getText(self, "Add Media Link", "Enter YouTube/Bilibili URL, playlist, or local path:")
+        from PySide6.QtWidgets import QInputDialog, QApplication, QMessageBox, QLineEdit
+        from pathlib import Path
+
+        # --- New Clipboard Logic ---
+        clipboard_text = QApplication.clipboard().text().strip()
+        is_valid_url, _ = URLValidator.is_supported_url(clipboard_text)
+        initial_text = clipboard_text if is_valid_url else ""
+        # --- End New Logic ---
+
+        raw, ok = QInputDialog.getText(self, "Add Media",
+                                    "Enter a YouTube/Bilibili URL, playlist, or local file path:",
+                                    QLineEdit.Normal,
+                                    initial_text) # Pre-populate with clipboard content
         if not ok or not raw:
             return
 
@@ -10978,13 +10980,13 @@ class MediaPlayer(QMainWindow):
             cookies_path = APP_DIR / 'cookies.txt'
             if not cookies_path.exists():
                 self.status.showMessage("Hint: For members-only Bilibili videos, place cookies.txt in the app folder.", 8000)
-        
+
         # ADD VALIDATION HERE:
         is_valid, error_msg = URLValidator.is_supported_url(url_in)
         if not is_valid:
             QMessageBox.warning(self, "Invalid URL", f"Cannot add this URL:\n\n{error_msg}\n\nPlease check the URL and try again.")
             return
-        
+
         # Rest of your existing code stays the same...
         url_lower = url_in.lower()
 
@@ -11075,15 +11077,9 @@ class MediaPlayer(QMainWindow):
             self._save_current_playlist()
             self._refresh_playlist_widget(expansion_state=expansion_state)
 
-            try:
-                w = TitleResolveWorker([item], t)
-                self._title_workers.append(w)
-                w.titleResolved.connect(self._on_title_resolved)
-                w.error.connect(lambda e: self.status.showMessage(e, 5000))
-                w.finished.connect(lambda w=w: (self._title_workers.remove(w) if w in self._title_workers else None))
-                w.start()
-            except Exception:
-                pass
+            # Use the parallel title resolver
+            self._resolve_title_parallel(url_in, t)
+
     def _on_add_media_clicked(self):
         """Handler for the Add Media button. Checks clipboard first, then opens dialog."""
         # The new, simpler behavior: always open the "Add Link" dialog.
