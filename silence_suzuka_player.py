@@ -89,6 +89,9 @@ from smart_queue import SmartQueueSettings, SmartQueueManager
 # Duration Fetch imports
 from duration_fetch import DurationFetchSettings, DurationCache, BackgroundDurationFetcher
 
+# Virtual Playlist imports  
+from virtual_playlist import VirtualPlaylistSettings, VirtualPlaylistWidget, VirtualPlaylistItemManager
+
 
 class MediaType(Enum):
     """Enumeration for media source types."""
@@ -6023,7 +6026,23 @@ class MediaPlayer(QMainWindow):
         self.playlist_stack.setContentsMargins(0, 0, 0, 0)
 
         # 1. The Playlist Tree (Index 0)
-        self.playlist_tree = PlaylistTree(self)
+        # Initialize virtual playlist settings first if not available
+        if not hasattr(self, 'virtual_playlist_settings'):
+            self.virtual_playlist_settings = VirtualPlaylistSettings()
+            
+        # Create playlist tree (virtual or regular based on settings)
+        if self.virtual_playlist_settings.enabled:
+            self.playlist_tree = VirtualPlaylistWidget(self, self.virtual_playlist_settings)
+            # Set up helper functions for virtual playlist
+            self.playlist_tree.set_helper_functions(
+                self._create_tree_widget_item,
+                self._get_playlist_icon,
+                self._format_duration_string
+            )
+            # Connect virtual playlist signals
+            self.playlist_tree.itemsNeedDuration.connect(self._handle_virtual_duration_requests)
+        else:
+            self.playlist_tree = PlaylistTree(self)
         self.playlist_tree.setObjectName('playlistTree')
         self.playlist_tree.setAlternatingRowColors(True)
         self.playlist_tree.setIndentation(20)
@@ -8262,6 +8281,10 @@ class MediaPlayer(QMainWindow):
                 duration_fetch_data = s.get('duration_fetch', {})
                 self.duration_fetch_settings = DurationFetchSettings.from_dict(duration_fetch_data)
                 
+                # Load virtual playlist settings
+                virtual_playlist_data = s.get('virtual_playlist', {})
+                self.virtual_playlist_settings = VirtualPlaylistSettings.from_dict(virtual_playlist_data)
+                
                 # Update logging level immediately
                 try:
                     logging.getLogger().setLevel(getattr(logging, self.log_level.upper(), logging.INFO))
@@ -8348,6 +8371,10 @@ class MediaPlayer(QMainWindow):
         # Initialize duration fetch settings if not already loaded
         if not hasattr(self, 'duration_fetch_settings'):
             self.duration_fetch_settings = DurationFetchSettings()
+        
+        # Initialize virtual playlist settings if not already loaded
+        if not hasattr(self, 'virtual_playlist_settings'):
+            self.virtual_playlist_settings = VirtualPlaylistSettings()
         
         # Initialize smart queue manager with same config directory as other settings
         self.smart_queue_manager = SmartQueueManager(Path(APP_DIR), self.smart_queue_settings)
@@ -8476,6 +8503,7 @@ class MediaPlayer(QMainWindow):
             'restore_session': bool(getattr(self, 'restore_session', True)),
             'smart_queue': getattr(self, 'smart_queue_settings', None).to_dict() if hasattr(self, 'smart_queue_settings') and self.smart_queue_settings else {},
             'duration_fetch': getattr(self, 'duration_fetch_settings', None).to_dict() if hasattr(self, 'duration_fetch_settings') and self.duration_fetch_settings else {},
+            'virtual_playlist': getattr(self, 'virtual_playlist_settings', None).to_dict() if hasattr(self, 'virtual_playlist_settings') and self.virtual_playlist_settings else {},
             'window': {
                 'x': int(self.geometry().x()),
                 'y': int(self.geometry().y()),
@@ -8632,10 +8660,33 @@ class MediaPlayer(QMainWindow):
 
     # UI data binding
     def _refresh_playlist_widget(self, expansion_state=None, incremental_update=False):
-        """Optimized playlist refresh with incremental updates"""
+        """Optimized playlist refresh with virtual playlist support"""
         if expansion_state is None:
             expansion_state = {}
 
+        # Check if we should use virtual mode
+        use_virtual = (hasattr(self, 'virtual_playlist_settings') and 
+                      self.virtual_playlist_settings.enabled and
+                      isinstance(self.playlist_tree, VirtualPlaylistWidget))
+        
+        if use_virtual:
+            # Try virtual playlist refresh first
+            success = self.playlist_tree.refresh_virtual_playlist(self.playlist, expansion_state)
+            if success:
+                # Update header with virtual mode indicator
+                self.library_header_label.setText(f"Library ({len(self.playlist)}) ⚡ Virtual")
+                
+                # Show/hide empty state
+                if not self.playlist:
+                    self.playlist_stack.setCurrentIndex(1)
+                else:
+                    self.playlist_stack.setCurrentIndex(0)
+                return
+            else:
+                # Fall back to regular mode if virtual fails (e.g., playlist too small)
+                pass
+
+        # Regular playlist refresh
         # For small playlists or major changes, do full refresh
         if not incremental_update or len(self.playlist) < 200:
             self._refresh_playlist_widget_full(expansion_state)
@@ -8776,6 +8827,88 @@ class MediaPlayer(QMainWindow):
         # This is a more complex optimization - for now, just do full refresh
         # You could implement this later if needed for very large playlists
         self._refresh_playlist_widget_full(expansion_state)
+
+    # Helper methods for Virtual Playlist Widget
+    def _create_tree_widget_item(self, title: str, duration_str: str):
+        """Create a QTreeWidgetItem with title and duration"""
+        from PySide6.QtCore import Qt
+        item = QTreeWidgetItem([title, duration_str])
+        item.setTextAlignment(1, Qt.AlignRight | Qt.AlignVCenter)
+        item.setFont(0, self._font_serif_no_size(italic=True, bold=True))
+        return item
+    
+    def _get_playlist_icon(self, item_type: str):
+        """Get icon for playlist item type"""
+        return playlist_icon_for_type(item_type)
+    
+    def _format_duration_string(self, duration_seconds: float) -> str:
+        """Format duration in seconds to display string"""
+        return format_duration_from_seconds(duration_seconds)
+    
+    def _handle_virtual_duration_requests(self, duration_items):
+        """Handle duration fetch requests from virtual playlist"""
+        if hasattr(self, '_queue_items_for_background_fetch'):
+            # Get visible indices for prioritization
+            visible_indices = None
+            if hasattr(self.playlist_tree, 'get_visible_indices'):
+                visible_indices = self.playlist_tree.get_visible_indices()
+            
+            self._queue_items_for_background_fetch(
+                duration_items, 
+                priority_visible=True,
+                visible_indices=visible_indices
+            )
+    
+    def _recreate_playlist_tree(self):
+        """Recreate playlist tree when switching between virtual and regular modes"""
+        try:
+            # Get current expansion state
+            expansion_state = self._get_tree_expansion_state()
+            
+            # Remove old tree from layout
+            old_tree = self.playlist_tree
+            if hasattr(self, 'playlist_stack') and self.playlist_stack:
+                self.playlist_stack.removeWidget(old_tree)
+            
+            # Create new tree based on virtual settings
+            if self.virtual_playlist_settings.enabled:
+                self.playlist_tree = VirtualPlaylistWidget(self, self.virtual_playlist_settings)
+                # Set up helper functions for virtual playlist
+                self.playlist_tree.set_helper_functions(
+                    self._create_tree_widget_item,
+                    self._get_playlist_icon,
+                    self._format_duration_string
+                )
+                # Connect virtual playlist signals
+                self.playlist_tree.itemsNeedDuration.connect(self._handle_virtual_duration_requests)
+            else:
+                self.playlist_tree = PlaylistTree(self)
+                
+            # Configure new tree like the original setup
+            self.playlist_tree.setObjectName('playlistTree')
+            self.playlist_tree.setAlternatingRowColors(True)
+            self.playlist_tree.setIndentation(20)
+            self.playlist_tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
+            self.playlist_tree.itemDoubleClicked.connect(self.on_tree_item_double_clicked)
+            self.playlist_tree.setContextMenuPolicy(Qt.CustomContextMenu)
+            self.playlist_tree.customContextMenuRequested.connect(self._show_playlist_context_menu)
+            self.playlist_tree.mousePressEvent = self._create_mouse_press_handler()
+            self.playlist_tree.setFont(self._font_serif_no_size(italic=True, bold=True))
+            self.playlist_tree.setIconSize(QSize(24, 24))
+            
+            # Add to layout
+            if hasattr(self, 'playlist_stack') and self.playlist_stack:
+                self.playlist_stack.insertWidget(0, self.playlist_tree)
+                self.playlist_stack.setCurrentIndex(0)
+            
+            # Clean up old tree
+            old_tree.deleteLater()
+            
+            # Refresh with new tree
+            self._refresh_playlist_widget(expansion_state=expansion_state)
+            
+        except Exception as e:
+            print(f"Error recreating playlist tree: {e}")
 
 
     def _get_tree_expansion_state(self):
@@ -12423,7 +12556,93 @@ class MediaPlayer(QMainWindow):
         
         tabs.addTab(w_duration, "Duration Fetching")
 
-        # --- Tab 6: Diagnostics ---
+        # --- Tab 6: Virtual Playlist ---
+        w_virtual = QWidget(); f_virtual = QFormLayout(w_virtual)
+        
+        # Main enable/disable toggle
+        chk_virtual_enabled = QCheckBox("Enable Virtual Playlist for large playlists")
+        chk_virtual_enabled.setChecked(bool(getattr(self, 'virtual_playlist_settings', VirtualPlaylistSettings()).enabled))
+        chk_virtual_enabled.setToolTip("Enable virtual playlist rendering for improved performance with large playlists (500+ items).")
+        f_virtual.addRow(chk_virtual_enabled)
+        
+        # Performance settings container
+        perf_virtual_container = QWidget()
+        perf_virtual_layout = QFormLayout(perf_virtual_container)
+        
+        # Viewport buffer size
+        spn_buffer_size = QSpinBox()
+        spn_buffer_size.setRange(5, 50)
+        spn_buffer_size.setValue(int(getattr(self, 'virtual_playlist_settings', VirtualPlaylistSettings()).viewport_buffer_size))
+        spn_buffer_size.setToolTip("Number of off-screen items to keep loaded above/below viewport for smooth scrolling.")
+        perf_virtual_layout.addRow("Viewport Buffer Size:", spn_buffer_size)
+        
+        # Item height
+        spn_item_height = QSpinBox()
+        spn_item_height.setRange(20, 60)
+        spn_item_height.setValue(int(getattr(self, 'virtual_playlist_settings', VirtualPlaylistSettings()).item_height))
+        spn_item_height.setToolTip("Expected item height in pixels for scroll calculations.")
+        perf_virtual_layout.addRow("Item Height (px):", spn_item_height)
+        
+        # Enable threshold
+        spn_enable_threshold = QSpinBox()
+        spn_enable_threshold.setRange(100, 5000)
+        spn_enable_threshold.setValue(int(getattr(self, 'virtual_playlist_settings', VirtualPlaylistSettings()).enable_threshold))
+        spn_enable_threshold.setToolTip("Minimum playlist size to automatically enable virtual mode.")
+        perf_virtual_layout.addRow("Auto-enable Threshold:", spn_enable_threshold)
+        
+        f_virtual.addRow("Performance Settings:", perf_virtual_container)
+        
+        # Memory management container
+        memory_virtual_container = QWidget()
+        memory_virtual_layout = QFormLayout(memory_virtual_container)
+        
+        # Auto cleanup
+        chk_auto_cleanup = QCheckBox("Automatically cleanup off-screen items")
+        chk_auto_cleanup.setChecked(bool(getattr(self, 'virtual_playlist_settings', VirtualPlaylistSettings()).auto_cleanup))
+        chk_auto_cleanup.setToolTip("Automatically remove off-screen items from memory to conserve resources.")
+        memory_virtual_layout.addRow(chk_auto_cleanup)
+        
+        # Cleanup threshold
+        spn_cleanup_threshold = QSpinBox()
+        spn_cleanup_threshold.setRange(50, 500)
+        spn_cleanup_threshold.setValue(int(getattr(self, 'virtual_playlist_settings', VirtualPlaylistSettings()).cleanup_threshold))
+        spn_cleanup_threshold.setToolTip("Maximum items to keep in memory before triggering cleanup.")
+        memory_virtual_layout.addRow("Cleanup Threshold:", spn_cleanup_threshold)
+        
+        f_virtual.addRow("Memory Management:", memory_virtual_container)
+        
+        # Lazy loading container
+        lazy_virtual_container = QWidget()
+        lazy_virtual_layout = QFormLayout(lazy_virtual_container)
+        
+        # Lazy loading
+        chk_lazy_loading = QCheckBox("Enable lazy loading for metadata")
+        chk_lazy_loading.setChecked(bool(getattr(self, 'virtual_playlist_settings', VirtualPlaylistSettings()).lazy_loading))
+        chk_lazy_loading.setToolTip("Load item metadata (like durations) only as items come into view.")
+        lazy_virtual_layout.addRow(chk_lazy_loading)
+        
+        # Lazy threshold
+        spn_lazy_threshold = QSpinBox()
+        spn_lazy_threshold.setRange(1, 20)
+        spn_lazy_threshold.setValue(int(getattr(self, 'virtual_playlist_settings', VirtualPlaylistSettings()).lazy_threshold))
+        spn_lazy_threshold.setToolTip("How many items ahead to start loading metadata.")
+        lazy_virtual_layout.addRow("Lazy Load Threshold:", spn_lazy_threshold)
+        
+        f_virtual.addRow("Lazy Loading:", lazy_virtual_container)
+        
+        # Toggle containers based on main setting
+        def toggle_virtual_features():
+            enabled = chk_virtual_enabled.isChecked()
+            perf_virtual_container.setEnabled(enabled)
+            memory_virtual_container.setEnabled(enabled)
+            lazy_virtual_container.setEnabled(enabled)
+        
+        chk_virtual_enabled.toggled.connect(toggle_virtual_features)
+        toggle_virtual_features()  # Set initial state
+        
+        tabs.addTab(w_virtual, "Virtual Playlist")
+
+        # --- Tab 7: Diagnostics ---
         w_diag = QWidget(); f_diag = QFormLayout(w_diag)
         lbl_log = QLabel("Logging & Diagnostics"); lbl_log.setStyleSheet("font-weight: bold; margin-top: 10px;"); f_diag.addRow(lbl_log)
         log_level_combo = QComboBox(); log_level_combo.addItems(['DEBUG', 'INFO', 'WARNING', 'ERROR']); log_level_combo.setCurrentText(self.log_level)
@@ -12525,6 +12744,27 @@ class MediaPlayer(QMainWindow):
                 # Update the background duration fetcher with new settings
                 if hasattr(self, 'background_duration_fetcher'):
                     self.background_duration_fetcher.update_settings(self.duration_fetch_settings)
+            except Exception: pass
+            
+            try: # Virtual Playlist
+                old_virtual_enabled = getattr(self, 'virtual_playlist_settings', VirtualPlaylistSettings()).enabled
+                
+                self.virtual_playlist_settings.enabled = bool(chk_virtual_enabled.isChecked())
+                self.virtual_playlist_settings.viewport_buffer_size = int(spn_buffer_size.value())
+                self.virtual_playlist_settings.item_height = int(spn_item_height.value())
+                self.virtual_playlist_settings.enable_threshold = int(spn_enable_threshold.value())
+                self.virtual_playlist_settings.auto_cleanup = bool(chk_auto_cleanup.isChecked())
+                self.virtual_playlist_settings.cleanup_threshold = int(spn_cleanup_threshold.value())
+                self.virtual_playlist_settings.lazy_loading = bool(chk_lazy_loading.isChecked())
+                self.virtual_playlist_settings.lazy_threshold = int(spn_lazy_threshold.value())
+                
+                # If virtual mode setting changed, recreate the playlist tree
+                if old_virtual_enabled != self.virtual_playlist_settings.enabled:
+                    self._recreate_playlist_tree()
+                elif isinstance(self.playlist_tree, VirtualPlaylistWidget):
+                    # Update existing virtual playlist widget settings
+                    self.playlist_tree.settings = self.virtual_playlist_settings
+                    self.playlist_tree.item_manager.settings = self.virtual_playlist_settings
             except Exception: pass
             
             try: # Diagnostics
@@ -12642,6 +12882,13 @@ class MediaPlayer(QMainWindow):
     def _update_playlist_item_display(self, playlist_index: int):
         """Update display for a single playlist item (used when duration is fetched)"""
         try:
+            # Handle virtual playlist widget
+            if isinstance(self.playlist_tree, VirtualPlaylistWidget):
+                duration = self.playlist[playlist_index].get('duration', 0)
+                self.playlist_tree.update_item_duration(playlist_index, duration)
+                return
+            
+            # Handle regular playlist tree
             # Find the tree item for this playlist index and update its duration column
             root = self.playlist_tree.topLevelItem(0)
             if not root:
@@ -12669,15 +12916,14 @@ class MediaPlayer(QMainWindow):
         except Exception as e:
             print(f"Update playlist item display error: {e}")
     
-    def _queue_items_for_background_fetch(self, items_with_indices: List[Tuple[int, Dict]], priority_visible: bool = True):
+    def _queue_items_for_background_fetch(self, items_with_indices: List[Tuple[int, Dict]], priority_visible: bool = True, visible_indices: Optional[List[int]] = None):
         """Queue playlist items for background duration fetching"""
         try:
             if not hasattr(self, 'background_duration_fetcher') or not self.duration_fetch_settings.auto_fetch_enabled:
                 return
                 
             # Get currently visible indices for prioritization
-            visible_indices = None
-            if priority_visible:
+            if visible_indices is None and priority_visible:
                 try:
                     visible_indices = self._get_visible_playlist_indices()
                 except Exception:
@@ -12702,6 +12948,11 @@ class MediaPlayer(QMainWindow):
             if not hasattr(self, 'playlist_tree'):
                 return visible_indices
                 
+            # Handle virtual playlist widget  
+            if isinstance(self.playlist_tree, VirtualPlaylistWidget):
+                return self.playlist_tree.get_visible_indices()
+            
+            # Handle regular playlist tree
             # Get the visible area of the tree widget
             viewport = self.playlist_tree.viewport()
             visible_rect = viewport.rect()
