@@ -48,6 +48,13 @@ class VirtualPlaylistWidget(QTreeWidget):
         v_scrollbar = self.verticalScrollBar()
         v_scrollbar.valueChanged.connect(self._on_scroll)
         
+        # Debug mode (can be enabled for troubleshooting)
+        self._debug_virtual = False
+    
+    def enable_debug_mode(self, enabled: bool = True):
+        """Enable or disable debug output for virtual playlist"""
+        self._debug_virtual = enabled
+        
     def _setup_tree_widget(self):
         """Setup tree widget like the original PlaylistTree"""
         # Enable headers and set column labels
@@ -82,10 +89,22 @@ class VirtualPlaylistWidget(QTreeWidget):
         self.item_manager.set_playlist_data(playlist, group_info)
         
         # Check if virtual mode is beneficial
-        if not self.item_manager.is_virtual_mode_beneficial():
+        is_beneficial = self.item_manager.is_virtual_mode_beneficial()
+        playlist_size = len(playlist)
+        threshold = self.settings.enable_threshold
+        
+        # Debug info can be disabled in production
+        if hasattr(self, '_debug_virtual') and self._debug_virtual:
+            print(f"Virtual Playlist: Size={playlist_size}, Threshold={threshold}, Beneficial={is_beneficial}")
+        
+        if not is_beneficial:
             # Fallback to regular rendering for small playlists
+            if hasattr(self, '_debug_virtual') and self._debug_virtual:
+                print(f"Virtual Playlist: Falling back to regular mode (playlist too small)")
             return False
         
+        if hasattr(self, '_debug_virtual') and self._debug_virtual:
+            print(f"Virtual Playlist: Using virtual mode for {playlist_size} items")
         self._update_virtual_viewport()
         return True
     
@@ -105,12 +124,21 @@ class VirtualPlaylistWidget(QTreeWidget):
             return
         
         try:
+            # Debug info can be disabled in production
+            total_items = len(self.item_manager.playlist_data)
+            if hasattr(self, '_debug_virtual') and self._debug_virtual:
+                print(f"Virtual Playlist: Updating viewport for {total_items} total items")
+            
             # Update visible items
             items_needing_duration = self.item_manager.update_visible_items(
                 self.create_item_func,
                 self.icon_func, 
                 self.duration_func
             )
+            
+            visible_count = len(self.item_manager.visible_items)
+            if hasattr(self, '_debug_virtual') and self._debug_virtual:
+                print(f"Virtual Playlist: {visible_count} items visible, {len(items_needing_duration)} need duration")
             
             # Request duration fetching for items that need it
             if items_needing_duration and self.settings.lazy_loading:
@@ -154,15 +182,8 @@ class VirtualPlaylistWidget(QTreeWidget):
         # Clear tree 
         self.clear()
         
-        # For very large playlists, we need proper virtual scrolling
-        total_items = len(playlist)
-        if total_items > 0:
-            # Set up the scroll range by configuring the vertical scrollbar
-            v_scrollbar = self.verticalScrollBar()
-            v_scrollbar.setRange(0, max(0, total_items - 1))
-            v_scrollbar.setPageStep(max(1, self.viewport().height() // self.settings.item_height))
-        
-        # Update viewport to show initial items
+        # For virtual mode, only create and show visible items
+        # The scrolling will be handled by managing visible items dynamically
         self._update_virtual_viewport()
         return True
     

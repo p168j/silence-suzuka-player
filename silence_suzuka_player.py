@@ -8673,8 +8673,8 @@ class MediaPlayer(QMainWindow):
             # Try virtual playlist refresh first
             success = self.playlist_tree.refresh_virtual_playlist(self.playlist, expansion_state)
             if success:
-                # Update header
-                self.library_header_label.setText(f"Library ({len(self.playlist)})")
+                # Update header with virtual mode indicator
+                self.library_header_label.setText(f"Library ({len(self.playlist)}) ⚡ Virtual")
                 
                 # Show/hide empty state
                 if not self.playlist:

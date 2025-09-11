@@ -5,7 +5,13 @@ Provides virtual playlist functionality for handling large playlists efficiently
 """
 
 from .settings import VirtualPlaylistSettings
-from .manager import VirtualPlaylistItemManager
-from .widget import VirtualPlaylistWidget
 
-__all__ = ['VirtualPlaylistSettings', 'VirtualPlaylistItemManager', 'VirtualPlaylistWidget']
+# Import GUI components only if available (for testing compatibility)
+try:
+    from .manager import VirtualPlaylistItemManager
+    from .widget import VirtualPlaylistWidget
+    
+    __all__ = ['VirtualPlaylistSettings', 'VirtualPlaylistItemManager', 'VirtualPlaylistWidget']
+except ImportError:
+    # GUI components not available (e.g., in headless environment)
+    __all__ = ['VirtualPlaylistSettings']

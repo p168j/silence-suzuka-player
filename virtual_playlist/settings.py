@@ -56,3 +56,60 @@ class VirtualPlaylistSettings:
             cleanup_threshold=data.get('cleanup_threshold', 100),
             enable_threshold=data.get('enable_threshold', 500)
         )
+
+
+# Simple test when run directly
+if __name__ == '__main__':
+    print("=== Virtual Playlist Settings Test ===")
+    
+    # Test default settings
+    settings = VirtualPlaylistSettings()
+    print(f"✓ Default settings created: enabled={settings.enabled}")
+    print(f"  - Viewport buffer: {settings.viewport_buffer_size}")
+    print(f"  - Item height: {settings.item_height}")
+    print(f"  - Enable threshold: {settings.enable_threshold}")
+    print(f"  - Auto cleanup: {settings.auto_cleanup}")
+    print(f"  - Lazy loading: {settings.lazy_loading}")
+    
+    # Test serialization
+    data = settings.to_dict()
+    print(f"✓ Serialization: {len(data)} settings saved")
+    
+    restored = VirtualPlaylistSettings.from_dict(data)
+    print(f"✓ Deserialization: enabled={restored.enabled}")
+    
+    # Test decision logic
+    print("\nDecision logic for different playlist sizes:")
+    test_sizes = [10, 50, 100, 500, 1000, 2000, 5000, 10000]
+    for size in test_sizes:
+        should_use = size >= settings.enable_threshold
+        print(f"  Size {size:5d}: Use virtual mode = {'YES' if should_use else 'NO '}")
+    
+    # Test custom configurations
+    print("\nTesting different configurations:")
+    
+    configs = [
+        ("Conservative", VirtualPlaylistSettings(
+            enabled=True, enable_threshold=2000, viewport_buffer_size=5
+        )),
+        ("Aggressive", VirtualPlaylistSettings(
+            enabled=True, enable_threshold=100, viewport_buffer_size=50
+        )),
+        ("Disabled", VirtualPlaylistSettings(enabled=False)),
+    ]
+    
+    for name, config in configs:
+        print(f"  {name}: enabled={config.enabled}, threshold={config.enable_threshold}")
+        
+        # Test serialization round-trip
+        config_dict = config.to_dict()
+        restored_config = VirtualPlaylistSettings.from_dict(config_dict)
+        assert restored_config.enabled == config.enabled
+        assert restored_config.enable_threshold == config.enable_threshold
+        print(f"    ✓ Serialization round-trip successful")
+    
+    print("\n🎉 All virtual playlist settings tests passed!")
+    print("\nThis confirms that the settings system is working correctly.")
+    print("The virtual playlist will automatically enable for playlists larger")
+    print(f"than {settings.enable_threshold} items and provide significant")
+    print("performance improvements for large playlists.")

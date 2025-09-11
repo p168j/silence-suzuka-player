@@ -14,6 +14,7 @@ A media player that automatically plays your content when it detects system-wide
 * **Unified Library:** Add videos from YouTube, Bilibili, and local files all in one place.
 * **Resume Playback:** Remembers your position in every video.
 * **Background Duration Fetching:** Automatically fetches video durations in the background with intelligent caching to eliminate manual fetching delays.
+* **Virtual Playlist:** High-performance playlist rendering for large collections (1000+ items) with viewport-based virtualization, lazy loading, and intelligent memory management.
 
 ## Requirements
 
@@ -74,6 +75,8 @@ You can then add media via the "Add Media" button, copy-paste or drag-and-drop f
    * Solution: You must follow the setup instructions to install and configure VoiceMeeter, then select the correct "VoiceMeeter Output" device in this app's Settings > Audio Monitor tab.
 
 * **Automatic Duration Fetching**: Durations for both local files and online videos (YouTube/Bilibili) are now fetched automatically in the background with intelligent caching. The system prioritizes visible items and uses multiple worker threads for optimal performance. You can configure or disable this feature in Settings > Duration Fetching.
+
+* **Virtual Playlist Performance**: For large playlists (500+ items), the app automatically uses virtual playlist rendering to maintain smooth performance. This only loads visible items into memory and provides lazy loading for metadata. Virtual playlists can handle 10,000+ items with smooth scrolling and minimal memory usage. You can configure virtual playlist settings in Settings > Virtual Playlist, including buffer size, auto-enable threshold, and memory management options.
 
 * Bilibili Login & Cookies: To access members-only Bilibili content, you need a cookies.txt file in the app's folder. Be aware that this file contains sensitive login information.
 

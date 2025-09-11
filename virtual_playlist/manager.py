@@ -143,6 +143,9 @@ class VirtualPlaylistItemManager:
                 # Store item data
                 tree_item.setData(0, 0x0100, ('current', idx, item_data))  # Qt.UserRole
                 
+                # Add to tree widget as top-level item
+                self.tree_widget.addTopLevelItem(tree_item)
+                
                 # Add to cache
                 self.visible_items[idx] = tree_item
                 
