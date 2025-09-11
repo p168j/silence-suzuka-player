@@ -10,6 +10,7 @@ A media player that automatically plays your content when it detects system-wide
 
 * **Auto-Play on Silence:** Monitors your system's audio and automatically starts playing from your playlist when no other sound is active.
 * **AFK Detection:** Pauses playback automatically when you're inactive and away from your computer.
+* **Intelligent Error Handling:** Prevents error cascades when media fails to play with circuit breaker pattern, exponential backoff, and smart retry logic.
 * **Advanced Playlist Management:** Save, load, and manage multiple playlists.
 * **Unified Library:** Add videos from YouTube, Bilibili, and local files all in one place.
 * **Resume Playback:** Remembers your position in every video.
@@ -77,6 +78,8 @@ You can then add media via the "Add Media" button, copy-paste or drag-and-drop f
 * **Automatic Duration Fetching**: Durations for both local files and online videos (YouTube/Bilibili) are now fetched automatically in the background with intelligent caching. The system prioritizes visible items and uses multiple worker threads for optimal performance. You can configure or disable this feature in Settings > Duration Fetching.
 
 * **Virtual Playlist Performance**: For large playlists (500+ items), the app automatically uses virtual playlist rendering to maintain smooth performance. This only loads visible items into memory and provides lazy loading for metadata. Virtual playlists can handle 10,000+ items with smooth scrolling and minimal memory usage. You can configure virtual playlist settings in Settings > Virtual Playlist, including buffer size, auto-enable threshold, and memory management options.
+
+* **Intelligent Error Handling**: When videos fail to play, the app now uses smart error handling to prevent rapid skipping through your playlist. It classifies errors (network, authentication, media not found), implements exponential backoff for retries, and activates a circuit breaker after consecutive failures. Look for the error status button (🚨/⚠️/ℹ️) in the control bar when errors occur.
 
 * Bilibili Login & Cookies: To access members-only Bilibili content, you need a cookies.txt file in the app's folder. Be aware that this file contains sensitive login information.
 
