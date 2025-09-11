@@ -1835,6 +1835,75 @@ class PlaylistManagerDialog(QDialog):
             }
         """)
 
+class AddMediaDialog(QDialog):
+    """A custom dialog to add media from a URL or by browsing for local files."""
+    def __init__(self, initial_text="", parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Add Media")
+        self.setMinimumWidth(450)
+        
+        # Apply the parent's theme
+        if parent and hasattr(parent, '_apply_dialog_theme'):
+            parent._apply_dialog_theme(self)
+
+        self.media_to_add = []  # This will store the results
+
+        # --- UI Elements ---
+        layout = QVBoxLayout(self)
+        
+        # URL Input Section
+        url_group = QGroupBox("Add from URL or Path")
+        url_layout = QVBoxLayout(url_group)
+        
+        self.url_edit = QLineEdit()
+        self.url_edit.setPlaceholderText("Paste a YouTube/Bilibili URL, playlist, or a local file path...")
+        if initial_text:
+            self.url_edit.setText(initial_text)
+        url_layout.addWidget(self.url_edit)
+
+        self.add_from_link_btn = QPushButton("Add from Link/Path")
+        self.add_from_link_btn.clicked.connect(self._accept_from_link)
+        url_layout.addWidget(self.add_from_link_btn)
+        
+        layout.addWidget(url_group)
+
+        # Separator
+        separator_label = QLabel("OR")
+        separator_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(separator_label)
+        
+        # Local File Browsing Section
+        local_file_group = QGroupBox("Add from Local Files")
+        local_file_layout = QVBoxLayout(local_file_group)
+        
+        self.browse_btn = QPushButton("Browse for Files...")
+        self.browse_btn.clicked.connect(self._browse_for_files)
+        local_file_layout.addWidget(self.browse_btn)
+
+        layout.addWidget(local_file_group)
+        
+        # --- Dialog Buttons ---
+        button_box = QDialogButtonBox(QDialogButtonBox.Cancel)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+
+    def _accept_from_link(self):
+        """Handle when the user wants to add from the text box."""
+        url = self.url_edit.text().strip()
+        if url:
+            self.media_to_add = [url]
+            self.accept()
+
+    def _browse_for_files(self):
+        """Open a file dialog to select local media."""
+        files, _ = QFileDialog.getOpenFileNames(
+            self, "Select Media Files", "",
+            "Media Files (*.mp4 *.avi *.mkv *.mov *.mp3 *.wav *.flac);;All Files (*)"
+        )
+        if files:
+            self.media_to_add = files
+            self.accept()
+
 class AboutDialog(QDialog):
     """A simple dialog to show application information."""
     def __init__(self, parent=None):
@@ -10957,128 +11026,25 @@ class MediaPlayer(QMainWindow):
             pass
             
     def add_link_dialog(self):
-        from PySide6.QtWidgets import QInputDialog, QApplication, QMessageBox, QLineEdit
-        from pathlib import Path
+            from PySide6.QtWidgets import QApplication
 
-        # --- New Clipboard Logic ---
-        clipboard_text = QApplication.clipboard().text().strip()
-        is_valid_url, _ = URLValidator.is_supported_url(clipboard_text)
-        initial_text = clipboard_text if is_valid_url else ""
-        # --- End New Logic ---
+            # --- Clipboard Logic ---
+            clipboard_text = QApplication.clipboard().text().strip()
+            is_valid_url, _ = URLValidator.is_supported_url(clipboard_text)
+            initial_text = clipboard_text if is_valid_url else ""
+            # --- End Clipboard Logic ---
 
-        raw, ok = QInputDialog.getText(self, "Add Media",
-                                    "Enter a YouTube/Bilibili URL, playlist, or local file path:",
-                                    QLineEdit.Normal,
-                                    initial_text) # Pre-populate with clipboard content
-        if not ok or not raw:
-            return
-
-        # Strip quotes and whitespace
-        url_in = raw.strip().strip('"').strip("'")
-
-        if 'bilibili.com' in url_in.lower():
-            cookies_path = APP_DIR / 'cookies.txt'
-            if not cookies_path.exists():
-                self.status.showMessage("Hint: For members-only Bilibili videos, place cookies.txt in the app folder.", 8000)
-
-        # ADD VALIDATION HERE:
-        is_valid, error_msg = URLValidator.is_supported_url(url_in)
-        if not is_valid:
-            QMessageBox.warning(self, "Invalid URL", f"Cannot add this URL:\n\n{error_msg}\n\nPlease check the URL and try again.")
-            return
-
-        # Rest of your existing code stays the same...
-        url_lower = url_in.lower()
-
-        # Classify
-        if 'youtube.com' in url_lower or 'youtu.be' in url_lower:
-            t = 'youtube'
-        elif 'bilibili.com' in url_lower:
-            t = 'bilibili'
-        else:
-            t = 'local'
-
-        # Detect playlists for network sources
-        if t == 'youtube':
-            will_try_playlist = ('list=' in url_lower or '/playlist' in url_lower)
-        elif t == 'bilibili':
-            will_try_playlist = (
-                'list=' in url_lower or '/playlist' in url_lower or '/series' in url_lower or
-                'space.bilibili.com' in url_lower
-            )
-        else:
-            will_try_playlist = False
-
-        # Local single path: normalize, dedupe, friendly title, enqueue duration
-        if t == 'local' and not will_try_playlist:
-            import os
-            def _norm_local(u: str) -> str:
-                p = _path_from_url_or_path(u or "")
-                try:
-                    return os.path.normcase(os.path.abspath(p))
-                except Exception:
-                    return p
-
-            clean_path = _path_from_url_or_path(url_in)
-            norm_new = _norm_local(clean_path)
-
-            for it in self.playlist:
-                if isinstance(it, dict) and it.get('type') == 'local':
-                    if _norm_local(it.get('url')) == norm_new:
-                        self.status.showMessage("This local file is already in the playlist", 3000)
-                        return
-
-            title = Path(clean_path).name or clean_path
-            item = {'title': title, 'url': clean_path, 'type': 'local'}
-            new_index = len(self.playlist)
-            self.playlist.append(item)
-
-            if hasattr(self, '_local_dur'):
-                self._local_dur.enqueue(new_index, item)
-
-            # Record undo as 'add_items'
-            self._add_undo_operation('add_items', {
-                'items': [{'index': new_index, 'item': item}],
-                'was_playing': self._is_playing(),
-                'old_current_index': self.current_index
-            })
-
-            # Preserve expansion state
-            expansion_state = self._get_tree_expansion_state()
-            self._save_current_playlist()
-            self._refresh_playlist_widget(expansion_state=expansion_state)
-            return
-
-        # Network playlist
-        if will_try_playlist:
-            self._show_loading("Loading playlist entries...")
-            loader = PlaylistLoaderThread(url_in, t)
-            self._playlist_loader = loader
-            loader.itemsReady.connect(self._on_playlist_items_ready)
-            loader.error.connect(lambda e: self._hide_loading(f"Playlist load failed: {e}", 5000))
-            loader.finished.connect(loader.deleteLater)
-            loader.start()
-        else:
-            # Single network item
-            display = Path(url_in).name or url_in
-            item = {'title': f"[Loading...] {display}", 'url': url_in, 'type': t}
-            new_index = len(self.playlist)
-            self.playlist.append(item)
-
-            # Record undo as 'add_items'
-            self._add_undo_operation('add_items', {
-                'items': [{'index': new_index, 'item': item}],
-                'was_playing': self._is_playing(),
-                'old_current_index': self.current_index
-            })
-
-            # Preserve expansion state
-            expansion_state = self._get_tree_expansion_state()
-            self._save_current_playlist()
-            self._refresh_playlist_widget(expansion_state=expansion_state)
-
-            # Use the parallel title resolver
-            self._resolve_title_parallel(url_in, t)
+            dialog = AddMediaDialog(initial_text=initial_text, parent=self)
+            
+            if dialog.exec() == QDialog.Accepted:
+                # The dialog handles both link and file browsing.
+                # We just need to get the results and add them.
+                media_to_add = dialog.media_to_add
+                if media_to_add:
+                    # Loop through the results (it could be one link or multiple files)
+                    for media in media_to_add:
+                        # The existing _add_url_to_playlist handles both URLs and local paths perfectly.
+                        self._add_url_to_playlist(media)
 
     def _on_add_media_clicked(self):
         """Handler for the Add Media button. Checks clipboard first, then opens dialog."""
