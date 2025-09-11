@@ -211,8 +211,34 @@ class WorkerThread(QThread):
                 'extract_flat': False,
             }
             
-            # Add cookies for Bilibili if needed
+            # Add Bilibili-specific optimizations
             if item_type == 'bilibili':
+                # Aggressive format selection - skip 1080p+ negotiations for faster resolution
+                opts.update({
+                    'format': 'best[height<=720]/best[height<=480]/best',
+                    'format_sort': ['res:720', 'fps', 'codec:h264'],
+                    
+                    # Network optimization - aggressive timeouts for faster response
+                    'socket_timeout': 6,        # Down from 15s default
+                    'retries': 1,               # Fail fast, don't retry much
+                    'fragment_retries': 1,      # Less retry overhead
+                    
+                    # Connection improvements
+                    'http_chunk_size': 1048576,           # 1MB chunks
+                    'concurrent_fragment_downloads': 3,    # Parallel processing
+                    
+                    # Skip unnecessary processing for duration-only fetching
+                    'writesubtitles': False,
+                    'writeautomaticsub': False, 
+                    'writeinfojson': False,
+                    'writethumbnail': False,
+                    
+                    # Faster processing preferences
+                    'prefer_ffmpeg': True,
+                    'keepvideo': False,
+                })
+                
+                # Add cookies if available (preserve existing functionality)
                 cookies_file = Path(__file__).parent.parent / 'cookies.txt'
                 if cookies_file.exists():
                     opts['cookiefile'] = str(cookies_file)
