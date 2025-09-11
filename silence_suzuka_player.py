@@ -6109,27 +6109,6 @@ class MediaPlayer(QMainWindow):
         except Exception:
             pass
 
-        # Resolve SVG icons if present; otherwise fallback to emoji
-        try:
-            eye_on_path = APP_DIR / 'icons' / 'eye.svg'
-            eye_off_path = APP_DIR / 'icons' / 'eye-off.svg'
-            if eye_on_path.exists() and eye_off_path.exists():
-                self._unwatched_icon_on = QIcon(str(eye_on_path))
-                self._unwatched_icon_off = QIcon(str(eye_off_path))
-                # icon-only, set icon size for alignment
-                self.unwatched_btn.setIconSize(QSize(18, 18))
-                self.unwatched_btn.setText("")  # icon-only
-            else:
-                self._unwatched_icon_on = None
-                self._unwatched_icon_off = None
-                # Emoji fallback: OFF shows 👁 (meaning show) and ON shows 🙈 (hidden)
-                # set a compact emoji so button width matches others
-                self.unwatched_btn.setText("👁" if not getattr(self, 'unwatched_only', False) else "🙈")
-        except Exception:
-            self._unwatched_icon_on = None
-            self._unwatched_icon_off = None
-            self.unwatched_btn.setText("👁" if not getattr(self, 'unwatched_only', False) else "🙈")
-
                 # use themed tooltip instead of native QToolTip (keep accessible description)
         try:
             self.unwatched_btn.setAccessibleDescription("Show unwatched items only (toggle)")
