@@ -622,7 +622,7 @@ class MiniPlayer(QWidget):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
-            self._drag_pos = event.globalPosition().toPoint()
+            self._drag_pos = event.globalPos()
 
     def mouseMoveEvent(self, event):
         if self._drag_pos:
@@ -800,8 +800,15 @@ class PlaylistSaveDialog(QDialog):
             return
         parent_geom = parent.geometry()
         
-        # Set the dialog size to be a percentage of the parent's size
-        self.resize(int(parent_geom.width() * 0.45), int(parent_geom.height() * 0.65))
+        # Add a check to ensure width and height are valid before calculating
+        if parent_geom and parent_geom.width() is not None and parent_geom.height() is not None:
+            self.resize(int(parent_geom.width() * 0.45), int(parent_geom.height() * 0.65))
+        
+        # The centering logic remains the same
+        self_geom = self.geometry()
+        center_point = parent_geom.center()
+        self_geom.moveCenter(center_point)
+        self.move(self_geom.topLeft())
         
         # Move the dialog to be centered over the parent
         self_geom = self.geometry()
@@ -1169,6 +1176,8 @@ class PlaylistManagerDialog(QDialog):
             if self.player and hasattr(self.player, '_subscription_manager'):
                 self.player._subscription_manager.add_subscription(url.strip(), self._load_subscriptions)
 
+# silence_suzuka_player.py
+
     def _remove_subscription(self):
         """Remove the selected subscription URL with confirmation and UI refresh."""
         selected_rows = self.subs_table.selectionModel().selectedRows()
@@ -1176,31 +1185,22 @@ class PlaylistManagerDialog(QDialog):
             QMessageBox.warning(self, "No Selection", "Please select a subscription to remove.")
             return
 
-        # Get details of the item to be removed for the confirmation message
         row = selected_rows[0].row()
         name_to_remove = self.subs_table.item(row, 0).text()
         url_to_remove = self.subs_table.item(row, 1).text()
 
-        # --- START OF FIX ---
-        
-        # 1. Add a confirmation dialog for better user experience
+        # --- Confirmation Dialog ---
         reply = QMessageBox.question(
             self, "Remove Subscription",
             f"Are you sure you want to remove this subscription?\n\n- {name_to_remove}",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No
         )
 
-        if reply != QMessageBox.Yes:
-            return # User cancelled the action
-
-        # 2. Call the existing logic to remove the subscription from the manager
-        if self.player and hasattr(self.player, '_subscription_manager'):
-            self.player._subscription_manager.remove_subscription(url_to_remove)
-            
-            # 3. Explicitly call _load_subscriptions to refresh the table in the dialog
-            self._load_subscriptions()
-            
-        # --- END OF FIX ---
+        if reply == QMessageBox.Yes:
+            if self.player and hasattr(self.player, '_subscription_manager'):
+                self.player._subscription_manager.remove_subscription(url_to_remove)
+                # Refresh the subscription list in the dialog after removal
+                self._load_subscriptions()
 
     def _check_subscriptions_now(self):
         if self.player and hasattr(self.player, '_subscription_manager'):
@@ -1643,6 +1643,7 @@ class PlaylistManagerDialog(QDialog):
 
     def _on_playlist_selected(self, current_item, previous_item):
         """Handle selection change in the playlist list."""
+        # Add a check to ensure details_layout exists before using it
         if self._is_destroyed or not hasattr(self, 'details_layout'):
             return
 
@@ -5213,59 +5214,46 @@ class MediaPlayer(QMainWindow):
             logger.error(f"Failed to toggle groups: {e}")   
 
     def _reset_all_playback_positions(self):
-        """Reset all playback positions for items in the current playlist"""
-        try:
-            if not self.playlist:
-                self.status.showMessage("No items in playlist", 3000)
-                return
-            
-            # Collect URLs from current playlist
-            urls_in_playlist = []
-            for item in self.playlist:
-                url = item.get('url')
-                if url:
-                    urls_in_playlist.append(url)
-            
-            if not urls_in_playlist:
-                self.status.showMessage("No URLs found in playlist", 3000)
-                return
-            
-            # Show confirmation dialog with more prominent warning
-            reply = QMessageBox.question(
-                self, 
-                "Reset All Playback Positions", 
-                f"Reset playback positions for ALL {len(urls_in_playlist)} items in the library?\n\n"
-                "⚠️  This will permanently clear all saved resume points.\n"
-                "All videos will start from the beginning when played next.\n\n"
-                "This action cannot be undone.",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No  # Default to No for safety
-            )
-            
-            if reply != QMessageBox.Yes:
-                return
-            
-            # Clear positions for playlist URLs
-            cleared_count = 0
-            for url in urls_in_playlist:
-                # Try both exact URL and canonical URL as keys
-                keys_to_try = [url, self._canonical_url_key(url)]
+            """Reset all playback positions for items in the current playlist"""
+            try:
+                if not self.playlist:
+                    self.status.showMessage("No items in playlist", 3000)
+                    return
                 
-                for key in keys_to_try:
-                    if key and key in self.playback_positions:
-                        del self.playback_positions[key]
-                        cleared_count += 1
-            
-            # Save the updated positions
-            if cleared_count > 0:
-                self._save_positions()
-                self.status.showMessage(f"Cleared {cleared_count} playback positions", 4000)
-            else:
-                self.status.showMessage("No playback positions found to clear", 3000)
+                urls_in_playlist = [item.get('url') for item in self.playlist if item.get('url')]
                 
-        except Exception as e:
-            logger.error(f"Reset all playback positions error: {e}")
-            self.status.showMessage(f"Reset failed: {e}", 4000)
+                if not urls_in_playlist:
+                    self.status.showMessage("No URLs found in playlist", 3000)
+                    return
+                
+                # --- Enhanced Confirmation Dialog ---
+                reply = QMessageBox.question(
+                    self, 
+                    "Reset All Playback Positions", 
+                    f"Are you sure you want to reset the playback positions for all {len(urls_in_playlist)} items in your library?\n\n"
+                    "This action cannot be undone.",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No
+                )
+                
+                if reply == QMessageBox.Yes:
+                    cleared_count = 0
+                    for url in urls_in_playlist:
+                        keys_to_try = [url, self._canonical_url_key(url)]
+                        for key in keys_to_try:
+                            if key and key in self.playback_positions:
+                                del self.playback_positions[key]
+                                cleared_count += 1
+                    
+                    if cleared_count > 0:
+                        self._save_positions()
+                        self.status.showMessage(f"Cleared {cleared_count} playback positions.", 4000)
+                    else:
+                        self.status.showMessage("No playback positions found to clear.", 3000)
+                    
+            except Exception as e:
+                logger.error(f"Reset all playback positions error: {e}")
+                self.status.showMessage(f"Reset failed: {e}", 4000)
 
     def _mark_all_unwatched(self):
         """Mark all items in the current playlist as unwatched"""
@@ -7527,10 +7515,10 @@ class MediaPlayer(QMainWindow):
         painter.end()
 
         # Set the pixmap as the background for the central widget
-        palette = self.central_widget.palette()
+        palette = self.centralWidget().palette()
         palette.setBrush(QPalette.Background, QBrush(pixmap))
-        self.central_widget.setAutoFillBackground(True)
-        self.central_widget.setPalette(palette)
+        self.centralWidget().setAutoFillBackground(True)
+        self.centralWidget().setPalette(palette)
         
     def _apply_vinyl_theme(self):
         """Applies the vinyl theme by loading styles from vinyl.qss."""
