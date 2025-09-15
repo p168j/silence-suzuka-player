@@ -89,6 +89,9 @@ class WorkerThread(QThread):
                 
                 self._current_request = request
                 
+                # Check for stop signal before processing
+                if self._should_stop: break
+
                 # Skip if already cached
                 url = request.item.get('url', '')
                 cached_duration = self.cache.get(url)
@@ -96,9 +99,15 @@ class WorkerThread(QThread):
                     self.fetchCompleted.emit(request.playlist_index, cached_duration, 'cache')
                     continue
                 
+                # Check for stop signal before fetching
+                if self._should_stop: break
+
                 # Perform the actual fetch
                 success, duration, source, error = self._fetch_duration(request)
                 
+                # Check for stop signal after fetching
+                if self._should_stop: break
+
                 if success:
                     # Cache the result
                     self.cache.set(url, duration, source)
@@ -115,6 +124,7 @@ class WorkerThread(QThread):
                     self.fetchFailed.emit(self._current_request.playlist_index, str(e))
             finally:
                 self._current_request = None
+
     
     def _fetch_duration(self, request: FetchRequest) -> Tuple[bool, int, str, Optional[str]]:
         """

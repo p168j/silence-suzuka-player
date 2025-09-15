@@ -3251,6 +3251,7 @@ class PlaylistLoaderThread(QThread):
             if not self._should_stop:
                 self.error.emit(f"Error processing playlist data: {e}")
 
+
 class YtdlManager(QThread):
     titleResolved = Signal(str, str)
 
