@@ -10632,17 +10632,11 @@ class MediaPlayer(QMainWindow):
                     'space.bilibili.com' in url_lower
                 )
             
-            # If it's a playlist, fetch it
+            # If it's a playlist, fetch it in the background
             if is_playlist:
-                is_accessible, error_msg = URLValidator.validate_playlist_access(url)
-                if not is_accessible:
-                    QMessageBox.warning(self, "Playlist Access Error", 
-                        f"Cannot load playlist:\n{url[:80]}...\n\n{error_msg}")
-                    return
-                
+                # REMOVED the blocking call to URLValidator.validate_playlist_access()
                 self._show_loading("Checking playlist...")
                 loader = PlaylistLoaderThread(url, media_type)
-                # ... (rest of playlist loading logic is unchanged)
                 self._playlist_loader = loader
                 loader.itemsReady.connect(self._on_playlist_items_ready)
                 loader.progressUpdate.connect(self._update_loading_progress)
@@ -12026,9 +12020,10 @@ class MediaPlayer(QMainWindow):
                 self.mpv['referrer'] = item.get('url') or 'https://www.bilibili.com'
                 self.mpv['http-header-fields'] = 'Referer: https://www.bilibili.com,Origin: https://www.bilibili.com,User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36'
                 self.mpv['ytdl-raw-options'] = f"cookies={str(COOKIES_BILI)},add-header=Referer: https://www.bilibili.com,add-header=User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-                # --- THIS IS THE FIX ---
-                # Request the best separate video and audio streams up to 720p without codec restrictions.
-                self.mpv['ytdl-format'] = 'bv*[height<=720]+ba/best[height<=720]/best'
+                # --- START OF FIX ---
+                # Use the same robust format selector here for playback
+                self.mpv['ytdl-format'] = 'bestvideo[height<=720]+bestaudio/best[height<=720]/best'
+                # --- END OF FIX ---
             else: # For YouTube and others
                 self.mpv['referrer'] = ''
                 self.mpv['http-header-fields'] = ''

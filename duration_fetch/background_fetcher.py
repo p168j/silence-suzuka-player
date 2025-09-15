@@ -201,9 +201,7 @@ class WorkerThread(QThread):
         """Fetch duration for online video using yt-dlp"""
         try:
             import yt_dlp
-            import subprocess
             
-            # Prepare yt-dlp options
             opts = {
                 'quiet': True,
                 'no_warnings': True,
@@ -211,41 +209,22 @@ class WorkerThread(QThread):
                 'extract_flat': False,
             }
             
-            # Add Bilibili-specific optimizations
             if item_type == 'bilibili':
-                # Aggressive format selection - skip 1080p+ negotiations for faster resolution
+                # --- START OF FIX ---
+                # Use a more robust format selector that handles both modern and legacy streams
                 opts.update({
-                    'format': 'best[height<=720]/best[height<=480]/best',
-                    'format_sort': ['res:720', 'fps', 'codec:h264'],
-                    
-                    # Network optimization - aggressive timeouts for faster response
-                    'socket_timeout': 15,        # Down from 15s default
-                    'retries': 3,               # Fail fast, don't retry much
-                    'fragment_retries': 3,      # Less retry overhead
-                    
-                    # Connection improvements
-                    'http_chunk_size': 1048576,           # 1MB chunks
-                    'concurrent_fragment_downloads': 3,    # Parallel processing
-                    
-                    # Skip unnecessary processing for duration-only fetching
-                    'writesubtitles': False,
-                    'writeautomaticsub': False, 
-                    'writeinfojson': False,
-                    'writethumbnail': False,
-                    
-                    # Faster processing preferences
-                    'prefer_ffmpeg': True,
-                    'keepvideo': False,
+                    'format': 'bestvideo[height<=720]+bestaudio/best[height<=720]/best',
+                    'socket_timeout': 15,
+                    'retries': 3,
+                    'fragment_retries': 3,
                 })
+                # --- END OF FIX ---
                 
-                # Add cookies if available (preserve existing functionality)
                 cookies_file = Path(__file__).parent.parent / 'cookies.txt'
                 if cookies_file.exists():
                     opts['cookiefile'] = str(cookies_file)
             
-            # Use yt-dlp with timeout
             with yt_dlp.YoutubeDL(opts) as ydl:
-                # Set socket timeout
                 ydl.params['socket_timeout'] = self.settings.fetch_timeout
                 
                 info = ydl.extract_info(url, download=False)
@@ -262,8 +241,6 @@ class WorkerThread(QThread):
             return False, 0, 'yt-dlp', 'yt-dlp not available'
         except Exception as e:
             error_msg = str(e)
-            
-            # Handle common yt-dlp errors
             if 'timeout' in error_msg.lower():
                 return False, 0, 'yt-dlp', 'Network timeout'
             elif 'unavailable' in error_msg.lower():
